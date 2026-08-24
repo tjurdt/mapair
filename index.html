@@ -96,13 +96,33 @@
 <body>
 <div id="app"></div>
 
+<script>
+  // 把任何錯誤印在畫面上(而不是整頁空白)
+  window.__fatal = function(msg){
+    var app = document.getElementById('app');
+    if(!app) return;
+    app.innerHTML =
+      '<div style="max-width:620px;margin:60px auto;padding:24px;font-family:sans-serif;color:#152230">'
+      + '<h2 style="color:#b23b3b;margin:0 0 8px">載入失敗</h2>'
+      + '<pre style="white-space:pre-wrap;background:#f0ebe3;padding:12px;border-radius:8px;font-size:13px">'
+      + String(msg) + '</pre>'
+      + '<p style="color:#42566b">按 F12 → Console 看紅色錯誤,或把上面這段貼給我。</p></div>';
+  };
+  window.addEventListener('error', function(e){
+    window.__fatal((e.message||'錯誤') + (e.filename ? ('\n'+e.filename+':'+e.lineno) : ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason; window.__fatal('Promise 錯誤:' + ((r && r.message) || r));
+  });
+</script>
+
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
-  from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
          onSnapshot, query, orderBy, arrayUnion, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+  from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 
 /* ============================================================
    1) 設定
@@ -180,10 +200,15 @@ let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 
 function boot(){
-  const app = initializeApp(CONFIG.firebase);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); });
+  document.getElementById("app").innerHTML =
+    `<div class="center"><div class="gate"><p style="color:var(--ink-soft)">連線中…</p></div></div>`;
+  try {
+    const app = initializeApp(CONFIG.firebase);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); },
+      err => window.__fatal("Firebase Auth 錯誤:" + err.message));
+  } catch(e){ window.__fatal("Firebase 初始化失敗:" + e.message); }
 }
 
 function renderGate(){
