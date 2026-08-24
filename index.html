@@ -146,9 +146,6 @@ const CONFIG = {
 
 const CATEGORIES = ["美食","咖啡","自然","景點","約會","住宿","購物","文化","夜景","散步","其他"];
 
-if (!CONFIG.firebase.projectId || !CONFIG.google.apiKey) renderSetup();
-else boot();
-
 function renderSetup(){
   document.getElementById("app").innerHTML = `
   <div class="center"><div class="setup">
@@ -628,6 +625,10 @@ function modal(html){
 function closeModal(){ const m=document.querySelector(".modal-bg"); if(m) m.remove(); }
 function me(){ return user.displayName || user.email || "我"; }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
+if (!CONFIG.firebase.projectId || !CONFIG.google.apiKey) renderSetup();
+else boot();
 </script>
 </body>
 </html>
