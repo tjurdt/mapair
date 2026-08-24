@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>我們去過的地方</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#152230; --ink-soft:#42566b; --paper:#faf7f2; --card:#ffffff;
+    --line:#e7e0d6; --visited:#d98b3f; --wish:#3f7d78; --us:#b25b6b;
+    --shadow:0 1px 2px rgba(21,34,48,.06),0 8px 24px rgba(21,34,48,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:var(--paper);-webkit-tap-highlight-color:transparent}
+  h1,h2,h3,.display{font-family:"Fraunces",serif;letter-spacing:-.01em}
+  button{font-family:inherit;cursor:pointer}
+  input,textarea,select{font-family:inherit;font-size:15px}
+
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--ink);color:#fff}
+  header .title{font-size:20px;font-weight:600;font-family:"Fraunces",serif}
+  header .spacer{flex:1}
+  header .who{font-size:13px;opacity:.85}
+  .btn{border:none;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500;background:var(--us);color:#fff}
+  .btn.ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35)}
+  .btn.mini{padding:5px 10px;font-size:13px;border-radius:8px}
+  .btn.grey{background:#eee;color:var(--ink)}
+
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 58px)}
+  #map{width:100%;height:100%}
+  .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
+  .tabs{display:flex;padding:10px 12px 0;gap:6px}
+  .tab{flex:1;border:none;background:transparent;padding:9px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
+  .tab.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+  .search{padding:10px 12px;position:relative}
+  .search input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .results{position:absolute;left:12px;right:12px;top:52px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);z-index:500;max-height:280px;overflow:auto}
+  .results div{padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}
+  .results div:last-child{border-bottom:none}
+  .results div:hover{background:var(--paper)}
+  .list{flex:1;overflow:auto;padding:6px 12px 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:var(--shadow);cursor:pointer}
+  .card h3{margin:0 0 3px;font-size:16px}
+  .card .admin{font-size:12px;color:var(--ink-soft)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .chip{font-size:12px;padding:3px 9px;border-radius:999px;background:#f0ebe3;color:var(--ink-soft)}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
+  .empty{color:var(--ink-soft);text-align:center;padding:40px 20px;font-size:14px;line-height:1.7}
+
+  .modal-bg{position:fixed;inset:0;background:rgba(21,34,48,.4);display:flex;align-items:flex-end;justify-content:center;z-index:1000}
+  .modal{background:var(--paper);width:100%;max-width:520px;max-height:90vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px}
+  @media(min-width:700px){.modal-bg{align-items:center}.modal{border-radius:18px}}
+  .modal h2{margin:0 0 4px;font-size:22px}
+  .modal .admin{color:var(--ink-soft);font-size:13px;margin-bottom:14px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:13px;font-weight:500;color:var(--ink-soft);margin-bottom:6px}
+  .field input,.field textarea,.field select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .field textarea{min-height:64px;resize:vertical}
+  .pick{display:flex;flex-wrap:wrap;gap:7px}
+  .pick .chip{cursor:pointer;background:#fff;border:1px solid var(--line)}
+  .pick .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{flex:1;border:none;background:#fff;padding:10px;font-weight:500;color:var(--ink-soft)}
+  .seg button.on-v{background:var(--visited);color:#fff}
+  .seg button.on-w{background:var(--wish);color:#fff}
+  .note{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+  .note .meta{font-size:12px;color:var(--ink-soft);display:flex;justify-content:space-between;margin-bottom:4px}
+  .note .who-tag{font-weight:700;color:var(--us)}
+  .stars{color:var(--visited);letter-spacing:1px}
+  .row{display:flex;gap:8px;align-items:center}
+  .row>*{flex:1}
+  .danger{color:#b23b3b;background:transparent;border:1px solid #e3c4c4}
+
+  .trip-place{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:7px}
+  .trip-place .name{flex:1;font-size:14px}
+  .ord{font-family:"Fraunces",serif;color:var(--wish);font-weight:600;width:22px;text-align:center}
+
+  .center{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+  .gate{max-width:440px;text-align:center}
+  .gate h1{font-size:34px;margin:0 0 6px}
+  .gate p{color:var(--ink-soft);line-height:1.7}
+  .setup{max-width:660px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
+  .setup h1{font-size:26px;margin-top:0}
+  .setup h3{margin:18px 0 6px}
+  .setup ol{line-height:1.9;padding-left:20px}
+  .setup code{background:#f0ebe3;padding:1px 6px;border-radius:5px;font-size:13px}
+  .setup pre{background:#f0ebe3;padding:12px;border-radius:8px;overflow:auto;font-size:12px;line-height:1.5}
+  @media(max-width:760px){
+    .wrap{grid-template-columns:1fr;grid-template-rows:38vh 1fr;height:calc(100vh - 58px)}
+    .side{border-left:none;border-top:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
+         onSnapshot, query, orderBy, arrayUnion, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+/* ============================================================
+   1) 設定
+   ============================================================ */
+const CONFIG = {
+  firebase: {
+    apiKey: "", authDomain: "", projectId: "",
+    storageBucket: "", messagingSenderId: "", appId: ""
+  },
+  google: {
+    apiKey: "",                 // Google Maps Platform 金鑰(記得綁 HTTP referrer)
+    mapId: "DEMO_MAP_ID"        // Advanced Marker 需要;開發可先用 DEMO_MAP_ID
+  },
+  spaceId: "us"                 // 兩人用同一個字串即共享
+};
+
+const CATEGORIES = ["美食","咖啡","自然","景點","約會","住宿","購物","文化","夜景","散步","其他"];
+
+if (!CONFIG.firebase.projectId || !CONFIG.google.apiKey) renderSetup();
+else boot();
+
+function renderSetup(){
+  document.getElementById("app").innerHTML = `
+  <div class="center"><div class="setup">
+    <h1>設定(約 10 分鐘)</h1>
+
+    <h3>A. Google Maps Platform</h3>
+    <ol>
+      <li>到 <code>console.cloud.google.com</code> 建專案,<b>啟用帳單</b>(需綁卡,但你們的量會落在免費額度,實際 $0)</li>
+      <li>APIs &amp; Services → 啟用這三個:<br>
+        <b>Maps JavaScript API</b>、<b>Places API (New)</b>、<b>Geocoding API</b></li>
+      <li>Credentials → 建立 <b>API key</b>,填入下方 <code>CONFIG.google.apiKey</code></li>
+      <li>金鑰是公開在前端的,務必做 <b>Application restrictions → HTTP referrers</b>,只允許你的 Pages 網址
+        (例:<code>https://你的帳號.github.io/*</code>),並在 API restrictions 只勾上面三個 API</li>
+      <li>(選)Map management → 建 Map ID 填入 <code>CONFIG.google.mapId</code>;先用 <code>DEMO_MAP_ID</code> 也行</li>
+    </ol>
+
+    <h3>B. Firebase</h3>
+    <ol>
+      <li>到 <code>console.firebase.google.com</code> 建專案(可沿用同一個 Google Cloud 專案)</li>
+      <li>Authentication → 啟用 <b>Google</b> 登入</li>
+      <li>Firestore Database → 建立(production mode)</li>
+      <li>專案設定 → Web app → 把 <code>firebaseConfig</code> 貼進 <code>CONFIG.firebase</code></li>
+      <li>Firestore → Rules 貼上(兩人登入後在 Authentication 分頁看 UID,填進去):
+        <pre>rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    match /spaces/{spaceId}/{doc=**} {
+      allow read, write: if request.auth != null
+        &amp;&amp; request.auth.uid in ['UID_A','UID_B'];
+    }
+  }
+}</pre>
+      </li>
+    </ol>
+
+    <h3>C. 部署</h3>
+    <ol>
+      <li>把本檔 push 到 GitHub → 開 GitHub Pages。兩人用同一網址、同一 <code>spaceId</code> 即共享。</li>
+    </ol>
+  </div></div>`;
+}
+
+/* ============================================================
+   2) 啟動
+   ============================================================ */
+let db, auth, user;
+let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken;
+let markers = [], tripLine = null, sessionToken = null;
+let places = {}, trips = {}, tab = "visited";
+
+function boot(){
+  const app = initializeApp(CONFIG.firebase);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); });
+}
+
+function renderGate(){
+  document.getElementById("app").innerHTML = `
+  <div class="center"><div class="gate">
+    <h1>我們去過的地方</h1>
+    <p>一起記錄去過哪、在那邊做了什麼、彼此的感想,<br>再規劃下一趟。</p>
+    <button class="btn" id="login" style="margin-top:16px;padding:12px 22px">用 Google 登入</button>
+  </div></div>`;
+  document.getElementById("login").onclick = () =>
+    signInWithPopup(auth, new GoogleAuthProvider()).catch(e=>alert(e.message));
+}
+
+/* ============================================================
+   3) 主畫面
+   ============================================================ */
+async function renderApp(){
+  document.getElementById("app").innerHTML = `
+    <header>
+      <span class="title">我們去過的地方</span>
+      <span class="spacer"></span>
+      <span class="who">${user.displayName||user.email}</span>
+      <button class="btn ghost mini" id="logout">登出</button>
+    </header>
+    <div class="wrap">
+      <div id="map"></div>
+      <div class="side">
+        <div class="tabs">
+          <button class="tab" data-t="visited">去過</button>
+          <button class="tab" data-t="wishlist">想去</button>
+          <button class="tab" data-t="trips">行程</button>
+        </div>
+        <div class="search" id="searchWrap">
+          <input id="search" placeholder="搜尋地點加入…(例:台北101、直島)" autocomplete="off"/>
+          <div class="results" id="results" style="display:none"></div>
+        </div>
+        <div class="list" id="list"></div>
+      </div>
+    </div>`;
+
+  document.getElementById("logout").onclick = () => signOut(auth);
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; renderList(); });
+
+  try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
+  wireSearch();
+  subscribe();
+}
+
+/* ---------- Google Maps 載入 ---------- */
+function loadGoogleBootstrap(){
+  if (window.google?.maps?.importLibrary) return;
+  ((g)=>{let h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",
+    m=document,b=window;b=b[c]||(b[c]={});let d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,
+    u=()=>h||(h=new Promise(async(f,n)=>{await(a=m.createElement("script"));e.set("libraries",[...r]+"");
+    for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);
+    a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));
+    m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
+    ({key:CONFIG.google.apiKey, v:"weekly", language:"zh-TW", region:"TW"});
+}
+
+async function initMap(){
+  loadGoogleBootstrap();
+  const [{Map},{AdvancedMarkerElement,PinElement},placesLib,{Geocoder}] = await Promise.all([
+    google.maps.importLibrary("maps"),
+    google.maps.importLibrary("marker"),
+    google.maps.importLibrary("places"),
+    google.maps.importLibrary("geocoding"),
+  ]);
+  MapCtor = Map; AdvMarker = AdvancedMarkerElement; Pin = PinElement;
+  AutocompleteSuggestion = placesLib.AutocompleteSuggestion;
+  AutocompleteSessionToken = placesLib.AutocompleteSessionToken;
+  geocoder = new Geocoder();
+
+  map = new Map(document.getElementById("map"), {
+    center:{lat:23.7,lng:120.9}, zoom:7, mapId:CONFIG.google.mapId||"DEMO_MAP_ID",
+    mapTypeControl:false, streetViewControl:false, fullscreenControl:false, clickableIcons:false
+  });
+  map.addListener("click", async e => {
+    const lat=e.latLng.lat(), lng=e.latLng.lng();
+    const admin = await reverseGeocode(lat,lng);
+    openEditor(null, { name:"", lat, lng, admin, source:"map" });
+  });
+}
+
+/* ---------- Firestore 即時同步 ---------- */
+function subscribe(){
+  const base = ["spaces", CONFIG.spaceId];
+  onSnapshot(query(collection(db, ...base, "places"), orderBy("createdAt","desc")), snap => {
+    places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
+    renderList(); renderMarkers();
+  });
+  onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
+    trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
+    if (tab === "trips") renderList();
+  });
+}
+const placesCol = () => collection(db, "spaces", CONFIG.spaceId, "places");
+const placeDoc  = id => doc(db, "spaces", CONFIG.spaceId, "places", id);
+const tripsCol  = () => collection(db, "spaces", CONFIG.spaceId, "trips");
+const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
+
+/* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
+function renderMarkers(){
+  if (!AdvMarker) return;
+  markers.forEach(m => m.map = null); markers = [];
+  Object.values(places).forEach(p => {
+    const color = p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
+    const pin = new Pin({ background:color, borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
+    pin.element.style.cursor = "pointer";
+    pin.element.addEventListener("click", () => openDetail(p.id));
+    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name });
+    markers.push(m);
+  });
+}
+const getCSS = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+/* ============================================================
+   4) 清單
+   ============================================================ */
+function renderList(){
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
+  document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
+  const el = document.getElementById("list");
+  if (tab === "trips"){ renderTrips(el); return; }
+
+  const items = Object.values(places).filter(p => p.status === tab);
+  if (!items.length){
+    el.innerHTML = `<div class="empty">${tab==="visited"?"還沒有記錄。搜尋或點地圖加入第一個去過的地方吧。":"還沒有想去的地方。搜尋景點加入願望清單。"}</div>`;
+    return;
+  }
+  el.innerHTML = items.map(cardHTML).join("");
+  items.forEach(p => document.getElementById("c_"+p.id).onclick = () => openDetail(p.id));
+}
+function cardHTML(p){
+  const dotColor = p.status==="wishlist" ? "var(--wish)" : "var(--visited)";
+  const admin = [p.admin?.city, p.admin?.county].filter(Boolean).join(" · ");
+  const cats = (p.categories||[]).map(c=>`<span class="chip">${c}</span>`).join("");
+  const noteCount = (p.notes||[]).length;
+  return `<div class="card" id="c_${p.id}">
+    <h3><span class="dot" style="background:${dotColor}"></span>${esc(p.name)}</h3>
+    <div class="admin">${admin || "&nbsp;"}${p.visitedOn?" · "+p.visitedOn:""}${noteCount?` · 💬 ${noteCount}`:""}</div>
+    <div class="chips">${cats}</div>
+  </div>`;
+}
+
+/* ============================================================
+   5) 搜尋(Google Places New:AutocompleteSuggestion → toPlace → fetchFields)
+   ============================================================ */
+let searchTimer;
+function wireSearch(){
+  const input = document.getElementById("search");
+  const box = document.getElementById("results");
+  input.oninput = () => {
+    clearTimeout(searchTimer);
+    const q = input.value.trim();
+    if (q.length < 2){ box.style.display="none"; return; }
+    searchTimer = setTimeout(async () => {
+      let rs = [];
+      try { rs = await searchPlace(q); } catch(e){ console.warn(e); }
+      box.innerHTML = rs.map((r,i)=>`<div data-i="${i}">${esc(r.name)}</div>`).join("") || `<div>找不到</div>`;
+      box.style.display = "block";
+      box.querySelectorAll("div[data-i]").forEach(d => d.onclick = async () => {
+        const r = rs[+d.dataset.i]; box.style.display="none"; input.value="";
+        try {
+          const place = r.prediction.toPlace();
+          await place.fetchFields({ fields:["displayName","location","formattedAddress"] });
+          sessionToken = null;                       // 選定後結束 session(計費最佳化)
+          const lat = place.location.lat(), lng = place.location.lng();
+          const admin = await reverseGeocode(lat, lng);
+          openEditor(null, { name:place.displayName||r.name, lat, lng, admin, source:"google", extId:r.prediction.placeId });
+        } catch(e){ alert("取得地點失敗:"+e.message); }
+      });
+    }, 350);
+  };
+  document.addEventListener("click", e => { if(!e.target.closest(".search")) box.style.display="none"; });
+}
+
+async function searchPlace(q){
+  if (!sessionToken) sessionToken = new AutocompleteSessionToken();
+  const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
+    input:q, sessionToken, language:"zh-TW"
+    // 想只限台日:includedRegionCodes:["tw","jp"]
+  });
+  return (suggestions||[]).filter(s=>s.placePrediction).map(s => ({
+    name: s.placePrediction.text?.text || s.placePrediction.mainText?.text || "",
+    prediction: s.placePrediction
+  }));
+}
+function reverseGeocode(lat,lng){
+  return new Promise(res => {
+    geocoder.geocode({ location:{lat,lng}, language:"zh-TW" }, (r,status) => {
+      if (status==="OK" && r[0]) res(parseAdmin(r[0].address_components));
+      else res({});
+    });
+  });
+}
+function parseAdmin(comps){
+  const get = t => (comps.find(c=>c.types.includes(t))||{}).long_name || "";
+  return {
+    country: get("country"),
+    county:  get("administrative_area_level_1"),
+    city:    get("administrative_area_level_2") || get("locality") || get("sublocality") || ""
+  };
+}
+
+/* ============================================================
+   6) 新增 / 編輯地點
+   ============================================================ */
+function openEditor(id, seed){
+  const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], notes:[], ...seed };
+  let cats = new Set(p.categories||[]);
+  let status = p.status || "visited";
+
+  modal(`
+    <h2>${id?"編輯":"加入"}地點</h2>
+    <div class="field"><label>名稱</label><input id="f_name" value="${esc(p.name||"")}"/></div>
+    <div class="field"><label>狀態</label>
+      <div class="seg" id="f_status">
+        <button data-s="visited" class="${status==='visited'?'on-v':''}">去過了</button>
+        <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}">想去</button>
+      </div>
+    </div>
+    <div class="field"><label>在這裡做什麼</label>
+      <div class="pick" id="f_cats">${CATEGORIES.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${c}">${c}</span>`).join("")}</div>
+    </div>
+    <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
+      <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
+    </div>
+    <div class="field"><label>你的感想(選填)</label>
+      <textarea id="f_note" placeholder="寫下當下的心情…"></textarea>
+      <div style="margin-top:8px"><label style="display:inline">評分</label>
+        <select id="f_rating" style="width:auto;display:inline;margin-left:8px">
+          <option value="0">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn grey" id="f_cancel">取消</button>
+      <button class="btn" id="f_save">儲存</button>
+    </div>
+  `);
+
+  const dateWrap = document.getElementById("f_datewrap");
+  document.querySelectorAll("#f_status button").forEach(b => b.onclick = () => {
+    status = b.dataset.s;
+    document.querySelectorAll("#f_status button").forEach(x=>x.className="");
+    b.className = status==="visited" ? "on-v" : "on-w";
+    dateWrap.style.display = status==="wishlist" ? "none" : "block";
+  });
+  document.querySelectorAll("#f_cats .chip").forEach(c => c.onclick = () => {
+    const k=c.dataset.c; cats.has(k)?cats.delete(k):cats.add(k); c.classList.toggle("on");
+  });
+  document.getElementById("f_cancel").onclick = closeModal;
+  document.getElementById("f_save").onclick = async () => {
+    const name = document.getElementById("f_name").value.trim();
+    if(!name) return alert("請輸入名稱");
+    const noteText = document.getElementById("f_note").value.trim();
+    const rating = +document.getElementById("f_rating").value;
+    const note = noteText ? [{ uid:user.uid, name:me(), text:noteText, rating, at:new Date().toISOString() }] : [];
+    const data = {
+      name, lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
+      admin:p.admin||{}, status, categories:[...cats],
+      visitedOn: status==="visited" ? (document.getElementById("f_date").value||"") : ""
+    };
+    if(id){ await updateDoc(placeDoc(id), data); }
+    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); data.notes=note; await addDoc(placesCol(), data); }
+    closeModal();
+  };
+}
+
+/* ============================================================
+   7) 詳情:雙方感想 + 加到行程
+   ============================================================ */
+function openDetail(id){
+  const p = places[id]; if(!p) return;
+  const admin = [p.admin?.city,p.admin?.county,p.admin?.country].filter(Boolean).join(" · ");
+  const notes = (p.notes||[]).map(n => `
+    <div class="note">
+      <div class="meta"><span class="who-tag">${esc(n.name||"")}</span>
+        <span class="stars">${"★".repeat(n.rating||0)}${"☆".repeat(5-(n.rating||0))}</span></div>
+      <div>${esc(n.text)}</div>
+    </div>`).join("") || `<div class="empty" style="padding:16px">還沒有人寫下感想</div>`;
+  const tripOpts = Object.values(trips).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
+
+  modal(`
+    <h2>${esc(p.name)}</h2>
+    <div class="admin">${admin||""}${p.visitedOn?" · "+p.visitedOn:""}</div>
+    <div class="chips" style="margin-bottom:14px">${(p.categories||[]).map(c=>`<span class="chip">${c}</span>`).join("")}</div>
+
+    <div class="field"><label>感想</label>${notes}</div>
+    <div class="field">
+      <textarea id="d_note" placeholder="加上你的感想…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <select id="d_rating"><option value="0">評分 —</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+        <button class="btn mini" id="d_addnote">送出感想</button>
+      </div>
+    </div>
+
+    ${p.status==="wishlist" && tripOpts ? `
+    <div class="field"><label>加入行程</label>
+      <div class="row"><select id="d_trip">${tripOpts}</select>
+      <button class="btn mini grey" id="d_addtrip">加入</button></div>
+    </div>`:""}
+
+    <div class="row" style="margin-top:6px">
+      <button class="btn grey mini" id="d_toggle">${p.status==="visited"?"移回想去":"標記為去過"}</button>
+      <button class="btn mini" id="d_edit">編輯</button>
+      <button class="danger mini" style="border-radius:8px;padding:5px 10px" id="d_del">刪除</button>
+    </div>
+  `);
+
+  document.getElementById("d_addnote").onclick = async () => {
+    const text = document.getElementById("d_note").value.trim(); if(!text) return;
+    const rating = +document.getElementById("d_rating").value;
+    await updateDoc(placeDoc(id), { notes: arrayUnion({ uid:user.uid, name:me(), text, rating, at:new Date().toISOString() }) });
+    closeModal();
+  };
+  document.getElementById("d_toggle").onclick = async () => {
+    await updateDoc(placeDoc(id), { status: p.status==="visited"?"wishlist":"visited" }); closeModal();
+  };
+  document.getElementById("d_edit").onclick = () => { closeModal(); openEditor(id); };
+  document.getElementById("d_del").onclick = async () => { if(confirm("確定刪除?")){ await deleteDoc(placeDoc(id)); closeModal(); } };
+  const at = document.getElementById("d_addtrip");
+  if(at) at.onclick = async () => {
+    await updateDoc(tripDoc(document.getElementById("d_trip").value), { placeIds: arrayUnion(id) }); closeModal();
+  };
+}
+
+/* ============================================================
+   8) 行程規劃
+   ============================================================ */
+function renderTrips(el){
+  const list = Object.values(trips);
+  el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新行程</button>` +
+    (list.length ? list.map(t=>`
+      <div class="card" id="t_${t.id}">
+        <h3>${esc(t.name)}</h3>
+        <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${(t.placeIds||[]).length} 個地點</div>
+      </div>`).join("") : `<div class="empty">還沒有行程。建立一個,再把「想去」的地方加進來。</div>`);
+  document.getElementById("newtrip").onclick = createTrip;
+  list.forEach(t => document.getElementById("t_"+t.id).onclick = () => openTrip(t.id));
+}
+function createTrip(){
+  modal(`
+    <h2>新行程</h2>
+    <div class="field"><label>名稱</label><input id="t_name" placeholder="例:四國地質之旅"/></div>
+    <div class="row">
+      <div class="field"><label>開始</label><input type="date" id="t_start"/></div>
+      <div class="field"><label>結束</label><input type="date" id="t_end"/></div>
+    </div>
+    <div class="row"><button class="btn grey" id="t_cancel">取消</button><button class="btn" id="t_save">建立</button></div>
+  `);
+  document.getElementById("t_cancel").onclick = closeModal;
+  document.getElementById("t_save").onclick = async () => {
+    const name = document.getElementById("t_name").value.trim(); if(!name) return alert("請輸入名稱");
+    await addDoc(tripsCol(), {
+      name, startDate:document.getElementById("t_start").value, endDate:document.getElementById("t_end").value,
+      placeIds:[], createdBy:user.uid, createdAt:serverTimestamp()
+    });
+    closeModal();
+  };
+}
+function openTrip(id){
+  const t = trips[id]; if(!t) return;
+  const ids = t.placeIds || [];
+  const rows = ids.map((pid,i) => {
+    const p = places[pid]; if(!p) return "";
+    return `<div class="trip-place">
+      <span class="ord">${i+1}</span>
+      <span class="name">${esc(p.name)}</span>
+      <button class="btn mini grey" data-up="${i}">↑</button>
+      <button class="btn mini grey" data-down="${i}">↓</button>
+      <button class="btn mini" data-rm="${pid}" style="background:#eee;color:#b23b3b">×</button>
+    </div>`;
+  }).join("") || `<div class="empty" style="padding:16px">還沒有地點。在「想去」清單點地點 → 加入行程。</div>`;
+
+  modal(`
+    <h2>${esc(t.name)}</h2>
+    <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""}</div>
+    <div style="margin:14px 0">${rows}</div>
+    <div class="row">
+      <button class="btn grey" id="tr_map">在地圖上看路線</button>
+      <button class="danger" style="border-radius:10px" id="tr_del">刪除行程</button>
+    </div>
+  `);
+
+  const reorder = async (from,to) => {
+    const arr=[...ids]; if(to<0||to>=arr.length) return;
+    [arr[from],arr[to]]=[arr[to],arr[from]];
+    await updateDoc(tripDoc(id),{placeIds:arr}); closeModal(); openTrip(id);
+  };
+  document.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>reorder(+b.dataset.up,+b.dataset.up-1));
+  document.querySelectorAll("[data-down]").forEach(b=>b.onclick=()=>reorder(+b.dataset.down,+b.dataset.down+1));
+  document.querySelectorAll("[data-rm]").forEach(b=>b.onclick=async()=>{
+    await updateDoc(tripDoc(id),{placeIds:ids.filter(x=>x!==b.dataset.rm)}); closeModal(); openTrip(id);
+  });
+  document.getElementById("tr_del").onclick = async()=>{ if(confirm("刪除整個行程?")){ await deleteDoc(tripDoc(id)); closeModal(); } };
+  document.getElementById("tr_map").onclick = () => {
+    closeModal();
+    const path = ids.map(pid=>places[pid]).filter(Boolean).map(p=>({lat:p.lat,lng:p.lng}));
+    if(!path.length) return;
+    if(tripLine) tripLine.setMap(null);
+    tripLine = new google.maps.Polyline({ path, map, strokeColor:getCSS("--wish"), strokeWeight:3, strokeOpacity:.9 });
+    const b = new google.maps.LatLngBounds(); path.forEach(pt=>b.extend(pt)); map.fitBounds(b, 60);
+  };
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+function modal(html){
+  const bg = document.createElement("div");
+  bg.className="modal-bg"; bg.innerHTML=`<div class="modal">${html}</div>`;
+  bg.onclick = e => { if(e.target===bg) closeModal(); };
+  document.body.appendChild(bg);
+}
+function closeModal(){ const m=document.querySelector(".modal-bg"); if(m) m.remove(); }
+function me(){ return user.displayName || user.email || "我"; }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+</script>
+</body>
+</html>
