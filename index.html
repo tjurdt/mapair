@@ -35,10 +35,10 @@
   #mapctl button{border:none;background:#fff;padding:8px 13px;font-size:13px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line)}
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
-  #setBtn{position:absolute;top:12px;right:12px;z-index:5;width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:16px;color:var(--ink)}
-  #setpanel{position:absolute;top:56px;right:12px;z-index:6;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:12px;width:210px}
-  #setpanel .setrow{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:6px 0}
-  #setpanel .setrow input[type=range]{flex:1}
+  #setBtn{position:absolute;top:12px;right:12px;z-index:5;height:38px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:13px;font-weight:500;color:var(--ink)}
+  #addBtn{position:absolute;top:58px;left:12px;z-index:5;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:13px;color:var(--ink)}
+  #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
+  #markerlegend{position:absolute;bottom:16px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
   #filterbar{padding:8px 12px 0;position:relative}
   #filterbar .frow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -180,7 +180,12 @@ let spaceCats = [];
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
 const LEVELS_UI    = ["居住","住宿","旅遊","接地","經過","無"];
-const EMOJIS = ["🧭","✈️","🚗","🚆","🚢","🏔️","🏖️","🏝️","🏕️","⛩️","🏯","🗼","🌸","🍜","☕","🍶","🎏","🎿","🌋","🗾","🦌","🐧","🌊","🌅","💕","🎒","📷","🗺️"];
+const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵","🚲","🏍️","🛵",
+  "🏔️","⛰️","🌋","🏕️","🏖️","🏝️","🏜️","🏞️","🌅","🌄","🌊","🗻","🗾",
+  "⛩️","🏯","🏰","🗼","🎡","🎢","🎑","🌸","🍁","🌺","🌴","🌲",
+  "🍜","🍣","🍶","🍵","☕","🍺","🍷","🍦","🍧","🧋","🍡","🍢",
+  "🎏","🎿","🏂","🏄","🚠","♨️","🦌","🐧","🐟","🦭","🐢","🦋",
+  "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -234,6 +239,8 @@ let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level";
 let catColors = {}, markerMode = "status", lastMarkerClick = 0;
+let nicknames = {}, levelColors = { ...LEVEL_COLORS }, addMode = false;
+const nameFor = uid => nicknames[uid] || members[uid] || (uid===(user&&user.uid) ? "我" : "對方");
 let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
@@ -295,40 +302,10 @@ async function renderApp(){
           <button data-l="town">鄉鎮</button>
           <button data-l="village">村里</button>
         </div>
-        <div id="legend" style="display:none">
-          <div class="lg"><span class="sw" style="background:#7b2d3a"></span>居住</div>
-          <div class="lg"><span class="sw" style="background:#b25b6b"></span>住宿</div>
-          <div class="lg"><span class="sw" style="background:#d98b3f"></span>旅遊</div>
-          <div class="lg"><span class="sw" style="background:#6f9c94"></span>接地</div>
-          <div class="lg"><span class="sw" style="background:#c3d0cb"></span>經過</div>
-          <div class="lg"><span class="sw" style="background:#e5e0d6"></span>未到</div>
-        </div>
-        <button id="setBtn" title="顯示設定">⚙︎</button>
-        <div id="setpanel" style="display:none">
-          <label class="setrow"><input type="checkbox" id="set_pins" checked> 顯示地標</label>
-          <label class="setrow">上色透明度
-            <input type="range" id="set_alpha" min="10" max="90" value="70">
-          </label>
-          <label class="setrow">上色依據
-            <select id="set_metric" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:8px">
-              <option value="level">造訪深度</option>
-              <option value="count">地標數</option>
-              <option value="first">初次造訪</option>
-              <option value="last">最後造訪</option>
-            </select>
-          </label>
-          <label class="setrow">地標配色
-            <select id="set_markermode" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:8px">
-              <option value="status">是否去過</option>
-              <option value="cat">在這裡做什麼</option>
-              <option value="level">造訪深度</option>
-              <option value="who">誰去的</option>
-              <option value="trip">哪趟旅程</option>
-              <option value="rating">評分</option>
-            </select>
-          </label>
-          <button id="set_colors" class="btn grey mini" style="width:100%;margin-top:8px">管理分類顏色…</button>
-        </div>
+        <button id="addBtn" title="新增地點模式">＋ 點圖新增</button>
+        <div id="legend" style="display:none"></div>
+        <div id="markerlegend" style="display:none"></div>
+        <button id="setBtn">設定</button>
       </div>
       <div class="side">
         <div class="tabs">
@@ -365,22 +342,17 @@ async function renderApp(){
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
   subscribe();
-  document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => setChoro(b.dataset.l));
-  document.getElementById("setBtn").onclick = () => {
-    const p = document.getElementById("setpanel");
-    p.style.display = p.style.display === "none" ? "block" : "none";
+  document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
+    if (filter.region){ filter.region = null; renderList(); renderFilterChips(); }
+    setChoro(b.dataset.l);
+    renderMarkers();
+  });
+  document.getElementById("addBtn").onclick = e => {
+    addMode = !addMode;
+    e.target.classList.toggle("on", addMode);
+    document.getElementById("map").style.cursor = addMode ? "crosshair" : "";
   };
-  document.getElementById("set_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
-  document.getElementById("set_alpha").oninput = e => {
-    choroAlpha = (+e.target.value)/100;
-    if (choroLevel !== "off") setChoro(choroLevel);
-  };
-  document.getElementById("set_metric").onchange = e => {
-    choroMetric = e.target.value;
-    if (choroLevel !== "off") setChoro(choroLevel);
-  };
-  document.getElementById("set_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
-  document.getElementById("set_colors").onclick = openColorManager;
+  document.getElementById("setBtn").onclick = openSettings;
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
   setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
@@ -401,21 +373,63 @@ async function renderApp(){
   refreshFilterUI();
 }
 
-function openColorManager(){
-  modal(`<h2 style="margin-bottom:2px">分類顏色</h2>
-    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存。旅程顏色請到各旅程編輯裡設定。</div>
-    <div>${spaceCats.length ? spaceCats.map(c=>`
-      <div class="row" style="align-items:center;margin-bottom:8px">
-        <span style="flex:1">${esc(c)}</span>
-        <input type="color" data-cat="${esc(c)}" value="${catColors[c]||'#d98b3f'}" style="width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px">
-      </div>`).join("") : `<div class="empty">還沒有分類</div>`}</div>
-    <div class="row"><button class="btn" id="cm_done">完成</button></div>`);
-  document.querySelectorAll('input[data-cat]').forEach(inp => inp.onchange = () => {
+/* ---------- 設定頁(整合顯示/顏色/綽號) ---------- */
+function openSettings(){
+  const markerOpts = [["status","是否去過"],["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"]];
+  const metricOpts = [["level","造訪深度"],["count","地標數"],["first","初次造訪"],["last","最後造訪"]];
+  const colorRow = (label,val,attrs) => `<div class="row" style="align-items:center;margin-bottom:8px">
+     <span style="flex:1">${esc(label)}</span>
+     <input type="color" ${attrs} value="${val}" style="width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px"></div>`;
+  modal(`
+    <h2 style="margin-bottom:12px">設定</h2>
+    <div class="field"><label>顯示</label>
+      <label class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="s_pins" ${showPins?'checked':''}> 顯示地標</label>
+      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">地標配色
+        <select id="s_markermode" style="flex:1;padding:6px;border:1px solid var(--line);border-radius:8px">${markerOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>行政區上色</label>
+      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">透明度
+        <input type="range" id="s_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:1"></div>
+      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">依據
+        <select id="s_metric" style="flex:1;padding:6px;border:1px solid var(--line);border-radius:8px">${metricOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>你的綽號</label>
+      <input id="s_nick" value="${esc(nicknames[user.uid]||"")}" placeholder="例:小明"></div>
+    <div class="field"><label>造訪深度顏色</label>
+      ${["居住","住宿","旅遊","接地","經過"].map(l=>colorRow(l, levelColors[l], `data-lv="${l}"`)).join("")}</div>
+    <div class="field"><label>分類顏色</label>
+      ${spaceCats.length ? spaceCats.map(c=>colorRow(c, catColors[c]||"#d98b3f", `data-cat="${esc(c)}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無分類</div>`}</div>
+    <div class="field"><label>旅程顏色</label>
+      ${Object.values(trips).length ? Object.values(trips).map(t=>colorRow((t.emoji?t.emoji+" ":"")+t.name, t.color||"#3f7d78", `data-trip="${t.id}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無旅程</div>`}</div>
+    <div class="row"><button class="btn" id="s_done">完成</button></div>
+  `);
+  const g = x => document.getElementById(x);
+  g("s_markermode").value = markerMode;
+  g("s_metric").value = choroMetric;
+  g("s_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
+  g("s_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
+  g("s_alpha").oninput = e => { choroAlpha = (+e.target.value)/100; if(choroLevel!=="off") setChoro(choroLevel); };
+  g("s_metric").onchange = e => { choroMetric = e.target.value; if(choroLevel!=="off") setChoro(choroLevel); };
+  const saveNick = () => {
+    nicknames[user.uid] = g("s_nick").value.trim();
+    setDoc(metaDoc(), { nicknames: { [user.uid]: nicknames[user.uid] } }, { merge:true });
+    refreshFilterUI();
+  };
+  g("s_nick").addEventListener("change", saveNick); g("s_nick").addEventListener("blur", saveNick);
+  document.querySelectorAll("input[data-lv]").forEach(inp => inp.onchange = () => {
+    levelColors[inp.dataset.lv] = inp.value;
+    setDoc(metaDoc(), { levelColors: { [inp.dataset.lv]: inp.value } }, { merge:true });
+    renderMarkers(); if(choroLevel!=="off") setChoro(choroLevel);
+  });
+  document.querySelectorAll("input[data-cat]").forEach(inp => inp.onchange = () => {
     catColors[inp.dataset.cat] = inp.value;
     setDoc(metaDoc(), { catColors: { [inp.dataset.cat]: inp.value } }, { merge:true });
-    if (markerMode === "cat") renderMarkers();
+    renderMarkers();
   });
-  document.getElementById("cm_done").onclick = closeModal;
+  document.querySelectorAll("input[data-trip]").forEach(inp => inp.onchange = () => {
+    updateDoc(tripDoc(inp.dataset.trip), { color: inp.value }); renderMarkers();
+  });
+  g("s_done").onclick = closeModal;
 }
 
 /* ---------- 篩選 UI ---------- */
@@ -431,7 +445,7 @@ function refreshFilterUI(){
   trip.value = filter.tripId;
   const who = document.getElementById("fl_who");
   who.innerHTML = `<option value="all">兩人合併</option>` +
-    Object.entries(members).map(([u,n])=>`<option value="${u}">${esc(n)}</option>`).join("");
+    Object.keys(members).map(u=>`<option value="${u}">${esc(nameFor(u))}</option>`).join("");
   who.value = filter.who;
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
@@ -487,7 +501,8 @@ async function initMap(){
     mapTypeControl:false, streetViewControl:false, fullscreenControl:false, clickableIcons:false
   });
   map.addListener("click", async e => {
-    if (Date.now() - lastMarkerClick < 500) return;   // 剛點到地標,不要新增
+    if (!addMode) return;                              // 只有開啟新增模式才加點
+    if (Date.now() - lastMarkerClick < 500) return;
     const lat=e.latLng.lat(), lng=e.latLng.lng();
     const admin = await reverseGeocode(lat,lng);
     openEditor(null, { name:"", lat, lng, admin, source:"map" });
@@ -508,11 +523,15 @@ function subscribe(){
     refreshFilterUI();
   });
   onSnapshot(metaDoc(), s => {
-    spaceCats = (s.data()?.categories) || [];
-    members   = (s.data()?.members) || {};
-    catColors = (s.data()?.catColors) || {};
+    const d = s.data() || {};
+    spaceCats = d.categories || [];
+    members   = d.members || {};
+    catColors = d.catColors || {};
+    nicknames = d.nicknames || {};
+    levelColors = { ...LEVEL_COLORS, ...(d.levelColors||{}) };
     refreshFilterUI();
-    if (choroLevel !== "off") renderMarkers();
+    renderMarkers(); renderMarkerLegend();
+    if (choroLevel !== "off") setChoro(choroLevel);
   });
 }
 const metaDoc   = () => doc(db, "spaces", CONFIG.spaceId, "meta", "config");
@@ -533,7 +552,7 @@ function whoColor(p){
 function ratingColor(r){ return lerpHex("#e9d8c0","#8f4f18",(Math.max(1,Math.min(5,r))-1)/4); }
 function markerColor(p){
   if (markerMode === "cat"){ const c=(p.categories||[]).find(c=>catColors[c]); if(c) return catColors[c]; }
-  else if (markerMode === "level" && p.level) return LEVEL_COLORS[p.level];
+  else if (markerMode === "level" && p.level) return levelColors[p.level];
   else if (markerMode === "who") return whoColor(p);
   else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
   else if (markerMode === "rating" && p.rating) return ratingColor(p.rating);
@@ -542,6 +561,7 @@ function markerColor(p){
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
+  renderMarkerLegend();
   if (!showPins) return;
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
@@ -551,6 +571,26 @@ function renderMarkers(){
     m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
     markers.push(m);
   });
+}
+function renderMarkerLegend(){
+  const el = document.getElementById("markerlegend"); if(!el) return;
+  if (!showPins || markerMode === "status"){ el.style.display="none"; return; }
+  if (markerMode === "rating"){
+    el.style.display="block";
+    el.innerHTML = `<div style="font-size:11px;margin-bottom:4px">評分</div>`+
+      `<div style="height:10px;width:100px;border-radius:3px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
+      `<div style="display:flex;justify-content:space-between;width:100px;font-size:10px;margin-top:2px"><span>1</span><span>5</span></div>`;
+    return;
+  }
+  let rows = [];
+  if (markerMode === "who") rows = [["#3f7d78", nameFor(user.uid)], ["#d98b3f", partnerUid()?nameFor(partnerUid()):"對方"], ["#b25b6b","一起"]];
+  else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
+  else if (markerMode === "cat") rows = spaceCats.filter(c=>catColors[c]).map(c=>[catColors[c], c]);
+  else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
+  if (!rows.length){ el.style.display="none"; return; }
+  el.style.display="block";
+  el.innerHTML = `<div style="font-size:11px;margin-bottom:4px">地標</div>`+
+    rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("");
 }
 const getCSS = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -653,7 +693,7 @@ function renderLegend(metric,ctx){
   if(metric==="count"){
     rows=[[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]];
   } else {
-    rows=[["#7b2d3a","居住"],["#b25b6b","住宿"],["#d98b3f","旅遊"],["#6f9c94","接地"],["#c3d0cb","經過"],["#e5e0d6","未到"]];
+    rows=[[levelColors["居住"],"居住"],[levelColors["住宿"],"住宿"],[levelColors["旅遊"],"旅遊"],[levelColors["接地"],"接地"],[levelColors["經過"],"經過"],["#e5e0d6","未到"]];
   }
   el.innerHTML=rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
 }
@@ -685,7 +725,7 @@ async function setChoro(level){
     const pls = byRegion[code]; if (!pls || !pls.length) return null;
     if (choroMetric === "level"){
       let best=-1; for(const p of pls){ const i=LEVEL_ORDER.indexOf(effLevel(p)); if(i>best) best=i; }
-      return best<0 ? null : LEVEL_COLORS[LEVEL_ORDER[best]];
+      return best<0 ? null : levelColors[LEVEL_ORDER[best]];
     }
     if (choroMetric === "count") return countColor(pls.length);
     const d = regionDate(pls, choroMetric); return d ? dateColor(d, dmin, dmax) : null;
@@ -834,6 +874,7 @@ function openEditor(id, seed){
   if (id){ const pw = p.who||[]; if (pu && pw.includes(pu)) whoSel = pw.includes(user.uid) ? "both" : "partner"; }
   else if (pu) whoSel = "both";
   let tripSel = p.tripId || "";
+  const TODAY = new Date().toISOString().slice(0,10);
 
   modal(`
     <h2 style="margin-bottom:2px">${esc(p.name||"新地點")}</h2>
@@ -853,8 +894,8 @@ function openEditor(id, seed){
     </div>
     <div class="field"><label>誰去的</label>
       <div class="seg" id="f_who">
-        <button data-w="me" class="${whoSel==='me'?'on-v':''}">我</button>
-        <button data-w="partner" class="${whoSel==='partner'?'on-v':''}">對方</button>
+        <button data-w="me" class="${whoSel==='me'?'on-v':''}">我${nicknames[user.uid]?`(${esc(nicknames[user.uid])})`:""}</button>
+        <button data-w="partner" class="${whoSel==='partner'?'on-v':''}">對方${(pu&&nicknames[pu])?`(${esc(nicknames[pu])})`:""}</button>
         <button data-w="both" class="${whoSel==='both'?'on-v':''}">一起</button>
       </div>
     </div>
@@ -866,7 +907,7 @@ function openEditor(id, seed){
       </select>
     </div>
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
-      <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
+      <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn || (id?'':TODAY)}"/>
     </div>
     <div class="field"><label>評分(1–5,可小數)</label>
       <input type="number" id="f_rating" min="1" max="5" step="0.1" value="${p.rating??""}" style="width:100px"/>
