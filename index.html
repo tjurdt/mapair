@@ -40,6 +40,15 @@
   #setpanel .setrow{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:6px 0}
   #setpanel .setrow input[type=range]{flex:1}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
+  #filterbar{padding:8px 12px 0}
+  #filterChips{margin-left:8px}
+  .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 9px;margin-left:4px;font-size:12px;color:var(--ink-soft)}
+  .fchip.active{background:var(--ink);color:#fff}
+  .fchip b{cursor:pointer;margin-left:3px}
+  #filterPanel{margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  #filterPanel .ff{margin-bottom:10px;font-size:13px}
+  #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:4px}
+  #filterPanel select,#filterPanel input[type=date]{padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
   #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
@@ -217,6 +226,23 @@ let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7;
+let members = {};   // uid -> 顯示名稱(兩人)
+let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
+const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
+const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
+const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
+const whoOf = p => (p.who && p.who.length) ? p.who : (p.createdBy ? [p.createdBy] : []);
+function passFilter(p){
+  const f = filter;
+  if (f.who !== "all" && !whoOf(p).includes(f.who)) return false;
+  if (f.tripId === "daily" && p.tripId) return false;
+  if (f.tripId !== "all" && f.tripId !== "daily" && p.tripId !== f.tripId) return false;
+  if (f.cats.size && !(p.categories||[]).some(c => f.cats.has(c))) return false;
+  if (f.from && (!p.visitedOn || p.visitedOn < f.from)) return false;
+  if (f.to && (!p.visitedOn || p.visitedOn > f.to)) return false;
+  if (f.region && p[f.region.key] !== f.region.code) return false;
+  return true;
+}
 
 function boot(){
   document.getElementById("app").innerHTML =
@@ -283,6 +309,18 @@ async function renderApp(){
           <button class="tab" data-t="wishlist">想去</button>
           <button class="tab" data-t="trips">行程</button>
         </div>
+        <div id="filterbar">
+          <button id="filterToggle" class="btn grey mini">篩選</button>
+          <span id="filterChips"></span>
+          <div id="filterPanel" style="display:none">
+            <div class="ff"><label>旅程</label><select id="fl_trip"></select></div>
+            <div class="ff"><label>誰</label><select id="fl_who"></select></div>
+            <div class="ff"><label>日期範圍</label>
+              <input type="date" id="fl_from"> ~ <input type="date" id="fl_to"></div>
+            <div class="ff"><label>分類</label><div class="pick" id="fl_cats"></div></div>
+            <button id="fl_clear" class="btn grey mini">清除全部篩選</button>
+          </div>
+        </div>
         <div class="search" id="searchWrap">
           <input id="search" placeholder="搜尋地點加入…(例:台北101、直島)" autocomplete="off"/>
           <div class="results" id="results" style="display:none"></div>
@@ -307,6 +345,61 @@ async function renderApp(){
     choroAlpha = (+e.target.value)/100;
     if (choroLevel !== "off") setChoro(choroLevel);
   };
+
+  // 記錄自己是這個空間的成員(單/雙人篩選用)
+  setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
+
+  document.getElementById("filterToggle").onclick = () => {
+    const p = document.getElementById("filterPanel");
+    p.style.display = p.style.display === "none" ? "block" : "none";
+  };
+  document.getElementById("fl_trip").onchange = e => { filter.tripId = e.target.value; applyFilter(); };
+  document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
+  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; applyFilter(); };
+  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; applyFilter(); };
+  document.getElementById("fl_clear").onclick = () => {
+    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
+    refreshFilterUI(); applyFilter();
+  };
+  refreshFilterUI();
+}
+
+/* ---------- 篩選 UI ---------- */
+function applyFilter(){
+  renderList(); renderMarkers();
+  if (choroLevel !== "off") setChoro(choroLevel);
+  renderFilterChips();
+}
+function refreshFilterUI(){
+  const trip = document.getElementById("fl_trip"); if (!trip) return;
+  trip.innerHTML = `<option value="all">全部</option><option value="daily">日常</option>` +
+    Object.values(trips).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  trip.value = filter.tripId;
+  const who = document.getElementById("fl_who");
+  who.innerHTML = `<option value="all">兩人合併</option>` +
+    Object.entries(members).map(([u,n])=>`<option value="${u}">${esc(n)}</option>`).join("");
+  who.value = filter.who;
+  document.getElementById("fl_from").value = filter.from;
+  document.getElementById("fl_to").value = filter.to;
+  const fc = document.getElementById("fl_cats");
+  fc.innerHTML = spaceCats.length
+    ? spaceCats.map(c=>`<span class="chip ${filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
+    : `<span style="font-size:12px;color:var(--ink-soft)">尚無分類</span>`;
+  fc.querySelectorAll(".chip").forEach(ch => ch.onclick = () => {
+    const k = ch.dataset.c; filter.cats.has(k)?filter.cats.delete(k):filter.cats.add(k);
+    ch.classList.toggle("on"); applyFilter();
+  });
+  renderFilterChips();
+}
+function renderFilterChips(){
+  const el = document.getElementById("filterChips"); if (!el) return;
+  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.region;
+  const n = Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
+  let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
+  if (filter.region) html += `<span class="fchip">${esc(filter.region.name)} <b data-x="region">✕</b></span>`;
+  el.innerHTML = html;
+  const x = el.querySelector('[data-x="region"]');
+  if (x) x.onclick = () => { filter.region = null; applyFilter(); };
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -356,8 +449,13 @@ function subscribe(){
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     if (tab === "trips") renderList();
+    refreshFilterUI();
   });
-  onSnapshot(metaDoc(), s => { spaceCats = (s.data()?.categories) || []; });
+  onSnapshot(metaDoc(), s => {
+    spaceCats = (s.data()?.categories) || [];
+    members   = (s.data()?.members) || {};
+    refreshFilterUI();
+  });
 }
 const metaDoc   = () => doc(db, "spaces", CONFIG.spaceId, "meta", "config");
 const placesCol = () => collection(db, "spaces", CONFIG.spaceId, "places");
@@ -371,6 +469,7 @@ function renderMarkers(){
   markers.forEach(m => m.map = null); markers = [];
   if (!showPins) return;
   Object.values(places).forEach(p => {
+    if (!passFilter(p)) return;
     const color = p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
     const pin = new Pin({ background:color, borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
     pin.element.style.cursor = "pointer";
@@ -441,6 +540,7 @@ async function ensureVillage(){
 function deepestMap(codeOf){
   const m = {};
   for (const p of Object.values(places)){
+    if (!passFilter(p)) continue;
     const lv = effLevel(p); if (!lv) continue;
     const code = codeOf(p); if (!code) continue;
     const d = LEVEL_ORDER.indexOf(lv);
@@ -474,8 +574,18 @@ async function setChoro(level){
     return {
       fillColor: has ? LEVEL_COLORS[LEVEL_ORDER[d]] : "#e5e0d6",
       fillOpacity: has ? choroAlpha : 0.12,
-      strokeColor: "#ffffff", strokeWeight: 0.6, clickable: false
+      strokeColor: "#ffffff", strokeWeight: 0.6, clickable: true
     };
+  });
+  choroLayer.addListener("click", ev => {
+    filter.region = {
+      key: CODEKEY[level],
+      code: ev.feature.getProperty(codeProp),
+      name: ev.feature.getProperty(NAMEKEY[level])
+    };
+    tab = "visited";
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
+    applyFilter();
   });
 }
 
@@ -488,13 +598,14 @@ function renderList(){
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
 
-  const items = Object.values(places).filter(p => p.status === tab);
+  const items = Object.values(places).filter(p => p.status === tab && passFilter(p));
   if (!items.length){
-    el.innerHTML = `<div class="empty">${tab==="visited"?"還沒有記錄。搜尋或點地圖加入第一個去過的地方吧。":"還沒有想去的地方。搜尋景點加入願望清單。"}</div>`;
-    return;
+    el.innerHTML = `<div class="empty">${tab==="visited"?"沒有符合的地點。":"沒有符合的地點。"}</div>`;
+    renderFilterChips(); return;
   }
   el.innerHTML = items.map(cardHTML).join("");
   items.forEach(p => document.getElementById("c_"+p.id).onclick = () => openDetail(p.id));
+  renderFilterChips();
 }
 function cardHTML(p){
   const dotColor = p.status==="wishlist" ? "var(--wish)" : "var(--visited)";
@@ -576,6 +687,11 @@ function openEditor(id, seed){
   let cats = new Set(p.categories||[]);
   let status = p.status || "visited";
   let level = p.level || "";
+  const pu = partnerUid();
+  let whoSel = "me";
+  if (id){ const pw = p.who||[]; if (pu && pw.includes(pu)) whoSel = pw.includes(user.uid) ? "both" : "partner"; }
+  else if (pu) whoSel = "both";
+  let tripSel = p.tripId || "";
 
   modal(`
     <h2>${id?"編輯":"加入"}地點</h2>
@@ -591,6 +707,19 @@ function openEditor(id, seed){
     </div>
     <div class="field"><label>造訪深度(地圖染色用)</label>
       <div class="pick" id="f_level">${LEVELS_UI.map(l=>{const on=(l==='無'?!level:level===l);return `<span class="chip ${on?'on':''}" data-l="${l}">${l}</span>`;}).join("")}</div>
+    </div>
+    <div class="field"><label>誰去的</label>
+      <div class="seg" id="f_who">
+        <button data-w="me" class="${whoSel==='me'?'on-v':''}">我</button>
+        <button data-w="partner" class="${whoSel==='partner'?'on-v':''}">對方</button>
+        <button data-w="both" class="${whoSel==='both'?'on-v':''}">一起</button>
+      </div>
+    </div>
+    <div class="field"><label>屬於</label>
+      <select id="f_trip">
+        <option value="">日常</option>
+        ${Object.values(trips).map(t=>`<option value="${t.id}" ${tripSel===t.id?'selected':''}>${esc(t.name)}</option>`).join("")}
+      </select>
     </div>
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
@@ -634,6 +763,11 @@ function openEditor(id, seed){
     document.querySelectorAll("#f_level .chip").forEach(x => x.classList.remove("on"));
     c.classList.add("on");
   });
+  document.querySelectorAll("#f_who button").forEach(b => b.onclick = () => {
+    whoSel = b.dataset.w;
+    document.querySelectorAll("#f_who button").forEach(x => x.className = "");
+    b.className = "on-v";
+  });
   document.getElementById("f_cancel").onclick = closeModal;
   document.getElementById("f_save").onclick = async () => {
     const name = document.getElementById("f_name").value.trim();
@@ -641,9 +775,13 @@ function openEditor(id, seed){
     const noteText = document.getElementById("f_note").value.trim();
     const rating = +document.getElementById("f_rating").value;
     const note = noteText ? [{ uid:user.uid, name:me(), text:noteText, rating, at:new Date().toISOString() }] : [];
+    const who = whoSel==="me" ? [user.uid]
+              : whoSel==="partner" ? (pu?[pu]:[user.uid])
+              : [user.uid, pu].filter(Boolean);
     const data = {
       name, lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
       admin:p.admin||{}, status, categories:[...cats], level,
+      who, tripId: document.getElementById("f_trip").value,
       visitedOn: status==="visited" ? (document.getElementById("f_date").value||"") : ""
     };
     if(id){ await updateDoc(placeDoc(id), data); }
