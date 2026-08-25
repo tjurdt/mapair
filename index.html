@@ -41,7 +41,9 @@
   #setpanel .setrow input[type=range]{flex:1}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
   #filterbar{padding:8px 12px 0;position:relative}
-  #filterChips{margin-left:8px}
+  #filterbar .frow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .fmini{padding:6px;border:1px solid var(--line);border-radius:8px;font-size:12px;max-width:130px;background:#fff}
+  #filterChips{display:block;margin-top:6px}
   .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 9px;margin-left:4px;font-size:12px;color:var(--ink-soft)}
   .fchip.active{background:var(--ink);color:#fff}
   .fchip b{cursor:pointer;margin-left:3px}
@@ -228,6 +230,7 @@ let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level";
+let catColors = {}, markerMode = "status", lastMarkerClick = 0;
 let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
@@ -311,6 +314,14 @@ async function renderApp(){
               <option value="last">最後造訪</option>
             </select>
           </label>
+          <label class="setrow">地標配色
+            <select id="set_markermode" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:8px">
+              <option value="status">狀態</option>
+              <option value="trip">旅程</option>
+              <option value="cat">分類</option>
+            </select>
+          </label>
+          <button id="set_colors" class="btn grey mini" style="width:100%;margin-top:8px">管理分類顏色…</button>
         </div>
       </div>
       <div class="side">
@@ -320,18 +331,18 @@ async function renderApp(){
           <button class="tab" data-t="trips">行程</button>
         </div>
         <div id="filterbar">
-          <button id="filterToggle" class="btn grey mini">篩選</button>
+          <div class="frow">
+            <select id="fl_trip" class="fmini"></select>
+            <select id="fl_who" class="fmini"></select>
+            <button id="fl_more" class="btn grey mini">更多 ▾</button>
+            <button id="fl_clear" class="btn grey mini" style="display:none">清除</button>
+          </div>
           <span id="filterChips"></span>
           <div id="filterPanel" style="display:none">
-            <div class="ffgrid">
-              <div class="ff"><label>旅程</label><select id="fl_trip"></select></div>
-              <div class="ff"><label>誰</label><select id="fl_who"></select></div>
-            </div>
             <div class="ff"><label>日期範圍</label>
               <div class="ffgrid"><input type="date" id="fl_from"><input type="date" id="fl_to"></div>
             </div>
             <div class="ff"><label>分類</label><div class="pick" id="fl_cats"></div></div>
-            <button id="fl_clear" class="btn grey mini">清除全部篩選</button>
           </div>
         </div>
         <div class="search" id="searchWrap">
@@ -362,11 +373,13 @@ async function renderApp(){
     choroMetric = e.target.value;
     if (choroLevel !== "off") setChoro(choroLevel);
   };
+  document.getElementById("set_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
+  document.getElementById("set_colors").onclick = openColorManager;
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
   setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
 
-  document.getElementById("filterToggle").onclick = () => {
+  document.getElementById("fl_more").onclick = () => {
     const p = document.getElementById("filterPanel");
     p.style.display = p.style.display === "none" ? "block" : "none";
   };
@@ -376,9 +389,27 @@ async function renderApp(){
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
+    document.getElementById("filterPanel").style.display = "none";
     refreshFilterUI(); applyFilter();
   };
   refreshFilterUI();
+}
+
+function openColorManager(){
+  modal(`<h2 style="margin-bottom:2px">分類顏色</h2>
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存。旅程顏色請到各旅程編輯裡設定。</div>
+    <div>${spaceCats.length ? spaceCats.map(c=>`
+      <div class="row" style="align-items:center;margin-bottom:8px">
+        <span style="flex:1">${esc(c)}</span>
+        <input type="color" data-cat="${esc(c)}" value="${catColors[c]||'#d98b3f'}" style="width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px">
+      </div>`).join("") : `<div class="empty">還沒有分類</div>`}</div>
+    <div class="row"><button class="btn" id="cm_done">完成</button></div>`);
+  document.querySelectorAll('input[data-cat]').forEach(inp => inp.onchange = () => {
+    catColors[inp.dataset.cat] = inp.value;
+    setDoc(metaDoc(), { catColors: { [inp.dataset.cat]: inp.value } }, { merge:true });
+    if (markerMode === "cat") renderMarkers();
+  });
+  document.getElementById("cm_done").onclick = closeModal;
 }
 
 /* ---------- 篩選 UI ---------- */
@@ -389,8 +420,8 @@ function applyFilter(){
 }
 function refreshFilterUI(){
   const trip = document.getElementById("fl_trip"); if (!trip) return;
-  trip.innerHTML = `<option value="all">全部</option><option value="daily">日常</option>` +
-    Object.values(trips).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
+    Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
   const who = document.getElementById("fl_who");
   who.innerHTML = `<option value="all">兩人合併</option>` +
@@ -411,6 +442,7 @@ function refreshFilterUI(){
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.region;
+  const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
   if (filter.region) html += `<span class="fchip">${esc(filter.region.name)} <b data-x="region">✕</b></span>`;
@@ -449,6 +481,7 @@ async function initMap(){
     mapTypeControl:false, streetViewControl:false, fullscreenControl:false, clickableIcons:false
   });
   map.addListener("click", async e => {
+    if (Date.now() - lastMarkerClick < 500) return;   // 剛點到地標,不要新增
     const lat=e.latLng.lat(), lng=e.latLng.lng();
     const admin = await reverseGeocode(lat,lng);
     openEditor(null, { name:"", lat, lng, admin, source:"map" });
@@ -471,7 +504,9 @@ function subscribe(){
   onSnapshot(metaDoc(), s => {
     spaceCats = (s.data()?.categories) || [];
     members   = (s.data()?.members) || {};
+    catColors = (s.data()?.catColors) || {};
     refreshFilterUI();
+    if (choroLevel !== "off") renderMarkers();
   });
 }
 const metaDoc   = () => doc(db, "spaces", CONFIG.spaceId, "meta", "config");
@@ -481,17 +516,21 @@ const tripsCol  = () => collection(db, "spaces", CONFIG.spaceId, "trips");
 const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
+function markerColor(p){
+  if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
+  if (markerMode === "cat"){ const c=(p.categories||[]).find(c=>catColors[c]); if(c) return catColors[c]; }
+  return p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
+}
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
   if (!showPins) return;
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
-    const color = p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
-    const pin = new Pin({ background:color, borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
+    const pin = new Pin({ background:markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
     pin.element.style.cursor = "pointer";
-    pin.element.addEventListener("click", () => openEditor(p.id));
-    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name });
+    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
+    m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
     markers.push(m);
   });
 }
@@ -577,24 +616,26 @@ function lerpHex(a,b,t){
   return "#"+c(r1,r2)+c(g1,g2)+c(b1,b2);
 }
 function dateColor(d,min,max){
-  if(!min||!max||min===max) return "#3f7d78";
+  if(!min||!max||min===max) return "#6f9c94";
   const t=(new Date(d)-new Date(min))/(new Date(max)-new Date(min));
-  return lerpHex("#d7e6e2","#245c54", Math.max(0,Math.min(1,t))); // 早=淺 → 晚=深
+  return lerpHex("#e9e0b8","#173f39", Math.max(0,Math.min(1,t))); // 早=淺黃 → 晚=深綠(對比明顯)
 }
 function renderLegend(metric,ctx){
   const el=document.getElementById("legend"); if(!el) return;
-  let rows=[];
-  if(metric==="level"){
-    rows=[["#7b2d3a","居住"],["#b25b6b","住宿"],["#d98b3f","旅遊"],["#6f9c94","接地"],["#c3d0cb","經過"],["#e5e0d6","未到"]];
-  } else if(metric==="count"){
+  if(metric==="first"||metric==="last"){
+    const lab=metric==="first"?"初次造訪":"最後造訪";
+    const c0=dateColor(ctx.dmin,ctx.dmin,ctx.dmax), c1=dateColor(ctx.dmax,ctx.dmin,ctx.dmax);
+    el.innerHTML=`<div style="font-size:11px;margin-bottom:5px">${lab}</div>`+
+      `<div style="height:12px;width:130px;border-radius:3px;background:linear-gradient(90deg,${c0},${c1})"></div>`+
+      `<div style="display:flex;justify-content:space-between;width:130px;font-size:10px;margin-top:3px;color:var(--ink-soft)">`+
+      `<span>${(ctx.dmin||"").slice(0,7)||"早"}</span><span>${(ctx.dmax||"").slice(0,7)||"晚"}</span></div>`;
+    return;
+  }
+  let rows;
+  if(metric==="count"){
     rows=[[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]];
   } else {
-    const lab=metric==="first"?"初次造訪":"最後造訪";
-    rows=[[dateColor(ctx.dmin,ctx.dmin,ctx.dmax),(ctx.dmin||"早").slice(0,7)],
-          [dateColor(ctx.dmax,ctx.dmin,ctx.dmax),(ctx.dmax||"晚").slice(0,7)]];
-    el.innerHTML=`<div style="font-size:11px;margin-bottom:4px">${lab}</div>`+
-      rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
-    return;
+    rows=[["#7b2d3a","居住"],["#b25b6b","住宿"],["#d98b3f","旅遊"],["#6f9c94","接地"],["#c3d0cb","經過"],["#e5e0d6","未到"]];
   }
   el.innerHTML=rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
 }
@@ -635,10 +676,15 @@ async function setChoro(level){
   choroLayer = new google.maps.Data({ map });
   choroLayer.addGeoJson(fc);
   choroLayer.setStyle(f => {
-    const c = colorOf(f.getProperty(codeProp));
+    const code = f.getProperty(codeProp);
+    if (filter.region && filter.region.key === CODEKEY[level] && code !== filter.region.code){
+      return { fillColor:"#12202e", fillOpacity:0.55, strokeWeight:0, clickable:true };  // 暗色遮罩
+    }
+    const c = colorOf(code);
     return {
       fillColor: c || "#e5e0d6", fillOpacity: c ? choroAlpha : 0.12,
-      strokeColor: "#ffffff", strokeWeight: 0.6, clickable: true
+      strokeColor: (filter.region && code===filter.region.code) ? "#152230" : "#ffffff",
+      strokeWeight: (filter.region && code===filter.region.code) ? 1.6 : 0.6, clickable: true
     };
   });
   choroLayer.addListener("click", ev => {
@@ -749,7 +795,8 @@ function parseAdmin(comps){
    6) 新增 / 編輯地點
    ============================================================ */
 function openEditor(id, seed){
-  const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], notes:[], ...seed };
+  const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], ...seed };
+  let docId = id || null, creating = false;
   let cats = new Set(p.categories||[]);
   let status = p.status || "visited";
   let level = p.level || "";
@@ -760,7 +807,8 @@ function openEditor(id, seed){
   let tripSel = p.tripId || "";
 
   modal(`
-    <h2>${id?"編輯":"加入"}地點</h2>
+    <h2 style="margin-bottom:2px">${id?"編輯":"加入"}地點</h2>
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
     <div class="field"><label>名稱</label><input id="f_name" value="${esc(p.name||"")}"/></div>
     <div class="field"><label>狀態</label>
       <div class="seg" id="f_status">
@@ -769,7 +817,7 @@ function openEditor(id, seed){
       </div>
     </div>
     <div class="field"><label>在這裡做什麼</label>
-      <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${c}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
+      <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
     </div>
     <div class="field"><label>造訪深度(地圖染色用)</label>
       <div class="pick" id="f_level">${LEVELS_UI.map(l=>{const on=(l==='無'?!level:level===l);return `<span class="chip ${on?'on':''}" data-l="${l}">${l}</span>`;}).join("")}</div>
@@ -784,7 +832,7 @@ function openEditor(id, seed){
     <div class="field"><label>屬於</label>
       <select id="f_trip">
         <option value="">日常</option>
-        ${Object.values(trips).map(t=>`<option value="${t.id}" ${tripSel===t.id?'selected':''}>${esc(t.name)}</option>`).join("")}
+        ${Object.values(trips).map(t=>`<option value="${t.id}" ${tripSel===t.id?'selected':''}>${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("")}
         <option value="__new__">＋ 新增旅程…</option>
       </select>
     </div>
@@ -792,75 +840,92 @@ function openEditor(id, seed){
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
     </div>
     <div class="row">
-      ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:`<button class="btn grey" id="f_cancel">取消</button>`}
-      <button class="btn" id="f_save">儲存</button>
+      <button class="btn" id="f_done">完成</button>
+      ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:``}
     </div>
   `);
 
+  const nameEl = document.getElementById("f_name");
+  const dateEl = document.getElementById("f_date");
+  const fTrip  = document.getElementById("f_trip");
   const dateWrap = document.getElementById("f_datewrap");
+  fTrip.dataset.prev = tripSel;
+
+  function collect(){
+    const pu2 = partnerUid();
+    const who = whoSel==="me" ? [user.uid]
+              : whoSel==="partner" ? (pu2?[pu2]:[user.uid])
+              : [user.uid, pu2].filter(Boolean);
+    return {
+      name: nameEl.value.trim(), lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
+      admin:p.admin||{}, status, categories:[...cats], level, who,
+      tripId: fTrip.value==="__new__" ? "" : fTrip.value,
+      visitedOn: status==="visited" ? (dateEl.value||"") : ""
+    };
+  }
+  async function persist(){
+    const data = collect();
+    if (!docId){
+      if (!data.name || creating) return;
+      creating = true;
+      data.createdBy = user.uid; data.createdAt = serverTimestamp();
+      const ref = await addDoc(placesCol(), data); docId = ref.id; creating = false;
+    } else {
+      await updateDoc(placeDoc(docId), data);
+    }
+  }
+
   document.querySelectorAll("#f_status button").forEach(b => b.onclick = () => {
     status = b.dataset.s;
     document.querySelectorAll("#f_status button").forEach(x=>x.className="");
     b.className = status==="visited" ? "on-v" : "on-w";
     dateWrap.style.display = status==="wishlist" ? "none" : "block";
+    persist();
   });
   document.querySelectorAll("#f_cats .chip[data-c]").forEach(c => c.onclick = () => {
-    const k=c.dataset.c; cats.has(k)?cats.delete(k):cats.add(k); c.classList.toggle("on");
+    const k=c.dataset.c; cats.has(k)?cats.delete(k):cats.add(k); c.classList.toggle("on"); persist();
   });
-  document.getElementById("f_addcat").onclick = async () => {
+  document.getElementById("f_addcat").onclick = () => {
     const name = (prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
-    if(!name || spaceCats.includes(name)) { if(name) cats.add(name); return; }
-    spaceCats.push(name); cats.add(name);
-    setDoc(metaDoc(), { categories: arrayUnion(name) }, { merge:true });
+    if(!name) return;
+    if(!spaceCats.includes(name)){ spaceCats.push(name); setDoc(metaDoc(), { categories: arrayUnion(name) }, { merge:true }); }
+    cats.add(name);
     const chip = document.createElement("span");
     chip.className = "chip on"; chip.dataset.c = name; chip.textContent = name;
-    chip.onclick = () => { cats.has(name)?cats.delete(name):cats.add(name); chip.classList.toggle("on"); };
-    document.getElementById("f_addcat").before(chip);
+    chip.onclick = () => { cats.has(name)?cats.delete(name):cats.add(name); chip.classList.toggle("on"); persist(); };
+    document.getElementById("f_addcat").before(chip); persist();
   };
   document.querySelectorAll("#f_level .chip").forEach(c => c.onclick = () => {
     level = c.dataset.l === "無" ? "" : c.dataset.l;
     document.querySelectorAll("#f_level .chip").forEach(x => x.classList.remove("on"));
-    c.classList.add("on");
+    c.classList.add("on"); persist();
   });
   document.querySelectorAll("#f_who button").forEach(b => b.onclick = () => {
     whoSel = b.dataset.w;
     document.querySelectorAll("#f_who button").forEach(x => x.className = "");
-    b.className = "on-v";
+    b.className = "on-v"; persist();
   });
-  const fTrip = document.getElementById("f_trip");
-  fTrip.dataset.prev = tripSel;
+  nameEl.addEventListener("change", persist);
+  nameEl.addEventListener("blur", persist);
+  dateEl.addEventListener("change", persist);
   fTrip.onchange = async () => {
-    if (fTrip.value !== "__new__"){ fTrip.dataset.prev = fTrip.value; return; }
-    const t = await createTripInline();
-    if (t){
-      const opt = document.createElement("option");
-      opt.value = t.id; opt.textContent = t.name;
-      fTrip.querySelector('option[value="__new__"]').before(opt);
-      fTrip.value = t.id; fTrip.dataset.prev = t.id;
-    } else {
-      fTrip.value = fTrip.dataset.prev || "";
+    if (fTrip.value === "__new__"){
+      const t = await createTripInline();
+      if (t){
+        const opt = document.createElement("option");
+        opt.value = t.id; opt.textContent = t.name;
+        fTrip.querySelector('option[value="__new__"]').before(opt);
+        fTrip.value = t.id;
+      } else { fTrip.value = fTrip.dataset.prev || ""; return; }
     }
+    fTrip.dataset.prev = fTrip.value; persist();
   };
-  const fc_cancel = document.getElementById("f_cancel");
-  if (fc_cancel) fc_cancel.onclick = closeModal;
-  const fc_del = document.getElementById("f_del");
-  if (fc_del) fc_del.onclick = async () => { if(confirm("確定刪除這個地點?")){ await deleteDoc(placeDoc(id)); closeModal(); } };
-  document.getElementById("f_save").onclick = async () => {
-    const name = document.getElementById("f_name").value.trim();
-    if(!name) return alert("請輸入名稱");
-    const who = whoSel==="me" ? [user.uid]
-              : whoSel==="partner" ? (pu?[pu]:[user.uid])
-              : [user.uid, pu].filter(Boolean);
-    const data = {
-      name, lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
-      admin:p.admin||{}, status, categories:[...cats], level,
-      who, tripId: document.getElementById("f_trip").value,
-      visitedOn: status==="visited" ? (document.getElementById("f_date").value||"") : ""
-    };
-    if(id){ await updateDoc(placeDoc(id), data); }
-    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); await addDoc(placesCol(), data); }
-    closeModal();
-  };
+  document.getElementById("f_done").onclick = async () => { await persist(); closeModal(); };
+  const fdel = document.getElementById("f_del");
+  if (fdel) fdel.onclick = async () => { if(confirm("確定刪除這個地點?")){ await deleteDoc(placeDoc(docId||id)); closeModal(); } };
+
+  // 由搜尋/點圖新增、且已有名稱 → 立即建立(自動儲存)
+  if (!id && collect().name) persist();
 }
 
 /* ============================================================
@@ -881,44 +946,63 @@ function renderTrips(el){
   el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新旅程</button>` +
     (list.length ? list.map(t=>`
       <div class="card triprow" id="t_${t.id}">
+        <span style="font-size:20px;width:26px;text-align:center">${t.emoji||"🧭"}</span>
         <div style="flex:1">
           <h3>${esc(t.name)}</h3>
           <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${count(t.id)} 個地點</div>
         </div>
+        <span style="width:12px;height:12px;border-radius:3px;background:${t.color||'#3f7d78'}"></span>
         <button class="btn mini grey" data-edit="${t.id}">編輯</button>
-        <button class="btn mini" data-del="${t.id}" style="background:#eee;color:#b23b3b">✕</button>
       </div>`).join("") : `<div class="empty">還沒有旅程。建立一個,再到地點的「屬於」把地點歸進來。</div>`);
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
-    if (ev.target.dataset.del || ev.target.dataset.edit) return;
+    if (ev.target.dataset.edit) return;
     filter.tripId = t.id; tab = "visited";
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
-  el.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
-    if (confirm("刪除這個旅程?(裡面的地點不會刪,只會變回日常)")) await deleteDoc(tripDoc(b.dataset.del));
-  });
 }
 function editTrip(id){
+  let docId = id || null, creating = false;
   const t = id ? trips[id] : {};
+  const g = x => document.getElementById(x);
   modal(`
-    <h2>${id?"編輯":"新"}旅程</h2>
-    <div class="field"><label>名稱</label><input id="t_name" value="${esc(t.name||"")}" placeholder="例:2026 東京"/></div>
-    <div class="row">
-      <div class="field"><label>開始</label><input type="date" id="t_start" value="${t.startDate||""}"/></div>
-      <div class="field"><label>結束</label><input type="date" id="t_end" value="${t.endDate||""}"/></div>
+    <h2 style="margin-bottom:2px">${id?"編輯":"新"}旅程</h2>
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
+    <div class="field"><label>表情 + 名稱</label>
+      <div class="row" style="gap:8px">
+        <input id="t_emoji" value="${esc(t.emoji||"")}" maxlength="2" placeholder="🎏" style="flex:0 0 56px;text-align:center;font-size:20px">
+        <input id="t_name" value="${esc(t.name||"")}" placeholder="例:2026 東京" style="flex:1">
+      </div>
     </div>
-    <div class="row"><button class="btn grey" id="t_cancel">取消</button><button class="btn" id="t_save">${id?"儲存":"建立"}</button></div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>開始</label><input type="date" id="t_start" value="${t.startDate||""}"></div>
+      <div class="field" style="flex:1"><label>結束</label><input type="date" id="t_end" value="${t.endDate||""}"></div>
+    </div>
+    <div class="field"><label>顏色</label>
+      <input type="color" id="t_color" value="${t.color||"#3f7d78"}" style="width:48px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px">
+    </div>
+    <div class="row">
+      <button class="btn" id="t_done">完成</button>
+      ${id?`<button class="danger" id="t_del" style="border-radius:10px">刪除</button>`:``}
+    </div>
   `);
-  document.getElementById("t_cancel").onclick = closeModal;
-  document.getElementById("t_save").onclick = async () => {
-    const name = document.getElementById("t_name").value.trim(); if(!name) return alert("請輸入名稱");
-    const data = { name, startDate:document.getElementById("t_start").value, endDate:document.getElementById("t_end").value };
-    if(id){ await updateDoc(tripDoc(id), data); }
-    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); await addDoc(tripsCol(), data); }
-    closeModal();
-  };
+  function collect(){ return { emoji:g("t_emoji").value.trim(), name:g("t_name").value.trim(),
+    startDate:g("t_start").value, endDate:g("t_end").value, color:g("t_color").value }; }
+  async function persist(){
+    const data = collect();
+    if (!docId){ if(!data.name||creating) return; creating=true;
+      data.createdBy=user.uid; data.createdAt=serverTimestamp();
+      const ref=await addDoc(tripsCol(),data); docId=ref.id; creating=false; }
+    else await updateDoc(tripDoc(docId), data);
+  }
+  ["t_emoji","t_name","t_start","t_end","t_color"].forEach(x => {
+    g(x).addEventListener("change", persist); g(x).addEventListener("blur", persist);
+  });
+  g("t_done").onclick = async () => { await persist(); closeModal(); };
+  const td = g("t_del");
+  if (td) td.onclick = async () => { if(confirm("刪除這個旅程?(裡面的地點不會刪,只會變回日常)")){ await deleteDoc(tripDoc(docId||id)); closeModal(); } };
 }
 
 /* ============================================================
