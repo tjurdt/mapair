@@ -40,15 +40,17 @@
   #setpanel .setrow{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:6px 0}
   #setpanel .setrow input[type=range]{flex:1}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
-  #filterbar{padding:8px 12px 0}
+  #filterbar{padding:8px 12px 0;position:relative}
   #filterChips{margin-left:8px}
   .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 9px;margin-left:4px;font-size:12px;color:var(--ink-soft)}
   .fchip.active{background:var(--ink);color:#fff}
   .fchip b{cursor:pointer;margin-left:3px}
-  #filterPanel{margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  #filterPanel{position:absolute;top:calc(100% + 4px);left:12px;right:12px;z-index:20;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  #filterPanel .ffgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   #filterPanel .ff{margin-bottom:10px;font-size:13px}
   #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:4px}
-  #filterPanel select,#filterPanel input[type=date]{padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  #filterPanel select,#filterPanel input[type=date]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .card.triprow{display:flex;align-items:center;gap:8px}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
   #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
@@ -225,7 +227,7 @@ let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, Autocomplete
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
-let showPins = true, choroAlpha = 0.7;
+let showPins = true, choroAlpha = 0.7, choroMetric = "level";
 let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
@@ -301,6 +303,14 @@ async function renderApp(){
           <label class="setrow">上色透明度
             <input type="range" id="set_alpha" min="10" max="90" value="70">
           </label>
+          <label class="setrow">上色依據
+            <select id="set_metric" style="flex:1;padding:5px;border:1px solid var(--line);border-radius:8px">
+              <option value="level">造訪深度</option>
+              <option value="count">地標數</option>
+              <option value="first">初次造訪</option>
+              <option value="last">最後造訪</option>
+            </select>
+          </label>
         </div>
       </div>
       <div class="side">
@@ -313,10 +323,13 @@ async function renderApp(){
           <button id="filterToggle" class="btn grey mini">篩選</button>
           <span id="filterChips"></span>
           <div id="filterPanel" style="display:none">
-            <div class="ff"><label>旅程</label><select id="fl_trip"></select></div>
-            <div class="ff"><label>誰</label><select id="fl_who"></select></div>
+            <div class="ffgrid">
+              <div class="ff"><label>旅程</label><select id="fl_trip"></select></div>
+              <div class="ff"><label>誰</label><select id="fl_who"></select></div>
+            </div>
             <div class="ff"><label>日期範圍</label>
-              <input type="date" id="fl_from"> ~ <input type="date" id="fl_to"></div>
+              <div class="ffgrid"><input type="date" id="fl_from"><input type="date" id="fl_to"></div>
+            </div>
             <div class="ff"><label>分類</label><div class="pick" id="fl_cats"></div></div>
             <button id="fl_clear" class="btn grey mini">清除全部篩選</button>
           </div>
@@ -343,6 +356,10 @@ async function renderApp(){
   document.getElementById("set_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
   document.getElementById("set_alpha").oninput = e => {
     choroAlpha = (+e.target.value)/100;
+    if (choroLevel !== "off") setChoro(choroLevel);
+  };
+  document.getElementById("set_metric").onchange = e => {
+    choroMetric = e.target.value;
     if (choroLevel !== "off") setChoro(choroLevel);
   };
 
@@ -473,7 +490,7 @@ function renderMarkers(){
     const color = p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
     const pin = new Pin({ background:color, borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
     pin.element.style.cursor = "pointer";
-    pin.element.addEventListener("click", () => openDetail(p.id));
+    pin.element.addEventListener("click", () => openEditor(p.id));
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name });
     markers.push(m);
   });
@@ -536,25 +553,57 @@ async function ensureVillage(){
   }
   return { type:"FeatureCollection", features: feats };
 }
-// 每個行政區代碼 → 最深的造訪深度 index
-function deepestMap(codeOf){
+// 每個行政區代碼 → 符合篩選、已造訪的地點清單
+function regionPlaces(codeOf){
   const m = {};
   for (const p of Object.values(places)){
     if (!passFilter(p)) continue;
-    const lv = effLevel(p); if (!lv) continue;
+    if (p.status !== "visited") continue;
     const code = codeOf(p); if (!code) continue;
-    const d = LEVEL_ORDER.indexOf(lv);
-    if (m[code] === undefined || d > m[code]) m[code] = d;
+    (m[code] = m[code] || []).push(p);
   }
   return m;
+}
+function regionDate(pls, which){
+  const ds = pls.map(p => p.visitedOn).filter(Boolean).sort();
+  return which === "first" ? ds[0] : ds[ds.length-1];
+}
+const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
+function countColor(n){ return COUNT_SHADES[n>=10?4:n>=5?3:n>=3?2:n>=2?1:0]; }
+function lerpHex(a,b,t){
+  const p=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+  const [r1,g1,b1]=p(a),[r2,g2,b2]=p(b);
+  const c=(x,y)=>Math.round(x+(y-x)*t).toString(16).padStart(2,"0");
+  return "#"+c(r1,r2)+c(g1,g2)+c(b1,b2);
+}
+function dateColor(d,min,max){
+  if(!min||!max||min===max) return "#3f7d78";
+  const t=(new Date(d)-new Date(min))/(new Date(max)-new Date(min));
+  return lerpHex("#d7e6e2","#245c54", Math.max(0,Math.min(1,t))); // 早=淺 → 晚=深
+}
+function renderLegend(metric,ctx){
+  const el=document.getElementById("legend"); if(!el) return;
+  let rows=[];
+  if(metric==="level"){
+    rows=[["#7b2d3a","居住"],["#b25b6b","住宿"],["#d98b3f","旅遊"],["#6f9c94","接地"],["#c3d0cb","經過"],["#e5e0d6","未到"]];
+  } else if(metric==="count"){
+    rows=[[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]];
+  } else {
+    const lab=metric==="first"?"初次造訪":"最後造訪";
+    rows=[[dateColor(ctx.dmin,ctx.dmin,ctx.dmax),(ctx.dmin||"早").slice(0,7)],
+          [dateColor(ctx.dmax,ctx.dmin,ctx.dmax),(ctx.dmax||"晚").slice(0,7)]];
+    el.innerHTML=`<div style="font-size:11px;margin-bottom:4px">${lab}</div>`+
+      rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
+    return;
+  }
+  el.innerHTML=rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
 }
 
 async function setChoro(level){
   choroLevel = level;
   document.querySelectorAll("#mapctl button").forEach(b => b.classList.toggle("on", b.dataset.l === level));
-  document.getElementById("legend").style.display = level === "off" ? "none" : "block";
   if (choroLayer){ choroLayer.setMap(null); choroLayer = null; }
-  if (level === "off") return;
+  if (level === "off"){ document.getElementById("legend").style.display = "none"; return; }
 
   let fc, codeProp, codeOf;
   try {
@@ -565,15 +614,30 @@ async function setChoro(level){
     alert("行政區資料載入失敗——確認 geo/ 資料夾已上傳到 repo:\n" + e.message);
     setChoro("off"); return;
   }
-  const depth = deepestMap(codeOf);
+
+  const byRegion = regionPlaces(codeOf);
+  let dmin, dmax;
+  if (choroMetric === "first" || choroMetric === "last"){
+    const ds = [];
+    for (const code in byRegion){ const d = regionDate(byRegion[code], choroMetric); if(d) ds.push(d); }
+    ds.sort(); dmin = ds[0]; dmax = ds[ds.length-1];
+  }
+  const colorOf = code => {
+    const pls = byRegion[code]; if (!pls || !pls.length) return null;
+    if (choroMetric === "level"){
+      let best=-1; for(const p of pls){ const i=LEVEL_ORDER.indexOf(effLevel(p)); if(i>best) best=i; }
+      return best<0 ? null : LEVEL_COLORS[LEVEL_ORDER[best]];
+    }
+    if (choroMetric === "count") return countColor(pls.length);
+    const d = regionDate(pls, choroMetric); return d ? dateColor(d, dmin, dmax) : null;
+  };
+
   choroLayer = new google.maps.Data({ map });
   choroLayer.addGeoJson(fc);
   choroLayer.setStyle(f => {
-    const d = depth[f.getProperty(codeProp)];
-    const has = d !== undefined;
+    const c = colorOf(f.getProperty(codeProp));
     return {
-      fillColor: has ? LEVEL_COLORS[LEVEL_ORDER[d]] : "#e5e0d6",
-      fillOpacity: has ? choroAlpha : 0.12,
+      fillColor: c || "#e5e0d6", fillOpacity: c ? choroAlpha : 0.12,
       strokeColor: "#ffffff", strokeWeight: 0.6, clickable: true
     };
   });
@@ -587,6 +651,8 @@ async function setChoro(level){
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     applyFilter();
   });
+  renderLegend(choroMetric, { dmin, dmax });
+  document.getElementById("legend").style.display = "block";
 }
 
 /* ============================================================
@@ -604,7 +670,7 @@ function renderList(){
     renderFilterChips(); return;
   }
   el.innerHTML = items.map(cardHTML).join("");
-  items.forEach(p => document.getElementById("c_"+p.id).onclick = () => openDetail(p.id));
+  items.forEach(p => document.getElementById("c_"+p.id).onclick = () => openEditor(p.id));
   renderFilterChips();
 }
 function cardHTML(p){
@@ -719,21 +785,14 @@ function openEditor(id, seed){
       <select id="f_trip">
         <option value="">日常</option>
         ${Object.values(trips).map(t=>`<option value="${t.id}" ${tripSel===t.id?'selected':''}>${esc(t.name)}</option>`).join("")}
+        <option value="__new__">＋ 新增旅程…</option>
       </select>
     </div>
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
     </div>
-    <div class="field"><label>你的感想(選填)</label>
-      <textarea id="f_note" placeholder="寫下當下的心情…"></textarea>
-      <div style="margin-top:8px"><label style="display:inline">評分</label>
-        <select id="f_rating" style="width:auto;display:inline;margin-left:8px">
-          <option value="0">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
-        </select>
-      </div>
-    </div>
     <div class="row">
-      <button class="btn grey" id="f_cancel">取消</button>
+      ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:`<button class="btn grey" id="f_cancel">取消</button>`}
       <button class="btn" id="f_save">儲存</button>
     </div>
   `);
@@ -768,13 +827,27 @@ function openEditor(id, seed){
     document.querySelectorAll("#f_who button").forEach(x => x.className = "");
     b.className = "on-v";
   });
-  document.getElementById("f_cancel").onclick = closeModal;
+  const fTrip = document.getElementById("f_trip");
+  fTrip.dataset.prev = tripSel;
+  fTrip.onchange = async () => {
+    if (fTrip.value !== "__new__"){ fTrip.dataset.prev = fTrip.value; return; }
+    const t = await createTripInline();
+    if (t){
+      const opt = document.createElement("option");
+      opt.value = t.id; opt.textContent = t.name;
+      fTrip.querySelector('option[value="__new__"]').before(opt);
+      fTrip.value = t.id; fTrip.dataset.prev = t.id;
+    } else {
+      fTrip.value = fTrip.dataset.prev || "";
+    }
+  };
+  const fc_cancel = document.getElementById("f_cancel");
+  if (fc_cancel) fc_cancel.onclick = closeModal;
+  const fc_del = document.getElementById("f_del");
+  if (fc_del) fc_del.onclick = async () => { if(confirm("確定刪除這個地點?")){ await deleteDoc(placeDoc(id)); closeModal(); } };
   document.getElementById("f_save").onclick = async () => {
     const name = document.getElementById("f_name").value.trim();
     if(!name) return alert("請輸入名稱");
-    const noteText = document.getElementById("f_note").value.trim();
-    const rating = +document.getElementById("f_rating").value;
-    const note = noteText ? [{ uid:user.uid, name:me(), text:noteText, rating, at:new Date().toISOString() }] : [];
     const who = whoSel==="me" ? [user.uid]
               : whoSel==="partner" ? (pu?[pu]:[user.uid])
               : [user.uid, pu].filter(Boolean);
@@ -785,7 +858,7 @@ function openEditor(id, seed){
       visitedOn: status==="visited" ? (document.getElementById("f_date").value||"") : ""
     };
     if(id){ await updateDoc(placeDoc(id), data); }
-    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); data.notes=note; await addDoc(placesCol(), data); }
+    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); await addDoc(placesCol(), data); }
     closeModal();
   };
 }
@@ -793,137 +866,58 @@ function openEditor(id, seed){
 /* ============================================================
    7) 詳情:雙方感想 + 加到行程
    ============================================================ */
-function openDetail(id){
-  const p = places[id]; if(!p) return;
-  const admin = [p.admin?.city,p.admin?.county,p.admin?.country].filter(Boolean).join(" · ");
-  const notes = (p.notes||[]).map(n => `
-    <div class="note">
-      <div class="meta"><span class="who-tag">${esc(n.name||"")}</span>
-        <span class="stars">${"★".repeat(n.rating||0)}${"☆".repeat(5-(n.rating||0))}</span></div>
-      <div>${esc(n.text)}</div>
-    </div>`).join("") || `<div class="empty" style="padding:16px">還沒有人寫下感想</div>`;
-  const tripOpts = Object.values(trips).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
-
-  modal(`
-    <h2>${esc(p.name)}</h2>
-    <div class="admin">${admin||""}${p.visitedOn?" · "+p.visitedOn:""}</div>
-    <div class="chips" style="margin-bottom:14px">${(p.categories||[]).map(c=>`<span class="chip">${c}</span>`).join("")}</div>
-
-    <div class="field"><label>感想</label>${notes}</div>
-    <div class="field">
-      <textarea id="d_note" placeholder="加上你的感想…"></textarea>
-      <div class="row" style="margin-top:8px">
-        <select id="d_rating"><option value="0">評分 —</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
-        <button class="btn mini" id="d_addnote">送出感想</button>
-      </div>
-    </div>
-
-    ${p.status==="wishlist" && tripOpts ? `
-    <div class="field"><label>加入行程</label>
-      <div class="row"><select id="d_trip">${tripOpts}</select>
-      <button class="btn mini grey" id="d_addtrip">加入</button></div>
-    </div>`:""}
-
-    <div class="row" style="margin-top:6px">
-      <button class="btn grey mini" id="d_toggle">${p.status==="visited"?"移回想去":"標記為去過"}</button>
-      <button class="btn mini" id="d_edit">編輯</button>
-      <button class="danger mini" style="border-radius:8px;padding:5px 10px" id="d_del">刪除</button>
-    </div>
-  `);
-
-  document.getElementById("d_addnote").onclick = async () => {
-    const text = document.getElementById("d_note").value.trim(); if(!text) return;
-    const rating = +document.getElementById("d_rating").value;
-    await updateDoc(placeDoc(id), { notes: arrayUnion({ uid:user.uid, name:me(), text, rating, at:new Date().toISOString() }) });
-    closeModal();
-  };
-  document.getElementById("d_toggle").onclick = async () => {
-    await updateDoc(placeDoc(id), { status: p.status==="visited"?"wishlist":"visited" }); closeModal();
-  };
-  document.getElementById("d_edit").onclick = () => { closeModal(); openEditor(id); };
-  document.getElementById("d_del").onclick = async () => { if(confirm("確定刪除?")){ await deleteDoc(placeDoc(id)); closeModal(); } };
-  const at = document.getElementById("d_addtrip");
-  if(at) at.onclick = async () => {
-    await updateDoc(tripDoc(document.getElementById("d_trip").value), { placeIds: arrayUnion(id) }); closeModal();
-  };
-}
-
 /* ============================================================
-   8) 行程規劃
+   7) 旅程(以 tripId 歸屬;點旅程 = 篩選該趟)
    ============================================================ */
+async function createTripInline(){
+  const name = (prompt("新旅程名稱(例:2026 東京)")||"").trim();
+  if (!name) return null;
+  const ref = await addDoc(tripsCol(), { name, startDate:"", endDate:"", createdBy:user.uid, createdAt:serverTimestamp() });
+  return { id: ref.id, name };
+}
 function renderTrips(el){
   const list = Object.values(trips);
-  el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新行程</button>` +
+  const count = id => Object.values(places).filter(p => p.tripId === id).length;
+  el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新旅程</button>` +
     (list.length ? list.map(t=>`
-      <div class="card" id="t_${t.id}">
-        <h3>${esc(t.name)}</h3>
-        <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${(t.placeIds||[]).length} 個地點</div>
-      </div>`).join("") : `<div class="empty">還沒有行程。建立一個,再把「想去」的地方加進來。</div>`);
-  document.getElementById("newtrip").onclick = createTrip;
-  list.forEach(t => document.getElementById("t_"+t.id).onclick = () => openTrip(t.id));
+      <div class="card triprow" id="t_${t.id}">
+        <div style="flex:1">
+          <h3>${esc(t.name)}</h3>
+          <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${count(t.id)} 個地點</div>
+        </div>
+        <button class="btn mini grey" data-edit="${t.id}">編輯</button>
+        <button class="btn mini" data-del="${t.id}" style="background:#eee;color:#b23b3b">✕</button>
+      </div>`).join("") : `<div class="empty">還沒有旅程。建立一個,再到地點的「屬於」把地點歸進來。</div>`);
+  document.getElementById("newtrip").onclick = () => editTrip();
+  list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
+    if (ev.target.dataset.del || ev.target.dataset.edit) return;
+    filter.tripId = t.id; tab = "visited";
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
+    refreshFilterUI(); applyFilter();
+  });
+  el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    if (confirm("刪除這個旅程?(裡面的地點不會刪,只會變回日常)")) await deleteDoc(tripDoc(b.dataset.del));
+  });
 }
-function createTrip(){
+function editTrip(id){
+  const t = id ? trips[id] : {};
   modal(`
-    <h2>新行程</h2>
-    <div class="field"><label>名稱</label><input id="t_name" placeholder="例:四國地質之旅"/></div>
+    <h2>${id?"編輯":"新"}旅程</h2>
+    <div class="field"><label>名稱</label><input id="t_name" value="${esc(t.name||"")}" placeholder="例:2026 東京"/></div>
     <div class="row">
-      <div class="field"><label>開始</label><input type="date" id="t_start"/></div>
-      <div class="field"><label>結束</label><input type="date" id="t_end"/></div>
+      <div class="field"><label>開始</label><input type="date" id="t_start" value="${t.startDate||""}"/></div>
+      <div class="field"><label>結束</label><input type="date" id="t_end" value="${t.endDate||""}"/></div>
     </div>
-    <div class="row"><button class="btn grey" id="t_cancel">取消</button><button class="btn" id="t_save">建立</button></div>
+    <div class="row"><button class="btn grey" id="t_cancel">取消</button><button class="btn" id="t_save">${id?"儲存":"建立"}</button></div>
   `);
   document.getElementById("t_cancel").onclick = closeModal;
   document.getElementById("t_save").onclick = async () => {
     const name = document.getElementById("t_name").value.trim(); if(!name) return alert("請輸入名稱");
-    await addDoc(tripsCol(), {
-      name, startDate:document.getElementById("t_start").value, endDate:document.getElementById("t_end").value,
-      placeIds:[], createdBy:user.uid, createdAt:serverTimestamp()
-    });
+    const data = { name, startDate:document.getElementById("t_start").value, endDate:document.getElementById("t_end").value };
+    if(id){ await updateDoc(tripDoc(id), data); }
+    else { data.createdBy=user.uid; data.createdAt=serverTimestamp(); await addDoc(tripsCol(), data); }
     closeModal();
-  };
-}
-function openTrip(id){
-  const t = trips[id]; if(!t) return;
-  const ids = t.placeIds || [];
-  const rows = ids.map((pid,i) => {
-    const p = places[pid]; if(!p) return "";
-    return `<div class="trip-place">
-      <span class="ord">${i+1}</span>
-      <span class="name">${esc(p.name)}</span>
-      <button class="btn mini grey" data-up="${i}">↑</button>
-      <button class="btn mini grey" data-down="${i}">↓</button>
-      <button class="btn mini" data-rm="${pid}" style="background:#eee;color:#b23b3b">×</button>
-    </div>`;
-  }).join("") || `<div class="empty" style="padding:16px">還沒有地點。在「想去」清單點地點 → 加入行程。</div>`;
-
-  modal(`
-    <h2>${esc(t.name)}</h2>
-    <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""}</div>
-    <div style="margin:14px 0">${rows}</div>
-    <div class="row">
-      <button class="btn grey" id="tr_map">在地圖上看路線</button>
-      <button class="danger" style="border-radius:10px" id="tr_del">刪除行程</button>
-    </div>
-  `);
-
-  const reorder = async (from,to) => {
-    const arr=[...ids]; if(to<0||to>=arr.length) return;
-    [arr[from],arr[to]]=[arr[to],arr[from]];
-    await updateDoc(tripDoc(id),{placeIds:arr}); closeModal(); openTrip(id);
-  };
-  document.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>reorder(+b.dataset.up,+b.dataset.up-1));
-  document.querySelectorAll("[data-down]").forEach(b=>b.onclick=()=>reorder(+b.dataset.down,+b.dataset.down+1));
-  document.querySelectorAll("[data-rm]").forEach(b=>b.onclick=async()=>{
-    await updateDoc(tripDoc(id),{placeIds:ids.filter(x=>x!==b.dataset.rm)}); closeModal(); openTrip(id);
-  });
-  document.getElementById("tr_del").onclick = async()=>{ if(confirm("刪除整個行程?")){ await deleteDoc(tripDoc(id)); closeModal(); } };
-  document.getElementById("tr_map").onclick = () => {
-    closeModal();
-    const path = ids.map(pid=>places[pid]).filter(Boolean).map(p=>({lat:p.lat,lng:p.lng}));
-    if(!path.length) return;
-    if(tripLine) tripLine.setMap(null);
-    tripLine = new google.maps.Polyline({ path, map, strokeColor:getCSS("--wish"), strokeWeight:3, strokeOpacity:.9 });
-    const b = new google.maps.LatLngBounds(); path.forEach(pt=>b.extend(pt)); map.fitBounds(b, 60);
   };
 }
 
