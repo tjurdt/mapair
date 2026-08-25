@@ -29,7 +29,15 @@
   .btn.grey{background:#eee;color:var(--ink)}
 
   .wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 58px)}
+  .mapcol{position:relative;height:100%;min-width:0}
   #map{width:100%;height:100%}
+  #mapctl{position:absolute;top:12px;left:12px;z-index:5;display:flex;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+  #mapctl button{border:none;background:#fff;padding:8px 13px;font-size:13px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line)}
+  #mapctl button:last-child{border-right:none}
+  #mapctl button.on{background:var(--ink);color:#fff}
+  #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
+  #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
+  #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
   .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
   .tabs{display:flex;padding:10px 12px 0;gap:6px}
   .tab{flex:1;border:none;background:transparent;padding:9px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
@@ -116,6 +124,7 @@
   });
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
@@ -145,6 +154,11 @@ const CONFIG = {
 };
 
 const CATEGORIES = ["美食","咖啡","自然","景點","約會","住宿","購物","文化","夜景","散步","其他"];
+
+/* 造訪深度:由淺到深(index 越大越深),染色時每個行政區取「最深」 */
+const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
+const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
+const LEVELS_UI    = ["居住","住宿","旅遊","接地","經過","無"];
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -195,6 +209,7 @@ let db, auth, user;
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken;
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
+let choroLevel = "off", choroLayer = null, geoCache = {};
 
 function boot(){
   document.getElementById("app").innerHTML =
@@ -231,7 +246,23 @@ async function renderApp(){
       <button class="btn ghost mini" id="logout">登出</button>
     </header>
     <div class="wrap">
-      <div id="map"></div>
+      <div class="mapcol">
+        <div id="map"></div>
+        <div id="mapctl">
+          <button data-l="off" class="on">地標</button>
+          <button data-l="county">縣市</button>
+          <button data-l="town">鄉鎮</button>
+          <button data-l="village">村里</button>
+        </div>
+        <div id="legend" style="display:none">
+          <div class="lg"><span class="sw" style="background:#7b2d3a"></span>居住</div>
+          <div class="lg"><span class="sw" style="background:#b25b6b"></span>住宿</div>
+          <div class="lg"><span class="sw" style="background:#d98b3f"></span>旅遊</div>
+          <div class="lg"><span class="sw" style="background:#6f9c94"></span>接地</div>
+          <div class="lg"><span class="sw" style="background:#c3d0cb"></span>經過</div>
+          <div class="lg"><span class="sw" style="background:#e5e0d6"></span>未到</div>
+        </div>
+      </div>
       <div class="side">
         <div class="tabs">
           <button class="tab" data-t="visited">去過</button>
@@ -252,6 +283,7 @@ async function renderApp(){
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
   subscribe();
+  document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => setChoro(b.dataset.l));
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -296,6 +328,7 @@ function subscribe(){
   onSnapshot(query(collection(db, ...base, "places"), orderBy("createdAt","desc")), snap => {
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
+    if (choroLevel !== "off") setChoro(choroLevel);
   });
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
@@ -321,6 +354,104 @@ function renderMarkers(){
   });
 }
 const getCSS = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+/* ============================================================
+   足跡染色(choropleth):載入 geo → turf 點判 → 依深度上色
+   ============================================================ */
+async function loadGeo(url){
+  if (geoCache[url]) return geoCache[url];
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " 讀取失敗(" + r.status + ")");
+  const j = await r.json();
+  geoCache[url] = j;
+  return j;
+}
+function pip(lat, lng, features, codeProp){
+  const pt = turf.point([lng, lat]);
+  for (const f of features){
+    try { if (turf.booleanPointInPolygon(pt, f)) return f.properties[codeProp]; } catch(e){}
+  }
+  return null;
+}
+// 造訪深度:沒設 level 的「去過」地點,預設當作「旅遊」;想去(wishlist)不算足跡
+function effLevel(p){ return p.level || (p.status === "visited" ? "旅遊" : ""); }
+
+// 確保每個地點都有該級的行政區代碼(算一次就寫回 Firestore 快取)
+async function ensureCounty(){
+  const geo = await loadGeo("geo/county.json");
+  for (const p of Object.values(places)){
+    if (p.countyCode) continue;
+    const code = pip(p.lat, p.lng, geo.features, "COUNTYCODE");
+    if (code){ p.countyCode = code; updateDoc(placeDoc(p.id), { countyCode: code }); }
+  }
+  return geo;
+}
+async function ensureTown(){
+  const geo = await loadGeo("geo/town.json");
+  for (const p of Object.values(places)){
+    if (p.townCode) continue;
+    const code = pip(p.lat, p.lng, geo.features, "TOWNCODE");
+    if (code){ p.townCode = code; updateDoc(placeDoc(p.id), { townCode: code }); }
+  }
+  return geo;
+}
+async function ensureVillage(){
+  await ensureCounty();  // 村里檔按縣載,需先有 countyCode
+  const counties = [...new Set(Object.values(places).map(p => p.countyCode).filter(Boolean))];
+  let feats = [];
+  for (const c of counties){
+    let geo;
+    try { geo = await loadGeo("geo/village/" + c + ".json"); } catch(e){ continue; }
+    feats = feats.concat(geo.features);
+    for (const p of Object.values(places)){
+      if (p.villCode || p.countyCode !== c) continue;
+      const code = pip(p.lat, p.lng, geo.features, "VILLCODE");
+      if (code){ p.villCode = code; updateDoc(placeDoc(p.id), { villCode: code }); }
+    }
+  }
+  return { type:"FeatureCollection", features: feats };
+}
+// 每個行政區代碼 → 最深的造訪深度 index
+function deepestMap(codeOf){
+  const m = {};
+  for (const p of Object.values(places)){
+    const lv = effLevel(p); if (!lv) continue;
+    const code = codeOf(p); if (!code) continue;
+    const d = LEVEL_ORDER.indexOf(lv);
+    if (m[code] === undefined || d > m[code]) m[code] = d;
+  }
+  return m;
+}
+
+async function setChoro(level){
+  choroLevel = level;
+  document.querySelectorAll("#mapctl button").forEach(b => b.classList.toggle("on", b.dataset.l === level));
+  document.getElementById("legend").style.display = level === "off" ? "none" : "block";
+  if (choroLayer){ choroLayer.setMap(null); choroLayer = null; }
+  if (level === "off") return;
+
+  let fc, codeProp, codeOf;
+  try {
+    if (level === "county"){ fc = await ensureCounty(); codeProp = "COUNTYCODE"; codeOf = p => p.countyCode; }
+    else if (level === "town"){ fc = await ensureTown(); codeProp = "TOWNCODE"; codeOf = p => p.townCode; }
+    else { fc = await ensureVillage(); codeProp = "VILLCODE"; codeOf = p => p.villCode; }
+  } catch(e){
+    alert("行政區資料載入失敗——確認 geo/ 資料夾已上傳到 repo:\n" + e.message);
+    setChoro("off"); return;
+  }
+  const depth = deepestMap(codeOf);
+  choroLayer = new google.maps.Data({ map });
+  choroLayer.addGeoJson(fc);
+  choroLayer.setStyle(f => {
+    const d = depth[f.getProperty(codeProp)];
+    const has = d !== undefined;
+    return {
+      fillColor: has ? LEVEL_COLORS[LEVEL_ORDER[d]] : "#e5e0d6",
+      fillOpacity: has ? 0.7 : 0.12,
+      strokeColor: "#ffffff", strokeWeight: 0.6, clickable: false
+    };
+  });
+}
 
 /* ============================================================
    4) 清單
@@ -418,6 +549,7 @@ function openEditor(id, seed){
   const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], notes:[], ...seed };
   let cats = new Set(p.categories||[]);
   let status = p.status || "visited";
+  let level = p.level || "";
 
   modal(`
     <h2>${id?"編輯":"加入"}地點</h2>
@@ -430,6 +562,9 @@ function openEditor(id, seed){
     </div>
     <div class="field"><label>在這裡做什麼</label>
       <div class="pick" id="f_cats">${CATEGORIES.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${c}">${c}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>造訪深度(地圖染色用)</label>
+      <div class="pick" id="f_level">${LEVELS_UI.map(l=>{const on=(l==='無'?!level:level===l);return `<span class="chip ${on?'on':''}" data-l="${l}">${l}</span>`;}).join("")}</div>
     </div>
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
@@ -458,6 +593,11 @@ function openEditor(id, seed){
   document.querySelectorAll("#f_cats .chip").forEach(c => c.onclick = () => {
     const k=c.dataset.c; cats.has(k)?cats.delete(k):cats.add(k); c.classList.toggle("on");
   });
+  document.querySelectorAll("#f_level .chip").forEach(c => c.onclick = () => {
+    level = c.dataset.l === "無" ? "" : c.dataset.l;
+    document.querySelectorAll("#f_level .chip").forEach(x => x.classList.remove("on"));
+    c.classList.add("on");
+  });
   document.getElementById("f_cancel").onclick = closeModal;
   document.getElementById("f_save").onclick = async () => {
     const name = document.getElementById("f_name").value.trim();
@@ -467,7 +607,7 @@ function openEditor(id, seed){
     const note = noteText ? [{ uid:user.uid, name:me(), text:noteText, rating, at:new Date().toISOString() }] : [];
     const data = {
       name, lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
-      admin:p.admin||{}, status, categories:[...cats],
+      admin:p.admin||{}, status, categories:[...cats], level,
       visitedOn: status==="visited" ? (document.getElementById("f_date").value||"") : ""
     };
     if(id){ await updateDoc(placeDoc(id), data); }
