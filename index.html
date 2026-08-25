@@ -35,6 +35,11 @@
   #mapctl button{border:none;background:#fff;padding:8px 13px;font-size:13px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line)}
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
+  #setBtn{position:absolute;top:12px;right:12px;z-index:5;width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:16px;color:var(--ink)}
+  #setpanel{position:absolute;top:56px;right:12px;z-index:6;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:12px;width:210px}
+  #setpanel .setrow{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:6px 0}
+  #setpanel .setrow input[type=range]{flex:1}
+  .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
   #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
@@ -129,7 +134,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
          onSnapshot, query, orderBy, arrayUnion, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 
@@ -153,7 +158,8 @@ const CONFIG = {
   spaceId: "us"                 // 兩人用同一個字串即共享
 };
 
-const CATEGORIES = ["美食","咖啡","自然","景點","約會","住宿","購物","文化","夜景","散步","其他"];
+/* 分類無預設,使用者自行新增,存在共享的 meta/config,兩人共用 */
+let spaceCats = [];
 
 /* 造訪深度:由淺到深(index 越大越深),染色時每個行政區取「最深」 */
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
@@ -210,6 +216,7 @@ let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, Autocomplete
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
+let showPins = true, choroAlpha = 0.7;
 
 function boot(){
   document.getElementById("app").innerHTML =
@@ -262,6 +269,13 @@ async function renderApp(){
           <div class="lg"><span class="sw" style="background:#c3d0cb"></span>經過</div>
           <div class="lg"><span class="sw" style="background:#e5e0d6"></span>未到</div>
         </div>
+        <button id="setBtn" title="顯示設定">⚙︎</button>
+        <div id="setpanel" style="display:none">
+          <label class="setrow"><input type="checkbox" id="set_pins" checked> 顯示地標</label>
+          <label class="setrow">上色透明度
+            <input type="range" id="set_alpha" min="10" max="90" value="70">
+          </label>
+        </div>
       </div>
       <div class="side">
         <div class="tabs">
@@ -284,6 +298,15 @@ async function renderApp(){
   wireSearch();
   subscribe();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => setChoro(b.dataset.l));
+  document.getElementById("setBtn").onclick = () => {
+    const p = document.getElementById("setpanel");
+    p.style.display = p.style.display === "none" ? "block" : "none";
+  };
+  document.getElementById("set_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
+  document.getElementById("set_alpha").oninput = e => {
+    choroAlpha = (+e.target.value)/100;
+    if (choroLevel !== "off") setChoro(choroLevel);
+  };
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -334,7 +357,9 @@ function subscribe(){
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     if (tab === "trips") renderList();
   });
+  onSnapshot(metaDoc(), s => { spaceCats = (s.data()?.categories) || []; });
 }
+const metaDoc   = () => doc(db, "spaces", CONFIG.spaceId, "meta", "config");
 const placesCol = () => collection(db, "spaces", CONFIG.spaceId, "places");
 const placeDoc  = id => doc(db, "spaces", CONFIG.spaceId, "places", id);
 const tripsCol  = () => collection(db, "spaces", CONFIG.spaceId, "trips");
@@ -344,6 +369,7 @@ const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
+  if (!showPins) return;
   Object.values(places).forEach(p => {
     const color = p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
     const pin = new Pin({ background:color, borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
@@ -447,7 +473,7 @@ async function setChoro(level){
     const has = d !== undefined;
     return {
       fillColor: has ? LEVEL_COLORS[LEVEL_ORDER[d]] : "#e5e0d6",
-      fillOpacity: has ? 0.7 : 0.12,
+      fillOpacity: has ? choroAlpha : 0.12,
       strokeColor: "#ffffff", strokeWeight: 0.6, clickable: false
     };
   });
@@ -561,7 +587,7 @@ function openEditor(id, seed){
       </div>
     </div>
     <div class="field"><label>在這裡做什麼</label>
-      <div class="pick" id="f_cats">${CATEGORIES.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${c}">${c}</span>`).join("")}</div>
+      <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${c}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
     </div>
     <div class="field"><label>造訪深度(地圖染色用)</label>
       <div class="pick" id="f_level">${LEVELS_UI.map(l=>{const on=(l==='無'?!level:level===l);return `<span class="chip ${on?'on':''}" data-l="${l}">${l}</span>`;}).join("")}</div>
@@ -590,9 +616,19 @@ function openEditor(id, seed){
     b.className = status==="visited" ? "on-v" : "on-w";
     dateWrap.style.display = status==="wishlist" ? "none" : "block";
   });
-  document.querySelectorAll("#f_cats .chip").forEach(c => c.onclick = () => {
+  document.querySelectorAll("#f_cats .chip[data-c]").forEach(c => c.onclick = () => {
     const k=c.dataset.c; cats.has(k)?cats.delete(k):cats.add(k); c.classList.toggle("on");
   });
+  document.getElementById("f_addcat").onclick = async () => {
+    const name = (prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
+    if(!name || spaceCats.includes(name)) { if(name) cats.add(name); return; }
+    spaceCats.push(name); cats.add(name);
+    setDoc(metaDoc(), { categories: arrayUnion(name) }, { merge:true });
+    const chip = document.createElement("span");
+    chip.className = "chip on"; chip.dataset.c = name; chip.textContent = name;
+    chip.onclick = () => { cats.has(name)?cats.delete(name):cats.add(name); chip.classList.toggle("on"); };
+    document.getElementById("f_addcat").before(chip);
+  };
   document.querySelectorAll("#f_level .chip").forEach(c => c.onclick = () => {
     level = c.dataset.l === "無" ? "" : c.dataset.l;
     document.querySelectorAll("#f_level .chip").forEach(x => x.classList.remove("on"));
