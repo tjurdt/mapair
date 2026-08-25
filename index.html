@@ -47,18 +47,14 @@
   .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 9px;margin-left:4px;font-size:12px;color:var(--ink-soft)}
   .fchip.active{background:var(--ink);color:#fff}
   .fchip b{cursor:pointer;margin-left:3px}
-  #filterPanel{position:relative;z-index:20;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:8px;box-shadow:var(--shadow)}
+  #filterPanel{margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  .delx{border:none;background:transparent;color:#b0a89c;font-size:15px;cursor:pointer;padding:0 4px;line-height:1}
+  .delx:hover{color:#b23b3b}
   #filterPanel .ffgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   #filterPanel .ff{margin-bottom:10px;font-size:13px}
   #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:4px}
   #filterPanel select,#filterPanel input[type=date]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px}
   .card.triprow{display:flex;align-items:center;gap:8px}
-  .item-delete{flex:0 0 auto;border:0;background:transparent;color:#a94a4a;border-radius:8px;padding:6px 8px;font-size:13px}
-  .item-delete:hover{background:#f8eaea}
-  .emoji-wrap{position:relative;flex:0 0 64px}
-  .emoji-picker{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:224px;display:grid;grid-template-columns:repeat(6,1fr);gap:3px;padding:8px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
-  .emoji-picker button{border:0;background:transparent;border-radius:7px;padding:5px;font-size:20px}
-  .emoji-picker button:hover{background:var(--paper)}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
   #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
@@ -184,6 +180,7 @@ let spaceCats = [];
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
 const LEVELS_UI    = ["居住","住宿","旅遊","接地","經過","無"];
+const EMOJIS = ["🧭","✈️","🚗","🚆","🚢","🏔️","🏖️","🏝️","🏕️","⛩️","🏯","🗼","🌸","🍜","☕","🍶","🎏","🎿","🌋","🗾","🦌","🐧","🌊","🌅","💕","🎒","📷","🗺️"];
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -504,8 +501,6 @@ function subscribe(){
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     if (choroLevel !== "off") setChoro(choroLevel);
-    // 縣市、鄉鎮與村里一律在背景預載並快取。
-    Promise.allSettled([ensureCounty(), ensureTown(), ensureVillage()]);
   });
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
@@ -527,20 +522,21 @@ const tripsCol  = () => collection(db, "spaces", CONFIG.spaceId, "trips");
 const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
+function whoColor(p){
+  const w = whoOf(p), pu = partnerUid();
+  const hasMe = w.includes(user.uid), hasPu = pu && w.includes(pu);
+  if (hasMe && hasPu) return "#b25b6b";
+  if (hasMe) return "#3f7d78";
+  if (hasPu) return "#d98b3f";
+  return getCSS("--visited");
+}
+function ratingColor(r){ return lerpHex("#e9d8c0","#8f4f18",(Math.max(1,Math.min(5,r))-1)/4); }
 function markerColor(p){
-  if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
   if (markerMode === "cat"){ const c=(p.categories||[]).find(c=>catColors[c]); if(c) return catColors[c]; }
-  if (markerMode === "level") return LEVEL_COLORS[effLevel(p)] || "#c8c1b7";
-  if (markerMode === "who"){
-    const w=whoOf(p), pu=partnerUid();
-    if (pu && w.includes(user.uid) && w.includes(pu)) return "#b25b6b";
-    if (pu && w.includes(pu)) return "#6b79a8";
-    return "#d98b3f";
-  }
-  if (markerMode === "rating"){
-    const r=Number(p.rating)||0;
-    return r>=4.5?"#2f6f52":r>=3.5?"#6f9c64":r>=2.5?"#d4a64b":r>=1.5?"#d98245":r>0?"#b9554f":"#bdb7ae";
-  }
+  else if (markerMode === "level" && p.level) return LEVEL_COLORS[p.level];
+  else if (markerMode === "who") return whoColor(p);
+  else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
+  else if (markerMode === "rating" && p.rating) return ratingColor(p.rating);
   return p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
 }
 function renderMarkers(){
@@ -599,18 +595,18 @@ async function ensureTown(){
   return geo;
 }
 async function ensureVillage(){
-  await ensureCounty();  // 村里檔按縣載,需先有 countyCode
-  const counties = [...new Set(Object.values(places).map(p => p.countyCode).filter(Boolean))];
-  let feats = [];
-  for (const c of counties){
-    let geo;
-    try { geo = await loadGeo("geo/village/" + c + ".json"); } catch(e){ continue; }
-    feats = feats.concat(geo.features);
-    for (const p of Object.values(places)){
-      if (p.villCode || p.countyCode !== c) continue;
-      const code = pip(p.lat, p.lng, geo.features, "VILLCODE");
-      if (code){ p.villCode = code; updateDoc(placeDoc(p.id), { villCode: code }); }
-    }
+  const county = await ensureCounty();                       // 先確保 countyCode
+  const codes = county.features.map(f => f.properties.COUNTYCODE);
+  const byCounty = {}; let feats = [];
+  for (const c of codes){
+    let geo; try { geo = await loadGeo("geo/village/" + c + ".json"); } catch(e){ continue; }
+    byCounty[c] = geo.features; feats = feats.concat(geo.features);
+  }
+  for (const p of Object.values(places)){
+    if (p.villCode || !p.countyCode) continue;
+    const gf = byCounty[p.countyCode]; if (!gf) continue;
+    const code = pip(p.lat, p.lng, gf, "VILLCODE");
+    if (code){ p.villCode = code; updateDoc(placeDoc(p.id), { villCode: code }); }
   }
   return { type:"FeatureCollection", features: feats };
 }
@@ -738,24 +734,29 @@ function renderList(){
     renderFilterChips(); return;
   }
   el.innerHTML = items.map(cardHTML).join("");
-  items.forEach(p => {
-    document.getElementById("c_"+p.id).onclick = () => openEditor(p.id);
-    document.querySelector(`[data-delete-place="${p.id}"]`).onclick = async ev => {
-      ev.stopPropagation(); await deleteDoc(placeDoc(p.id));
-    };
+  items.forEach(p => document.getElementById("c_"+p.id).onclick = ev => {
+    if (ev.target.closest("[data-del]")) return;
+    openEditor(p.id);
+  });
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => {
+    ev.stopPropagation(); deleteDoc(placeDoc(b.dataset.del));
   });
   renderFilterChips();
 }
 function cardHTML(p){
   const dotColor = p.status==="wishlist" ? "var(--wish)" : "var(--visited)";
   const admin = [p.admin?.city, p.admin?.county].filter(Boolean).join(" · ");
-  const cats = (p.categories||[]).map(c=>`<span class="chip">${c}</span>`).join("");
-  const noteCount = (p.notes||[]).length;
+  const cats = (p.categories||[]).map(c=>`<span class="chip">${esc(c)}</span>`).join("");
+  const rating = p.rating ? ` · ★${p.rating}` : "";
   return `<div class="card" id="c_${p.id}">
-    <div class="row"><h3 style="flex:1"><span class="dot" style="background:${dotColor}"></span>${esc(p.name)}</h3><button class="item-delete" data-delete-place="${p.id}" aria-label="刪除 ${esc(p.name)}">刪除</button></div>
-    <div class="admin">${admin || "&nbsp;"}${p.visitedOn?" · "+p.visitedOn:""}${p.rating?` · ★ ${Number(p.rating).toFixed(1)}`:""}${noteCount?` · 💬 ${noteCount}`:""}</div>
-    ${p.review?`<div style="font-size:13px;color:var(--ink-soft);margin-top:6px">${esc(p.review)}</div>`:""}
-    <div class="chips">${cats}</div>
+    <div style="display:flex;align-items:flex-start;gap:8px">
+      <div style="flex:1">
+        <h3><span class="dot" style="background:${dotColor}"></span>${esc(p.name)}</h3>
+        <div class="admin">${admin || "&nbsp;"}${p.visitedOn?" · "+p.visitedOn:""}${rating}</div>
+        <div class="chips">${cats}</div>
+      </div>
+      <button class="delx" data-del="${p.id}" title="刪除">✕</button>
+    </div>
   </div>`;
 }
 
@@ -835,7 +836,7 @@ function openEditor(id, seed){
   let tripSel = p.tripId || "";
 
   modal(`
-    <h2 id="place_editor_title" style="margin-bottom:2px">${esc(p.name||"新增地點")}</h2>
+    <h2 style="margin-bottom:2px">${esc(p.name||"新地點")}</h2>
     <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
     <div class="field"><label>名稱</label><input id="f_name" value="${esc(p.name||"")}"/></div>
     <div class="field"><label>狀態</label>
@@ -867,15 +868,20 @@ function openEditor(id, seed){
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn||""}"/>
     </div>
-    <div class="field"><label>評分（1–5，可輸入小數）</label><input type="number" id="f_rating" min="1" max="5" step="0.1" inputmode="decimal" value="${p.rating??""}" placeholder="例如 4.5"/></div>
-    <div class="field"><label>評語</label><textarea id="f_review" placeholder="記下你對這個地點的感想">${esc(p.review||"")}</textarea></div>
-    <div class="row"><button class="btn" id="f_done">完成</button></div>
+    <div class="field"><label>評分(1–5,可小數)</label>
+      <input type="number" id="f_rating" min="1" max="5" step="0.1" value="${p.rating??""}" style="width:100px"/>
+    </div>
+    <div class="field"><label>評語</label>
+      <textarea id="f_review" placeholder="想記下的感想…">${esc(p.review||"")}</textarea>
+    </div>
+    <div class="row">
+      <button class="btn" id="f_done">完成</button>
+      ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:``}
+    </div>
   `);
 
   const nameEl = document.getElementById("f_name");
   const dateEl = document.getElementById("f_date");
-  const ratingEl = document.getElementById("f_rating");
-  const reviewEl = document.getElementById("f_review");
   const fTrip  = document.getElementById("f_trip");
   const dateWrap = document.getElementById("f_datewrap");
   fTrip.dataset.prev = tripSel;
@@ -885,13 +891,14 @@ function openEditor(id, seed){
     const who = whoSel==="me" ? [user.uid]
               : whoSel==="partner" ? (pu2?[pu2]:[user.uid])
               : [user.uid, pu2].filter(Boolean);
+    const rv = parseFloat(document.getElementById("f_rating").value);
     return {
       name: nameEl.value.trim(), lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
       admin:p.admin||{}, status, categories:[...cats], level, who,
       tripId: fTrip.value==="__new__" ? "" : fTrip.value,
-      visitedOn: status==="visited" ? (dateEl.value||"") : "",
-      rating: ratingEl.value ? Math.min(5,Math.max(1,Number(ratingEl.value))) : null,
-      review: reviewEl.value.trim()
+      rating: isNaN(rv) ? null : Math.max(1, Math.min(5, rv)),
+      review: document.getElementById("f_review").value.trim(),
+      visitedOn: status==="visited" ? (dateEl.value||"") : ""
     };
   }
   async function persist(){
@@ -937,13 +944,10 @@ function openEditor(id, seed){
     b.className = "on-v"; persist();
   });
   nameEl.addEventListener("change", persist);
-  nameEl.addEventListener("input", () => document.getElementById("place_editor_title").textContent = nameEl.value.trim() || "新增地點");
   nameEl.addEventListener("blur", persist);
   dateEl.addEventListener("change", persist);
-  ratingEl.addEventListener("change", persist);
-  ratingEl.addEventListener("blur", persist);
-  reviewEl.addEventListener("change", persist);
-  reviewEl.addEventListener("blur", persist);
+  document.getElementById("f_rating").addEventListener("change", persist);
+  document.getElementById("f_review").addEventListener("blur", persist);
   fTrip.onchange = async () => {
     if (fTrip.value === "__new__"){
       const t = await createTripInline();
@@ -957,6 +961,8 @@ function openEditor(id, seed){
     fTrip.dataset.prev = fTrip.value; persist();
   };
   document.getElementById("f_done").onclick = async () => { await persist(); closeModal(); };
+  const fdel = document.getElementById("f_del");
+  if (fdel) fdel.onclick = async () => { await deleteDoc(placeDoc(docId||id)); closeModal(); };
 
   // 由搜尋/點圖新增、且已有名稱 → 立即建立(自動儲存)
   if (!id && collect().name) persist();
@@ -987,34 +993,33 @@ function renderTrips(el){
         </div>
         <span style="width:12px;height:12px;border-radius:3px;background:${t.color||'#3f7d78'}"></span>
         <button class="btn mini grey" data-edit="${t.id}">編輯</button>
-        <button class="item-delete" data-delete-trip="${t.id}">刪除</button>
-      </div>`).join("") : `<div class="empty">還沒有旅程。建立一個，再到地點的「哪趟旅程」把地點歸進來。</div>`);
+        <button class="delx" data-del="${t.id}" title="刪除">✕</button>
+      </div>`).join("") : `<div class="empty">還沒有旅程。建立一個,再到地點的「哪趟旅程」把地點歸進來。</div>`);
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
-    if (ev.target.dataset.edit || ev.target.dataset.deleteTrip) return;
+    if (ev.target.dataset.edit || ev.target.dataset.del) return;
     filter.tripId = t.id; tab = "visited";
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
-  el.querySelectorAll("[data-delete-trip]").forEach(b => b.onclick = async ev => {
-    ev.stopPropagation();
-    const tripId=b.dataset.deleteTrip;
-    await Promise.all(Object.values(places).filter(p=>p.tripId===tripId).map(p=>updateDoc(placeDoc(p.id),{tripId:""})));
-    await deleteDoc(tripDoc(tripId));
-  });
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => { ev.stopPropagation(); deleteDoc(tripDoc(b.dataset.del)); });
 }
 function editTrip(id){
   let docId = id || null, creating = false;
   const t = id ? trips[id] : {};
+  let emoji = t.emoji || "";
   const g = x => document.getElementById(x);
   modal(`
     <h2 style="margin-bottom:2px">${id?"編輯":"新"}旅程</h2>
     <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
     <div class="field"><label>表情 + 名稱</label>
-      <div class="row" style="gap:8px">
-        <div class="emoji-wrap"><input id="t_emoji" value="${esc(t.emoji||"")}" placeholder="🎏" readonly style="width:64px;text-align:center;font-size:20px;cursor:pointer" aria-label="選擇旅程表情"><div class="emoji-picker" id="t_emoji_picker" style="display:none"></div></div>
+      <div class="row" style="gap:8px;position:relative">
+        <button type="button" id="t_emoji" style="flex:0 0 52px;height:40px;font-size:22px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer">${emoji||"➕"}</button>
         <input id="t_name" value="${esc(t.name||"")}" placeholder="例:2026 東京" style="flex:1">
+        <div id="emojipop" style="display:none;position:absolute;top:46px;left:0;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px;grid-template-columns:repeat(7,1fr);gap:2px;width:264px">
+          ${EMOJIS.map(e=>`<button type="button" class="emojibtn" data-e="${e}" style="font-size:20px;border:none;background:none;cursor:pointer;padding:4px">${e}</button>`).join("")}
+        </div>
       </div>
     </div>
     <div class="row">
@@ -1024,14 +1029,17 @@ function editTrip(id){
     <div class="field"><label>顏色</label>
       <input type="color" id="t_color" value="${t.color||"#3f7d78"}" style="width:48px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px">
     </div>
-    <div class="row"><button class="btn" id="t_done">完成</button></div>
+    <div class="row">
+      <button class="btn" id="t_done">完成</button>
+      ${id?`<button class="danger" id="t_del" style="border-radius:10px">刪除</button>`:``}
+    </div>
   `);
-  const emojiChoices=["🧭","✈️","🚆","🚗","🛵","🚲","⛴️","🏕️","🏨","🏖️","⛰️","🌋","🏝️","🌲","🌸","🍁","❄️","🌊","🏙️","🏛️","⛩️","🎡","🎏","📷"];
-  const emojiPicker=g("t_emoji_picker");
-  emojiPicker.innerHTML=emojiChoices.map(e=>`<button type="button" data-emoji="${e}">${e}</button>`).join("");
-  g("t_emoji").onclick=()=>emojiPicker.style.display=emojiPicker.style.display==="none"?"grid":"none";
-  emojiPicker.querySelectorAll("button").forEach(b=>b.onclick=()=>{ g("t_emoji").value=b.dataset.emoji; emojiPicker.style.display="none"; persist(); });
-  function collect(){ return { emoji:g("t_emoji").value.trim(), name:g("t_name").value.trim(),
+  const eBtn = g("t_emoji"), ePop = g("emojipop");
+  eBtn.onclick = () => { ePop.style.display = ePop.style.display === "none" ? "grid" : "none"; };
+  ePop.querySelectorAll(".emojibtn").forEach(b => b.onclick = () => {
+    emoji = b.dataset.e; eBtn.textContent = emoji; ePop.style.display = "none"; persist();
+  });
+  function collect(){ return { emoji, name:g("t_name").value.trim(),
     startDate:g("t_start").value, endDate:g("t_end").value, color:g("t_color").value }; }
   async function persist(){
     const data = collect();
@@ -1040,10 +1048,12 @@ function editTrip(id){
       const ref=await addDoc(tripsCol(),data); docId=ref.id; creating=false; }
     else await updateDoc(tripDoc(docId), data);
   }
-  ["t_emoji","t_name","t_start","t_end","t_color"].forEach(x => {
+  ["t_name","t_start","t_end","t_color"].forEach(x => {
     g(x).addEventListener("change", persist); g(x).addEventListener("blur", persist);
   });
   g("t_done").onclick = async () => { await persist(); closeModal(); };
+  const td = g("t_del");
+  if (td) td.onclick = async () => { await deleteDoc(tripDoc(docId||id)); closeModal(); };
 }
 
 /* ============================================================
