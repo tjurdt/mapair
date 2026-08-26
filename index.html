@@ -63,6 +63,8 @@
   .ordcol{display:flex;flex-direction:column;gap:1px}
   .ordbtn{border:none;background:transparent;color:#b0a89c;font-size:10px;cursor:pointer;padding:0 3px;line-height:1.1}
   .ordbtn:hover{color:var(--ink)}
+  .daysep{font-family:"Fraunces",serif;font-size:13px;font-weight:600;color:var(--ink-soft);margin:12px 2px 6px;border-bottom:1px solid var(--line);padding-bottom:3px}
+  .daynum{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:#efe9df;color:var(--ink-soft);font-size:11px;display:flex;align-items:center;justify-content:center}
   .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
   .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:9px 0;font-size:14px;color:var(--ink)}
   .sselect{flex:0 0 55%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff}
@@ -286,6 +288,15 @@ function textOn(hex){
 let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
+let dateScope = "month";   // month(預設) / today / custom / all
+function applyDateScope(){
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
+  const today = `${y}-${pad(m+1)}-${pad(now.getDate())}`;
+  if (dateScope === "today"){ filter.from = today; filter.to = today; }
+  else if (dateScope === "month"){ filter.from = `${y}-${pad(m+1)}-01`; filter.to = `${y}-${pad(m+1)}-${pad(new Date(y,m+1,0).getDate())}`; }
+  else if (dateScope === "all"){ filter.from = ""; filter.to = ""; }
+  // custom: 由使用者的起訖輸入決定,不改
+}
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
 const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
@@ -322,8 +333,10 @@ function passFilter(p){
   if (f.tripId !== "all" && f.tripId !== "daily" && !tr.includes(f.tripId)) return false;
   if (f.cats.size && !(p.categories||[]).some(c => f.cats.has(c))) return false;
   const ds = placeDates(p);
-  if (f.from && !ds.some(d => d >= f.from)) return false;
-  if (f.to && !ds.some(d => d <= f.to)) return false;
+  if (p.status === "visited"){
+    if (f.from && !ds.some(d => d >= f.from)) return false;
+    if (f.to && !ds.some(d => d <= f.to)) return false;
+  }
   if (f.regions.length && !f.regions.some(r => p[r.key] === r.code)) return false;
   return true;
 }
@@ -386,6 +399,7 @@ async function renderApp(){
         </div>
         <div id="filterbar">
           <div class="frow">
+            <select id="fl_scope" class="fmini"></select>
             <select id="fl_trip" class="fmini"></select>
             <select id="fl_who" class="fmini"></select>
             <button id="fl_more" class="btn grey mini">更多 ▾</button>
@@ -445,15 +459,23 @@ async function renderApp(){
     const p = document.getElementById("filterPanel");
     p.style.display = p.style.display === "none" ? "block" : "none";
   };
+  document.getElementById("fl_scope").onchange = e => {
+    dateScope = e.target.value;
+    applyDateScope();
+    if (dateScope === "custom") document.getElementById("filterPanel").style.display = "block";
+    refreshFilterUI(); applyFilter();
+  };
   document.getElementById("fl_trip").onchange = e => { filter.tripId = e.target.value; applyFilter(); };
   document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
-  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; applyFilter(); };
-  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; applyFilter(); };
+  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
+    dateScope = "all";
     document.getElementById("filterPanel").style.display = "none";
     refreshFilterUI(); applyFilter();
   };
+  applyDateScope();
   refreshFilterUI();
 }
 
@@ -554,6 +576,9 @@ function applyFilter(){
 }
 function refreshFilterUI(){
   const trip = document.getElementById("fl_trip"); if (!trip) return;
+  const scope = document.getElementById("fl_scope");
+  scope.innerHTML = [["month","本月"],["today","今天"],["custom","自訂期間"],["all","全部"]].map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("");
+  scope.value = dateScope;
   trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
@@ -636,8 +661,9 @@ function subscribe(){
   });
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
-    if (tab === "trips") renderList();
+    renderList(); renderMarkers();
     refreshFilterUI();
+    if (choroLevel !== "off") setChoro(choroLevel);
   });
   onSnapshot(metaDoc(), s => {
     const d = s.data() || {};
@@ -647,7 +673,7 @@ function subscribe(){
     nicknames = d.nicknames || {};
     levelColors = { ...LEVEL_COLORS, ...(d.levelColors||{}) };
     refreshFilterUI();
-    renderMarkers(); renderMarkerLegend();
+    renderList(); renderMarkers(); renderMarkerLegend();
     if (choroLevel !== "off") setChoro(choroLevel);
   });
 }
@@ -914,7 +940,18 @@ function renderList(){
     el.innerHTML = `<div class="empty">沒有符合的地點。</div>`;
     renderFilterChips(); return;
   }
-  el.innerHTML = listItems.map(cardHTML).join("");
+  if (tab === "visited"){
+    let html = "", lastDate = null, dayIdx = 0;
+    listItems.forEach(p => {
+      const d = primaryDate(p) || "未定日期";
+      if (d !== lastDate){ html += `<div class="daysep">${d}</div>`; lastDate = d; dayIdx = 0; }
+      dayIdx++;
+      html += cardHTML(p, dayIdx);
+    });
+    el.innerHTML = html;
+  } else {
+    el.innerHTML = listItems.map(p => cardHTML(p)).join("");
+  }
   listItems.forEach(p => document.getElementById("c_"+p.id).onclick = ev => {
     if (ev.target.closest("[data-del]") || ev.target.closest(".ordbtn")) return;
     openEditor(p.id);
@@ -931,12 +968,11 @@ function movePlace(id, dir){
   updateDoc(placeDoc(a.id), { ord: effOrd(b) });
   updateDoc(placeDoc(b.id), { ord: effOrd(a) });
 }
-function cardHTML(p){
+function cardHTML(p, dayNum){
   const cat = (p.categories||[])[0];
   const col = cat ? catColor(cat) : "#9aa5ad";
   const mode = whoModeOf(p);
   const whoTxt = mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
-  const dateTxt = primaryDate(p);
   const nVisits = placeVisits(p).length;
   const tripTags = placeTrips(p).map(id=>trips[id]).filter(Boolean)
     .map(t=>`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`).join("");
@@ -945,7 +981,7 @@ function cardHTML(p){
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
     tripTags,
     p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : "",
-    dateTxt ? `<span class="ptag" style="background:#e7edf0">${dateTxt}${nVisits>1?` +${nVisits-1}`:""}</span>` : (p.status==="wishlist"?`<span class="ptag" style="background:#e6efe9">想去</span>`:"")
+    nVisits>1 ? `<span class="ptag" style="background:#e7edf0">共${nVisits}次</span>` : (p.status==="wishlist"?`<span class="ptag" style="background:#e6efe9">想去</span>`:"")
   ].filter(Boolean).join("");
   return `<div class="card compact" id="c_${p.id}" style="background:${col}14">
     <div style="display:flex;align-items:center;gap:8px">
@@ -954,6 +990,7 @@ function cardHTML(p){
         <div class="cname">${esc(p.name)}</div>
         <div class="ptags">${tags}</div>
       </div>
+      ${dayNum?`<span class="daynum">${dayNum}</span>`:""}
       <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
       <button class="delx" data-del="${p.id}" title="刪除">✕</button>
     </div>
@@ -1071,10 +1108,9 @@ function openEditor(id, seed){
     : (id ? [] : [{date:defaultDate, tripId:filterTrip||""}]));
 
   modal(`
-    <h2 style="margin-bottom:2px">${esc(p.name||"新地點")}</h2>
-    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
-    <div class="field"><label>名稱</label><input id="f_name" value="${esc(p.name||"")}"/></div>
-    <div class="field"><label>狀態</label>
+    <h2 style="margin-bottom:12px">${esc(p.name||"新地點")}</h2>
+    <div class="field"><input id="f_name" value="${esc(p.name||"")}" placeholder="名稱"/></div>
+    <div class="field">
       <div class="seg" id="f_status">
         <button data-s="visited" class="${status==='visited'?'on-v':''}">去過了</button>
         <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}">想去</button>
@@ -1083,10 +1119,10 @@ function openEditor(id, seed){
     <div class="field"><label>在這裡做什麼(單選)</label>
       <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${esc(c)}" style="${cats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
     </div>
-    <div class="field"><label>造訪深度</label>
+    <div class="field">
       <div class="seg lvlseg" id="f_level">${LEVEL_ORDER.map(l=>`<button data-l="${l}" class="${level===l?'on':''}" style="${level===l?`background:${levelColors[l]};color:#fff`:''}">${l}</button>`).join("")}</div>
     </div>
-    <div class="field"><label>誰去的</label>
+    <div class="field">
       <div class="seg" id="f_who">
         <button data-w="me" class="${whoSel==='me'?'on-v':''}">我${nicknames[user.uid]?`(${esc(nicknames[user.uid])})`:""}</button>
         <button data-w="partner" class="${whoSel==='partner'?'on-v':''}">對方${(pu&&nicknames[pu])?`(${esc(nicknames[pu])})`:""}</button>
@@ -1097,15 +1133,13 @@ function openEditor(id, seed){
       <label>造訪紀錄(可多次)</label>
       <div id="f_visits"></div>
     </div>
-    <div class="field"><label>評分</label>
+    <div class="field">
       <div class="row" style="align-items:center;gap:10px">
         <input type="range" id="f_rating" min="0" max="5" step="0.5" value="${p.rating||0}" style="flex:1">
         <span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${p.rating?("★ "+p.rating):"未評分"}</span>
       </div>
     </div>
-    <div class="field"><label>評語</label>
-      <textarea id="f_review" placeholder="想記下的感想…">${esc(p.review||"")}</textarea>
-    </div>
+    <div class="field"><textarea id="f_review" placeholder="評語…">${esc(p.review||"")}</textarea></div>
     <div class="row">
       <button class="btn" id="f_done">完成</button>
       ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:``}
