@@ -48,7 +48,10 @@
   #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
   .nb:hover{background:var(--paper)}
-  #markerlegend{position:absolute;bottom:16px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
+  #maplegend{position:absolute;bottom:18px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;box-shadow:var(--shadow);font-size:11px;color:var(--ink-soft);max-width:210px;transform-origin:bottom right}
+  .legendhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--ink);font-size:11px;cursor:pointer}
+  .legendsection{margin-top:6px;padding-top:5px;border-top:1px solid var(--line)}
+  .legendtitle{font-size:10px;font-weight:700;color:var(--ink);margin-bottom:3px}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
   #filterbar{padding:5px 10px 0;position:relative}
   #filterbar .frow{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.15fr) minmax(0,1fr) auto;gap:5px;align-items:center}
@@ -90,6 +93,16 @@
   .visitrow .v_del{font-size:16px;padding:6px}
   .visitrange{display:flex;align-items:center;gap:5px;min-width:0}
   .visitrange label{font-size:11px;color:var(--ink-soft);white-space:nowrap}
+  .visitrow.focus{outline:2px solid rgba(63,125,120,.35);box-shadow:0 0 0 3px rgba(63,125,120,.08)}
+  .visitmain{grid-template-columns:minmax(0,1fr) 82px 76px auto}
+  .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:6px}
+  .visitrow .v_kind,.visitrow .v_cat{width:100%;min-width:0;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff}
+  .staymeta{font-size:11px;color:var(--ink-soft);margin-top:5px}
+  .staycarry{border:1px dashed #b9c7c0;background:#f4f8f5;border-radius:10px;padding:7px 9px;margin:5px 0 7px;font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:7px}
+  .staycarry b{color:var(--ink)}
+  .monthquick{display:none;align-items:center;gap:5px;margin-top:4px}
+  .monthquick.show{display:flex}
+  .monthquick input{height:30px;max-width:150px;padding:3px 6px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px}
   @media(max-width:760px){
     .colgrid{grid-template-columns:1fr}
     .modal{padding:16px}
@@ -105,7 +118,6 @@
   #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:2px}
   #filterPanel select,#filterPanel input[type=date]{width:100%;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px}
   .card.triprow{display:flex;align-items:center;gap:8px}
-  #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   .lg{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px}
   .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12);flex:0 0 auto;display:inline-block}
   .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;min-height:0}
@@ -189,8 +201,9 @@
     #filterbar .frow{grid-template-columns:minmax(0,.85fr) minmax(0,1.12fr) minmax(0,.95fr) auto}
     .fmini{font-size:14px}
     #filterPanel select,#filterPanel input[type=date]{font-size:14px}
-    .visitmain{grid-template-columns:minmax(0,1fr) 78px auto auto}
+    .visitmain{grid-template-columns:minmax(0,1fr) 72px 68px auto}
     .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    #maplegend{transform:scale(.6);right:7px;bottom:28px}
   }
 </style>
 </head>
@@ -326,20 +339,47 @@ let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
-let dateScope = "month";   // month(預設) / today / custom / all
+let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
+let pickedMonth = new Date().toISOString().slice(0,7);
+let regionLegendState = null;
+
+function monthBounds(ym){
+  if (!/^\d{4}-\d{2}$/.test(ym||"")) return null;
+  const [y,m]=ym.split("-").map(Number), pad=n=>String(n).padStart(2,"0");
+  const last=new Date(y,m,0).getDate();
+  return { from:`${y}-${pad(m)}-01`, to:`${y}-${pad(m)}-${pad(last)}` };
+}
+function currentMonth(offset=0){
+  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()+offset);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
 function applyDateScope(){
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
   const today = `${y}-${pad(m+1)}-${pad(now.getDate())}`;
   if (dateScope === "today"){ filter.from = today; filter.to = today; }
-  else if (dateScope === "month"){ filter.from = `${y}-${pad(m+1)}-01`; filter.to = `${y}-${pad(m+1)}-${pad(new Date(y,m+1,0).getDate())}`; }
+  else if (dateScope === "month"){
+    pickedMonth=currentMonth(0); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  }
+  else if (dateScope === "lastmonth"){
+    pickedMonth=currentMonth(-1); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  }
+  else if (dateScope === "pickedMonth"){
+    const b=monthBounds(pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
+  }
   else if (dateScope === "all"){ filter.from = ""; filter.to = ""; }
-  // custom: 由使用者的起訖輸入決定,不改
+  // custom: 由使用者的起訖輸入決定
+}
+function defaultDateForNewVisit(){
+  if (singleDayDate()) return singleDayDate();
+  if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from) return filter.from;
+  if (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]?.startDate) return trips[filter.tripId].startDate;
+  return new Date().toISOString().slice(0,10);
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
 const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
 const otherOf = uid => Object.keys(members).find(u => u !== uid) || null;
-// 誰在場:優先用 whoMode(相對於建立者),相容舊資料的 who 陣列
+// 誰在場仍屬地點層級；造訪目的、日期、時間、旅程改為每次造訪各自保存
 function whoUids(p){
   const creator = p.createdBy, other = otherOf(creator);
   if (p.whoMode === "both") return [creator, other].filter(Boolean);
@@ -354,77 +394,162 @@ function whoModeOf(p){
   if (other && w.includes(other) && !(creator && w.includes(creator))) return "partner";
   return "me";
 }
-// 多次造訪：每一筆可記錄日期、時間與跨日區間；舊資料仍相容
+function newVisitId(){
+  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
+  return `v_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+}
+function normalizedVisit(p,v,i=0){
+  const fallbackCat=(p.categories||[])[0]||"";
+  const kind=v?.kind || ((v?.endDate && v.endDate>v.date) ? "stay" : "visit");
+  return {
+    id:v?.id || `legacy_${i}`,
+    kind,
+    date:v?.date||"",
+    endDate:v?.endDate||"",
+    time:v?.time||"",
+    tripId:v?.tripId||"",
+    category:v?.category || (v?.categories||[])[0] || fallbackCat,
+    ...(Number.isFinite(Number(v?.order)) ? {order:Number(v.order)} : {})
+  };
+}
+// 一個 place 是共享地點；visits 是獨立造訪事件。舊資料會即時以相容格式讀取。
 function placeVisits(p){
-  if (p.visits && p.visits.length) return p.visits;
-  if (p.visitedOn) return [{ date:p.visitedOn, endDate:"", time:"", tripId:p.tripId||"" }];
+  if (p.visits && p.visits.length) return p.visits.map((v,i)=>normalizedVisit(p,v,i));
+  if (p.visitedOn) return [normalizedVisit(p,{ date:p.visitedOn, tripId:p.tripId||"", category:(p.categories||[])[0]||"" },0)];
   return [];
 }
-function visitEnd(v){ return (v.endDate && v.endDate >= v.date) ? v.endDate : (v.date||""); }
-function visitCoversDate(v, d){
-  if (!v?.date || !d) return false;
-  return v.date <= d && visitEnd(v) >= d;
+function visitCategory(p,v){ return v?.category || (p.categories||[])[0] || ""; }
+function latestVisit(p){
+  return placeVisits(p).filter(v=>v.date).slice().sort((a,b)=>{
+    const d=a.date.localeCompare(b.date); if(d) return d;
+    return timeMinutes(a.time)-timeMinutes(b.time);
+  }).pop() || null;
 }
-function visitIntersects(v, from, to){
+function latestVisitCategory(p){ return visitCategory(p,latestVisit(p)); }
+function visitKind(v){ return v?.kind === "stay" ? "stay" : "visit"; }
+function stayCheckout(v){ return (visitKind(v)==="stay" && v.endDate && v.endDate>v.date) ? v.endDate : ""; }
+function stayNights(v){
+  if (!v?.date || !stayCheckout(v)) return 1;
+  return Math.max(1, Math.round((new Date(stayCheckout(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000));
+}
+function visitEnd(v){ return visitKind(v)==="stay" ? (stayCheckout(v)||v.date||"") : (v.date||""); }
+function visitCoversDate(v,d){
+  if (!v?.date || !d) return false;
+  if (visitKind(v)!=="stay") return v.date===d;
+  const co=stayCheckout(v); return co ? (v.date<=d && d<co) : v.date===d; // 退房日不算住宿夜
+}
+function visitIntersects(v,from,to){
   if (!v?.date) return false;
-  const a=v.date, b=visitEnd(v);
-  if (from && b < from) return false;
-  if (to && a > to) return false;
+  if (visitKind(v)!=="stay"){
+    if (from && v.date<from) return false;
+    if (to && v.date>to) return false;
+    return true;
+  }
+  const co=stayCheckout(v)||v.date;
+  if (from && co<=from && v.date!==from) return false;
+  if (to && v.date>to) return false;
   return true;
 }
-const placeDates = p => placeVisits(p).flatMap(v=>[v.date, visitEnd(v)]).filter(Boolean);
+const placeDates = p => placeVisits(p).flatMap(v=>visitKind(v)==="stay" ? [v.date,stayCheckout(v)].filter(Boolean) : [v.date]).filter(Boolean);
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
-const primaryDate = p => { const d=placeVisits(p).map(v=>v.date).filter(Boolean).sort(); return d[d.length-1]||""; };
+const primaryDate = p => latestVisit(p)?.date || "";
 const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
+function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : ""; }
 function visitMatchesTrip(v){
   if (filter.tripId === "all") return true;
   if (filter.tripId === "daily") return !v.tripId;
   return v.tripId === filter.tripId;
 }
-function passFilter(p){
-  const f = filter;
+function visitMatchesCategory(p,v){
+  return !filter.cats.size || filter.cats.has(visitCategory(p,v));
+}
+function placeStaticFilter(p){
+  const f=filter;
   if (f.who !== "all"){ const w=whoUids(p); if (whoModeOf(p)!=="both" && !w.includes(f.who)) return false; }
-  if (f.cats.size && !(p.categories||[]).some(c => f.cats.has(c))) return false;
   if (f.regions.length && !f.regions.some(r => p[r.key] === r.code)) return false;
-
+  return true;
+}
+function visitPassFilter(p,v){
+  return placeStaticFilter(p) && visitMatchesTrip(v) && visitMatchesCategory(p,v) && visitIntersects(v,filter.from,filter.to);
+}
+function passFilter(p){
+  if (!placeStaticFilter(p)) return false;
   if (p.status === "visited"){
-    const vv = placeVisits(p);
-    const hasVisitConstraint = f.tripId !== "all" || !!f.from || !!f.to;
-    if (hasVisitConstraint && !vv.some(v => visitMatchesTrip(v) && visitIntersects(v, f.from, f.to))) return false;
-  } else {
-    const tr = placeTrips(p);
-    if (f.tripId === "daily" && tr.length) return false;
-    if (f.tripId !== "all" && f.tripId !== "daily" && !tr.includes(f.tripId)) return false;
+    const vv=placeVisits(p);
+    const hasVisitConstraint=filter.tripId!=="all" || !!filter.from || !!filter.to || !!filter.cats.size;
+    return !hasVisitConstraint || vv.some(v=>visitPassFilter(p,v));
   }
+  if (filter.cats.size && !(p.categories||[]).some(c=>filter.cats.has(c))) return false;
+  const tr=placeTrips(p);
+  if (filter.tripId === "daily" && tr.length) return false;
+  if (filter.tripId !== "all" && filter.tripId !== "daily" && !tr.includes(filter.tripId)) return false;
   return true;
 }
 function timeMinutes(t){
   if (!t || !/^\d{2}:\d{2}$/.test(t)) return 9999;
   const [h,m]=t.split(":").map(Number); return h*60+m;
 }
+function sortOccurrences(a,b){
+  const ad=a.v.date||"", bd=b.v.date||"";
+  if (ad!==bd) return ad.localeCompare(bd);
+  const ao=Number.isFinite(Number(a.v.order)) ? Number(a.v.order) : 1e9;
+  const bo=Number.isFinite(Number(b.v.order)) ? Number(b.v.order) : 1e9;
+  if (ao!==bo) return ao-bo;
+  const at=timeMinutes(a.v.time), bt=timeMinutes(b.v.time); if(at!==bt) return at-bt;
+  const eo=effOrd(a.p)-effOrd(b.p); if(eo) return eo;
+  return a.visitIndex-b.visitIndex;
+}
 function getDayOccurrences(date){
   if (!date) return [];
   const out=[];
   Object.values(places).forEach(p => {
-    if (p.status !== "visited" || !passFilter(p)) return;
+    if (p.status !== "visited" || !placeStaticFilter(p)) return;
     placeVisits(p).forEach((v,visitIndex) => {
-      if (!visitCoversDate(v,date) || !visitMatchesTrip(v)) return;
-      out.push({ p, v, visitIndex });
+      if (!visitCoversDate(v,date) || !visitMatchesTrip(v) || !visitMatchesCategory(p,v)) return;
+      out.push({ p, v, visitIndex, carry:visitKind(v)==="stay" && v.date!==date });
     });
   });
-  const anyManual = out.some(o => Number.isFinite(Number(o.v.order)));
-  out.sort((a,b) => {
-    if (anyManual){
-      const ao=Number.isFinite(Number(a.v.order)) ? Number(a.v.order) : 1e9;
-      const bo=Number.isFinite(Number(b.v.order)) ? Number(b.v.order) : 1e9;
-      if (ao!==bo) return ao-bo;
-    }
-    const at=timeMinutes(a.v.time), bt=timeMinutes(b.v.time);
-    if (at!==bt) return at-bt;
-    const eo=effOrd(a.p)-effOrd(b.p); if(eo) return eo;
-    return a.visitIndex-b.visitIndex;
+  const sequence=out.filter(o=>!o.carry).sort(sortOccurrences);
+  const carries=out.filter(o=>o.carry).sort((a,b)=>a.p.name.localeCompare(b.p.name,"zh-Hant"));
+  return [...carries,...sequence];
+}
+function getFilteredVisitOccurrences(){
+  const out=[];
+  Object.values(places).forEach(p=>{
+    if(p.status!=="visited" || !placeStaticFilter(p)) return;
+    placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push({p,v,visitIndex,carry:false}); });
   });
-  return out;
+  return out.sort(sortOccurrences);
+}
+function tripDayNo(v, tripId, all){
+  const t=trips[tripId];
+  let start=t?.startDate||"";
+  if(!start){ const ds=all.map(o=>o.v.date).filter(Boolean).sort(); start=ds[0]||v.date; }
+  if(!start||!v.date) return 1;
+  return Math.max(1,Math.round((new Date(v.date+"T00:00:00")-new Date(start+"T00:00:00"))/86400000)+1);
+}
+function sequenceContext(){
+  const tid=specificTripId();
+  if(tid) return {type:"trip",tripId:tid};
+  const d=singleDayDate();
+  if(d) return {type:"day",date:d};
+  return null;
+}
+function sequenceOccurrences(){
+  const ctx=sequenceContext(); if(!ctx) return [];
+  if(ctx.type==="day") return getDayOccurrences(ctx.date).filter(o=>!o.carry);
+  return getFilteredVisitOccurrences().filter(o=>o.v.tripId===ctx.tripId && !!o.v.date);
+}
+function sequenceLabels(){
+  const ctx=sequenceContext(), occ=sequenceOccurrences();
+  if(!ctx) return [];
+  if(ctx.type==="day") return occ.map((o,i)=>({o,label:String(i+1)}));
+  const byDay={};
+  return occ.map(o=>{
+    const d=tripDayNo(o.v,ctx.tripId,occ), key=o.v.date||"";
+    byDay[key]=(byDay[key]||0)+1;
+    return {o,label:`D${d}-${byDay[key]}`};
+  });
 }
 
 function boot(){
@@ -476,8 +601,7 @@ async function renderApp(){
           <button id="setBtn">設定</button>
         </div>
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
-        <div id="legend" style="display:none"></div>
-        <div id="markerlegend" style="display:none"></div>
+        <div id="maplegend" style="display:none"></div>
       </div>
       <div class="side">
         <div class="tabs">
@@ -493,6 +617,7 @@ async function renderApp(){
             <button id="fl_more" class="btn grey mini">更多 ▾</button>
           </div>
           <div class="filtermeta"><span id="filterChips"></span><button id="fl_clear" class="btn grey mini" style="display:none">取消篩選</button></div>
+          <div class="monthquick" id="monthQuick"><input type="month" id="fl_month" aria-label="選擇月份"><span style="font-size:11px;color:var(--ink-soft)">整月</span></div>
           <div id="filterPanel" style="display:none">
             <div class="ff"><label>日期範圍</label>
               <div class="ffgrid"><input type="date" id="fl_from"><input type="date" id="fl_to"></div>
@@ -578,9 +703,18 @@ async function renderApp(){
   };
   document.getElementById("fl_scope").onchange = e => {
     dateScope = e.target.value;
+    if (dateScope === "pickedMonth" && !pickedMonth) pickedMonth=currentMonth(0);
     applyDateScope();
     if (dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
     refreshFilterUI(); applyFilter();
+    if (dateScope === "pickedMonth"){
+      const mi=document.getElementById("fl_month");
+      setTimeout(()=>{ try{ mi.showPicker?.(); }catch(e){} mi.focus(); },0);
+    }
+  };
+  document.getElementById("fl_month").onchange = e => {
+    if(!e.target.value) return;
+    pickedMonth=e.target.value; dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
   };
   document.getElementById("fl_trip").onchange = e => { filter.tripId = e.target.value; applyFilter(); };
   document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
@@ -695,7 +829,10 @@ function applyFilter(){
 function refreshFilterUI(){
   const trip = document.getElementById("fl_trip"); if (!trip) return;
   const scope = document.getElementById("fl_scope");
-  scope.innerHTML = [["month","本月"],["today","今天"],["custom","自訂期間"],["all","全部"]].map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("");
+  scope.innerHTML = [
+    ["month","本月"],["lastmonth","上個月"],["pickedMonth","選月份…"],
+    ["today","今天"],["custom","自訂期間"],["all","全部"]
+  ].map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("");
   scope.value = dateScope;
   trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
@@ -706,6 +843,9 @@ function refreshFilterUI(){
   who.value = filter.who;
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
+  const mq=document.getElementById("monthQuick"), mi=document.getElementById("fl_month");
+  if(mq){ mq.classList.toggle("show",dateScope==="pickedMonth"); }
+  if(mi) mi.value=pickedMonth||currentMonth(0);
   const fc = document.getElementById("fl_cats");
   fc.innerHTML = spaceCats.length
     ? spaceCats.map(c=>`<span class="chip ${filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
@@ -720,10 +860,16 @@ function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
-  const oneDay = tab==="visited" ? singleDayDate() : "";
-  const n = oneDay ? getDayOccurrences(oneDay).length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
+  const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
-  if (oneDay) html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖以當日造訪順序編號">${numberPins?'●':'○'} 1·2·3 順序</button>`;
+  if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from){
+    html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
+  }
+  const seq=sequenceContext();
+  if (tab==="visited" && seq){
+    const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
+    html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
+  }
   filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
   el.innerHTML = html;
   const op = document.getElementById("orderPinToggle");
@@ -822,6 +968,9 @@ function markerColor(p){
   return p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
 }
 function markerColorForVisit(p,v){
+  if (markerMode === "cat"){
+    const c=visitCategory(p,v); if(c) return catColor(c);
+  }
   if (markerMode === "trip" && v?.tripId && trips[v.tripId]?.color) return trips[v.tripId].color;
   return markerColor(p);
 }
@@ -831,67 +980,98 @@ function renderMarkers(){
   renderMarkerLegend();
   if (!showPins) return;
 
-  const day = tab==="visited" ? singleDayDate() : "";
-  if (day && numberPins){
-    const occ = getDayOccurrences(day);
-    const totals = {}; occ.forEach(o => totals[o.p.id]=(totals[o.p.id]||0)+1);
-    const seen = {};
-    occ.forEach((o,i) => {
-      const p=o.p, col=markerColorForVisit(p,o.v), idx=seen[p.id]||0; seen[p.id]=idx+1;
-      const bubble=document.createElement("div"); bubble.className="seqpin"; bubble.textContent=String(i+1);
+  const seq=sequenceContext();
+  if (seq && numberPins){
+    const labelled=sequenceLabels();
+    const totals={}; labelled.forEach(x=>totals[x.o.p.id]=(totals[x.o.p.id]||0)+1);
+    const seen={};
+    labelled.forEach((x,i)=>{
+      const {o,label}=x, p=o.p, col=markerColorForVisit(p,o.v), idx=seen[p.id]||0; seen[p.id]=idx+1;
+      const bubble=document.createElement("div"); bubble.className="seqpin"; bubble.textContent=label;
+      if(label.length>2){ bubble.style.width="34px"; bubble.style.borderRadius="12px"; bubble.style.fontSize="9px"; }
       bubble.style.background=col; bubble.style.color=textOn(col);
-      if (totals[p.id]>1){
-        const offset=(idx-(totals[p.id]-1)/2)*18;
-        bubble.style.transform=`translateX(${offset}px)`;
-      }
+      if(totals[p.id]>1){ const offset=(idx-(totals[p.id]-1)/2)*22; bubble.style.transform=`translateX(${offset}px)`; }
       const tm=o.v.time ? ` ${o.v.time}` : "";
       const m=new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:bubble,
-        title:`${i+1}. ${p.name}${tm}`, gmpClickable:true, zIndex:1000+i });
-      m.addListener("gmp-click", () => { lastMarkerClick=Date.now(); openEditor(p.id); });
+        title:`${label} ${p.name}${tm}`, gmpClickable:true, zIndex:1000+i });
+      m.addListener("gmp-click",()=>{ lastMarkerClick=Date.now(); openEditor(p.id,null,{focusVisitIndex:o.visitIndex}); });
       markers.push(m);
     });
+    // 單日篩選期間若正在連住，保留一個小型住宿狀態標記，但不佔造訪序號
+    if(seq.type==="day"){
+      getDayOccurrences(seq.date).filter(o=>o.carry).forEach((o,i)=>{
+        const col=markerColorForVisit(o.p,o.v), bubble=document.createElement("div");
+        bubble.className="seqpin"; bubble.textContent="宿"; bubble.style.background=col; bubble.style.color=textOn(col); bubble.style.opacity=".82";
+        const m=new AdvMarker({map,position:{lat:o.p.lat,lng:o.p.lng},content:bubble,title:`住宿中 · ${o.p.name}`,gmpClickable:true,zIndex:700+i});
+        m.addListener("gmp-click",()=>openEditor(o.p.id,null,{focusVisitIndex:o.visitIndex})); markers.push(m);
+      });
+    }
     return;
   }
 
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
-    const pin = new Pin({ background:markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
+    let v=null;
+    if(p.status==="visited"){
+      const vv=placeVisits(p).filter(x=>visitPassFilter(p,x)).sort((a,b)=>a.date.localeCompare(b.date)||timeMinutes(a.time)-timeMinutes(b.time));
+      v=vv[vv.length-1]||latestVisit(p);
+    }
+    const pin = new Pin({ background:v?markerColorForVisit(p,v):markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
     pin.element.style.cursor = "pointer";
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
     m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
     markers.push(m);
   });
 }
-function renderMarkerLegend(){
-  const el = document.getElementById("markerlegend"); if(!el) return;
-  if (!showPins){ el.style.display="none"; return; }
+function markerLegendBody(){
+  if (!showPins) return "";
   const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分" };
-  el.style.display = "block";
-  el.onclick = () => { legendCollapsed = !legendCollapsed; renderMarkerLegend(); };
-  const orderMode = tab==="visited" && !!singleDayDate() && numberPins;
-  const title = orderMode ? "當日造訪順序" : (titles[markerMode]||"地標");
-  const head = `<div style="font-size:11px;font-weight:600;color:var(--ink)">${title} <span style="color:var(--ink-soft);font-weight:400">${legendCollapsed?"▸":"▾"}</span></div>`;
-  if (legendCollapsed){ el.innerHTML = head; return; }
-  if (orderMode){
-    el.innerHTML = head + `<div style="font-size:10px;color:var(--ink-soft);margin-top:4px">圓圈數字依清單順序；顏色沿用目前地標配色</div>`;
-    return;
+  const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
+  if(orderMode){
+    const txt=seq.type==="trip" ? "D1-1 = 旅程第1天第1站" : "數字 = 當日造訪順序";
+    return `<div class="legendsection"><div class="legendtitle">地標 · 順序</div><div style="font-size:10px">${txt}<br>顏色沿用目前地標配色</div></div>`;
   }
   if (markerMode === "rating"){
-    el.innerHTML = head +
-      `<div style="height:10px;width:100px;border-radius:3px;margin-top:4px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:100px;font-size:10px;margin-top:2px"><span>1</span><span>5</span></div>`;
-    return;
+    return `<div class="legendsection"><div class="legendtitle">地標 · 評分</div>`+
+      `<div style="height:8px;width:92px;border-radius:3px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
+      `<div style="display:flex;justify-content:space-between;width:92px;font-size:9px"><span>1</span><span>5</span></div></div>`;
   }
-  let rows = [];
+  let rows=[];
   if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
   else if (markerMode === "who") rows = [["#3f7d78", nameFor(user.uid)], ["#d98b3f", partnerUid()?nameFor(partnerUid()):"對方"], ["#b25b6b","一起"]];
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.map(c=>[catColor(c), c]);
   else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
-  if (!rows.length){ el.innerHTML = head + `<div style="font-size:11px;color:var(--ink-soft);margin-top:4px">尚無項目</div>`; return; }
-  el.innerHTML = head + `<div style="margin-top:4px">` +
-    rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") + `</div>`;
+  const body=rows.length ? rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") : `<div style="font-size:10px">尚無項目</div>`;
+  return `<div class="legendsection"><div class="legendtitle">地標 · ${titles[markerMode]||"地標"}</div>${body}</div>`;
 }
+function regionLegendBody(){
+  if(!regionLegendState || choroLevel==="off") return "";
+  const {metric,ctx}=regionLegendState;
+  if(metric==="first"||metric==="last"){
+    const lab=metric==="first"?"初次造訪":"最後造訪";
+    const c0=dateColor(ctx.dmin,ctx.dmin,ctx.dmax), c1=dateColor(ctx.dmax,ctx.dmin,ctx.dmax);
+    return `<div class="legendsection"><div class="legendtitle">行政區 · ${lab}</div>`+
+      `<div style="height:8px;width:100px;border-radius:3px;background:linear-gradient(90deg,${c0},${c1})"></div>`+
+      `<div style="display:flex;justify-content:space-between;width:100px;font-size:9px"><span>${(ctx.dmin||"").slice(0,7)||"早"}</span><span>${(ctx.dmax||"").slice(0,7)||"晚"}</span></div></div>`;
+  }
+  let rows=metric==="count"
+    ? [[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]]
+    : [[levelColors["居住"],"居住"],[levelColors["住宿"],"住宿"],[levelColors["旅遊"],"旅遊"],[levelColors["接地"],"接地"],[levelColors["經過"],"經過"],["#e5e0d6","未到"]];
+  return `<div class="legendsection"><div class="legendtitle">行政區 · ${metric==="count"?"地標數":"造訪深度"}</div>`+
+    rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("")+`</div>`;
+}
+function renderUnifiedLegend(){
+  const el=document.getElementById("maplegend"); if(!el) return;
+  const hasMarker=showPins, hasRegion=choroLevel!=="off" && !!regionLegendState;
+  if(!hasMarker && !hasRegion){ el.style.display="none"; return; }
+  el.style.display="block";
+  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${legendCollapsed?"▸":"▾"}</span></div>`;
+  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody());
+  document.getElementById("legendHead").onclick=()=>{ legendCollapsed=!legendCollapsed; renderUnifiedLegend(); };
+}
+function renderMarkerLegend(){ renderUnifiedLegend(); }
+
 const getCSS = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 /* ============================================================
@@ -979,23 +1159,8 @@ function dateColor(d,min,max){
   return lerpHex("#e9e0b8","#173f39", Math.max(0,Math.min(1,t))); // 早=淺黃 → 晚=深綠(對比明顯)
 }
 function renderLegend(metric,ctx){
-  const el=document.getElementById("legend"); if(!el) return;
-  if(metric==="first"||metric==="last"){
-    const lab=metric==="first"?"初次造訪":"最後造訪";
-    const c0=dateColor(ctx.dmin,ctx.dmin,ctx.dmax), c1=dateColor(ctx.dmax,ctx.dmin,ctx.dmax);
-    el.innerHTML=`<div style="font-size:11px;margin-bottom:5px">${lab}</div>`+
-      `<div style="height:12px;width:130px;border-radius:3px;background:linear-gradient(90deg,${c0},${c1})"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:130px;font-size:10px;margin-top:3px;color:var(--ink-soft)">`+
-      `<span>${(ctx.dmin||"").slice(0,7)||"早"}</span><span>${(ctx.dmax||"").slice(0,7)||"晚"}</span></div>`;
-    return;
-  }
-  let rows;
-  if(metric==="count"){
-    rows=[[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]];
-  } else {
-    rows=[[levelColors["居住"],"居住"],[levelColors["住宿"],"住宿"],[levelColors["旅遊"],"旅遊"],[levelColors["接地"],"接地"],[levelColors["經過"],"經過"],["#e5e0d6","未到"]];
-  }
-  el.innerHTML=rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("");
+  regionLegendState={metric,ctx};
+  renderUnifiedLegend();
 }
 
 async function setChoro(level){
@@ -1003,7 +1168,7 @@ async function setChoro(level){
   document.querySelectorAll("#mapctl button").forEach(b => b.classList.toggle("on", b.dataset.l === level));
   if (level === "off"){
     if (choroLayer){ choroLayer.setMap(null); choroLayer = null; choroLayerLevel = null; }
-    document.getElementById("legend").style.display = "none"; return;
+    regionLegendState=null; renderUnifiedLegend(); return;
   }
 
   let fc, codeProp, codeOf;
@@ -1071,7 +1236,6 @@ async function setChoro(level){
   }
   choroLayer.setStyle(styleFn);
   renderLegend(choroMetric, { dmin, dmax });
-  document.getElementById("legend").style.display = "block";
 }
 
 /* ============================================================
@@ -1085,38 +1249,43 @@ function renderList(){
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
 
-  const oneDay = tab==="visited" ? singleDayDate() : "";
-  if (oneDay){ renderDayVisitList(el, oneDay); renderFilterChips(); return; }
-
-  listItems = Object.values(places).filter(p => p.status === tab && passFilter(p))
-    .sort((a,b) => {
-      const d = (primaryDate(b)||"0000-00-00").localeCompare(primaryDate(a)||"0000-00-00");
-      if (d) return d;
-      return effOrd(a) - effOrd(b);   // 同日:可用 ▲▼ 手動調整順序
+  if(tab==="wishlist"){
+    listItems=Object.values(places).filter(p=>p.status==="wishlist"&&passFilter(p)).sort((a,b)=>effOrd(a)-effOrd(b));
+    if(!listItems.length){ el.innerHTML=`<div class="empty">沒有符合的地點。</div>`; renderFilterChips(); return; }
+    el.innerHTML=listItems.map(p=>cardHTML(p)).join("");
+    listItems.forEach(p=>document.getElementById("c_"+p.id).onclick=ev=>{
+      if(ev.target.closest("[data-del]")||ev.target.closest(".ordbtn")) return; openEditor(p.id);
     });
-  if (!listItems.length){
-    el.innerHTML = `<div class="empty">沒有符合的地點。</div>`;
+    el.querySelectorAll("[data-del]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteDoc(placeDoc(b.dataset.del));});
+    el.querySelectorAll("[data-up]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();movePlace(b.dataset.up,-1);});
+    el.querySelectorAll("[data-down]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();movePlace(b.dataset.down,1);});
     renderFilterChips(); return;
   }
-  if (tab === "visited"){
-    let html = "", lastDate = null, dayIdx = 0;
-    listItems.forEach(p => {
-      const d = primaryDate(p) || "未定日期";
-      if (d !== lastDate){ html += `<div class="daysep">${d}</div>`; lastDate = d; dayIdx = 0; }
-      dayIdx++;
-      html += cardHTML(p, dayIdx);
-    });
-    el.innerHTML = html;
-  } else {
-    el.innerHTML = listItems.map(p => cardHTML(p)).join("");
-  }
-  listItems.forEach(p => document.getElementById("c_"+p.id).onclick = ev => {
-    if (ev.target.closest("[data-del]") || ev.target.closest(".ordbtn")) return;
-    openEditor(p.id);
+
+  const oneDay=singleDayDate();
+  if(oneDay){ renderDayVisitList(el,oneDay); renderFilterChips(); return; }
+
+  let occ=getFilteredVisitOccurrences();
+  const tripId=specificTripId();
+  if(tripId){ occ.sort(sortOccurrences); }
+  else { occ.sort((a,b)=>{
+    const d=(b.v.date||"").localeCompare(a.v.date||""); if(d) return d;
+    const ao=Number.isFinite(Number(a.v.order))?Number(a.v.order):1e9, bo=Number.isFinite(Number(b.v.order))?Number(b.v.order):1e9;
+    if(ao!==bo) return ao-bo;
+    return timeMinutes(a.v.time)-timeMinutes(b.v.time);
+  }); }
+  dayVisitItems=occ;
+  if(!occ.length){ el.innerHTML=`<div class="empty">沒有符合的造訪紀錄。</div>`; renderFilterChips(); return; }
+  const labels=tripId ? new Map(sequenceLabels().map(x=>[`${x.o.p.id}:${x.o.visitIndex}`,x.label])) : null;
+  let html="", lastDate=null, dayIdx=0;
+  occ.forEach(o=>{
+    const d=o.v.date||"未定日期";
+    if(d!==lastDate){ html+=`<div class="daysep">${tripId?`D${tripDayNo(o.v,tripId,occ)} · `:""}${esc(d)}</div>`; lastDate=d; dayIdx=0; }
+    dayIdx++;
+    const label=labels?.get(`${o.p.id}:${o.visitIndex}`)||String(dayIdx);
+    html+=visitCardHTML(o,label,d);
   });
-  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => { ev.stopPropagation(); deleteDoc(placeDoc(b.dataset.del)); });
-  el.querySelectorAll("[data-up]").forEach(b => b.onclick = ev => { ev.stopPropagation(); movePlace(b.dataset.up, -1); });
-  el.querySelectorAll("[data-down]").forEach(b => b.onclick = ev => { ev.stopPropagation(); movePlace(b.dataset.down, 1); });
+  el.innerHTML=html; wireVisitCards(el);
   renderFilterChips();
 }
 function movePlace(id, dir){
@@ -1126,113 +1295,116 @@ function movePlace(id, dir){
   updateDoc(placeDoc(a.id), { ord: effOrd(b) });
   updateDoc(placeDoc(b.id), { ord: effOrd(a) });
 }
-function cardHTML(p, dayNum){
-  const cat = (p.categories||[])[0];
-  const col = cat ? catColor(cat) : "#9aa5ad";
-  const mode = whoModeOf(p);
-  const whoTxt = mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
-  const pv = placeVisits(p), nVisits = pv.length;
-  const latestVisit = pv.filter(v=>v.date).slice().sort((a,b)=>a.date.localeCompare(b.date)).pop();
-  const latestSpan = latestVisit && visitEnd(latestVisit)>latestVisit.date ? daySpanCount(latestVisit) : 1;
-  const tripTags = placeTrips(p).map(id=>trips[id]).filter(Boolean)
-    .map(t=>`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`).join("");
-  const tags = [
-    cat ? `<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>` : "",
-    `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
-    tripTags,
-    p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : "",
-    latestSpan>1 ? `<span class="ptag" style="background:#e6efe9">${esc(latestVisit.date)} → ${esc(visitEnd(latestVisit))} · 跨${latestSpan}日</span>` : "",
-    nVisits>1 ? `<span class="ptag" style="background:#e7edf0">共${nVisits}次</span>` : (p.status==="wishlist"?`<span class="ptag" style="background:#e6efe9">想去</span>`:"")
-  ].filter(Boolean).join("");
-  return `<div class="card compact" id="c_${p.id}" style="background:${col}14">
-    <div style="display:flex;align-items:center;gap:8px">
-      <span class="dot" style="background:${col};flex:0 0 auto"></span>
-      <div style="flex:1;min-width:0">
-        <div class="cname">${esc(p.name)}</div>
-        <div class="ptags">${tags}</div>
-      </div>
-      ${dayNum?`<span class="daynum">${dayNum}</span>`:""}
-      <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
-      <button class="delx" data-del="${p.id}" title="刪除">✕</button>
-    </div>
-  </div>`;
-}
-function daySpanCount(v){
-  if (!v.date || !visitEnd(v)) return 1;
-  return Math.max(1, Math.round((new Date(visitEnd(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000)+1);
-}
-function visitCardHTML(o, dayNum, date){
-  const p=o.p, v=o.v, cat=(p.categories||[])[0];
-  const col=cat ? catColor(cat) : "#9aa5ad";
-  const mode=whoModeOf(p);
-  const whoTxt=mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
-  const t=v.tripId ? trips[v.tripId] : null;
-  const span=daySpanCount(v);
+function cardHTML(p){
+  const cat=(p.categories||[])[0], col=cat?catColor(cat):"#9aa5ad";
+  const mode=whoModeOf(p), whoTxt=mode==="both"?"一起":mode==="partner"?nameFor(otherOf(p.createdBy)):nameFor(p.createdBy||user.uid);
   const tags=[
-    v.time ? `<span class="ptag" style="background:#e9eef2">${esc(v.time)}</span>` : "",
-    cat ? `<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>` : "",
+    cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
-    t ? `<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>` : `<span class="ptag" style="background:#f2f0eb">日常</span>`,
-    span>1 ? `<span class="ptag" style="background:#e6efe9">${esc(v.date)} → ${esc(visitEnd(v))} · 跨${span}日</span>` : "",
-    p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : ""
+    p.rating?`<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>`:"",
+    `<span class="ptag" style="background:#e6efe9">想去</span>`
+  ].filter(Boolean).join("");
+  return `<div class="card compact" id="c_${p.id}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
+    <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
+    <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
+    <button class="delx" data-del="${p.id}" title="刪除地點">✕</button></div></div>`;
+}
+function visitCardHTML(o,label,date){
+  const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
+  const mode=whoModeOf(p), whoTxt=mode==="both"?"一起":mode==="partner"?nameFor(otherOf(p.createdBy)):nameFor(p.createdBy||user.uid);
+  const t=v.tripId?trips[v.tripId]:null, stay=visitKind(v)==="stay", nights=stayNights(v);
+  const tags=[
+    v.time?`<span class="ptag" style="background:#e9eef2">${esc(v.time)}</span>`:"",
+    stay?`<span class="ptag" style="background:#e6efe9">住宿 ${nights}晚 · ${esc(v.date)} → ${esc(stayCheckout(v)||v.date)}</span>`:"",
+    cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
+    `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
+    t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:`<span class="ptag" style="background:#f2f0eb">日常</span>`,
+    p.rating?`<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>`:""
   ].filter(Boolean).join("");
   const key=`${p.id}:${o.visitIndex}`;
-  return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" style="background:${col}14">
-    <div style="display:flex;align-items:center;gap:8px">
-      <span class="dot" style="background:${col};flex:0 0 auto"></span>
-      <div style="flex:1;min-width:0">
-        <div class="cname">${esc(p.name)}</div>
-        <div class="ptags">${tags}</div>
-      </div>
-      <span class="daynum">${dayNum}</span>
-      <div class="ordcol"><button class="ordbtn" data-vup="${key}">▲</button><button class="ordbtn" data-vdown="${key}">▼</button></div>
-      <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>
-    </div>
-  </div>`;
+  return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
+    <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
+    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
+    <div class="ordcol"><button class="ordbtn" data-vup="${key}" data-date="${esc(v.date)}">▲</button><button class="ordbtn" data-vdown="${key}" data-date="${esc(v.date)}">▼</button></div>
+    <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button></div></div>`;
+}
+function stayCarryHTML(o,date){
+  const nights=stayNights(o.v), elapsed=Math.max(1,Math.round((new Date(date+"T00:00:00")-new Date(o.v.date+"T00:00:00"))/86400000)+1);
+  return `<div class="staycarry" id="carry_${o.p.id}_${o.visitIndex}" data-carry="${o.p.id}:${o.visitIndex}"><span>🏨</span><div><b>${esc(o.p.name)}</b><br>住宿中 · 第 ${elapsed}/${nights} 晚 · ${esc(o.v.date)} → ${esc(stayCheckout(o.v))}</div></div>`;
 }
 function renderDayVisitList(el,date){
-  dayVisitItems=getDayOccurrences(date);
-  if (!dayVisitItems.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
-  el.innerHTML=`<div class="daysep">${date}</div>` + dayVisitItems.map((o,i)=>visitCardHTML(o,i+1,date)).join("");
-  dayVisitItems.forEach(o => {
-    const c=document.getElementById(`vc_${o.p.id}_${o.visitIndex}`);
-    if (c) c.onclick=ev => {
-      if (ev.target.closest("[data-vdel]") || ev.target.closest(".ordbtn")) return;
-      openEditor(o.p.id);
-    };
-  });
-  el.querySelectorAll("[data-vup]").forEach(b => b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(date,b.dataset.vup,-1);});
-  el.querySelectorAll("[data-vdown]").forEach(b => b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(date,b.dataset.vdown,1);});
-  el.querySelectorAll("[data-vdel]").forEach(b => b.onclick=ev=>{ev.stopPropagation();deleteVisitOccurrence(b.dataset.vdel);});
+  const all=getDayOccurrences(date), carries=all.filter(o=>o.carry), seq=all.filter(o=>!o.carry);
+  dayVisitItems=seq;
+  if(!all.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
+  const tripId=specificTripId(), labels=tripId ? new Map(sequenceLabels().map(x=>[`${x.o.p.id}:${x.o.visitIndex}`,x.label])) : null;
+  let html=`<div class="daysep">${esc(date)}</div>`;
+  html+=carries.map(o=>stayCarryHTML(o,date)).join("");
+  html+=seq.map((o,i)=>visitCardHTML(o,labels?.get(`${o.p.id}:${o.visitIndex}`)||String(i+1),date)).join("");
+  el.innerHTML=html; wireVisitCards(el);
+  el.querySelectorAll("[data-carry]").forEach(c=>c.onclick=()=>{ const [pid,idx]=c.dataset.carry.split(":");openEditor(pid,null,{focusVisitIndex:+idx}); });
 }
-function visitLegacyFields(vv){
-  const clean=vv.filter(v=>v.date);
-  const latest=clean.slice().sort((a,b)=>visitEnd(a).localeCompare(visitEnd(b))).pop();
-  return { visitedOn: latest ? visitEnd(latest) : "", tripId: latest?.tripId||"" };
+function wireVisitCards(el){
+  el.querySelectorAll('[id^="vc_"]').forEach(c=>c.onclick=ev=>{
+    if(ev.target.closest("[data-vdel]")||ev.target.closest(".ordbtn")) return;
+    const m=c.id.match(/^vc_(.+)_(\d+)$/); if(!m) return; openEditor(m[1],null,{focusVisitIndex:+m[2]});
+  });
+  el.querySelectorAll("[data-vup]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.date,b.dataset.vup,-1);});
+  el.querySelectorAll("[data-vdown]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.date,b.dataset.vdown,1);});
+  el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteVisitOccurrence(b.dataset.vdel);});
+}
+function visitLegacyFields(vv,p=null){
+  const clean=vv.filter(v=>v.date).map((v,i)=>normalizedVisit(p||{},v,i));
+  const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||timeMinutes(a.time)-timeMinutes(b.time)).pop();
+  return { visitedOn:latest?latest.date:"", tripId:latest?.tripId||"", categories:latest?.category?[latest.category]:(p?.categories||[]) };
 }
 async function moveVisitOccurrence(date,key,dir){
-  const items=getDayOccurrences(date); const i=items.findIndex(o=>`${o.p.id}:${o.visitIndex}`===key), j=i+dir;
-  if (i<0 || j<0 || j>=items.length) return;
+  const items=getDayOccurrences(date).filter(o=>!o.carry), i=items.findIndex(o=>`${o.p.id}:${o.visitIndex}`===key), j=i+dir;
+  if(i<0||j<0||j>=items.length) return;
   [items[i],items[j]]=[items[j],items[i]];
   const byPlace=new Map();
   items.forEach((o,idx)=>{
-    if(!byPlace.has(o.p.id)) byPlace.set(o.p.id, placeVisits(o.p).map(v=>({...v})));
+    if(!byPlace.has(o.p.id)) byPlace.set(o.p.id,placeVisits(o.p).map(v=>({...v})));
     byPlace.get(o.p.id)[o.visitIndex].order=idx+1;
   });
-  await Promise.all([...byPlace.entries()].map(([pid,vv])=>updateDoc(placeDoc(pid),{visits:vv,...visitLegacyFields(vv)})));
+  await Promise.all([...byPlace.entries()].map(([pid,vv])=>updateDoc(placeDoc(pid),{visits:vv,...visitLegacyFields(vv,places[pid])})));
 }
 async function deleteVisitOccurrence(key){
-  const [pid,idxRaw]=key.split(":"); const p=places[pid], idx=+idxRaw; if(!p) return;
-  const vv=placeVisits(p).map(v=>({...v})); if(idx<0 || idx>=vv.length) return;
-  if(vv.length===1){ await deleteDoc(placeDoc(pid)); return; }
+  const [pid,idxRaw]=key.split(":"),p=places[pid],idx=+idxRaw; if(!p) return;
+  const vv=placeVisits(p).map(v=>({...v})); if(idx<0||idx>=vv.length) return;
   vv.splice(idx,1);
-  await updateDoc(placeDoc(pid),{visits:vv,...visitLegacyFields(vv)});
+  if(!vv.length){
+    await updateDoc(placeDoc(pid),{visits:[],status:"wishlist",visitedOn:"",tripId:""});
+  }else{
+    await updateDoc(placeDoc(pid),{visits:vv,status:"visited",...visitLegacyFields(vv,p)});
+  }
 }
 
 /* ============================================================
    5) 搜尋(Google Places New:AutocompleteSuggestion → toPlace → fetchFields)
    ============================================================ */
 let searchTimer;
+function normPlaceName(x){ return (x||"").trim().toLowerCase().replace(/\s+/g,""); }
+function geoDistanceM(aLat,aLng,bLat,bLng){
+  const R=6371000, rad=x=>x*Math.PI/180, dLat=rad(bLat-aLat), dLng=rad(bLng-aLng);
+  const q=Math.sin(dLat/2)**2+Math.cos(rad(aLat))*Math.cos(rad(bLat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(q));
+}
+function findExistingPlace(seed){
+  const vals=Object.values(places);
+  if(seed?.extId){ const exact=vals.find(p=>p.extId&&p.extId===seed.extId); if(exact) return exact; }
+  if(seed?.name && Number.isFinite(seed.lat) && Number.isFinite(seed.lng)){
+    const n=normPlaceName(seed.name);
+    return vals.find(p=>normPlaceName(p.name)===n && geoDistanceM(p.lat,p.lng,seed.lat,seed.lng)<=80) || null;
+  }
+  return null;
+}
+function openSeed(seed){
+  const existing=findExistingPlace(seed);
+  if(existing){
+    if(tab==="visited") openEditor(existing.id,null,{addVisit:true});
+    else openEditor(existing.id);
+  }else openEditor(null,seed);
+}
 function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
@@ -1253,7 +1425,7 @@ function wireSearch(){
           sessionToken = null;                       // 選定後結束 session(計費最佳化)
           const lat = place.location.lat(), lng = place.location.lng();
           const admin = await reverseGeocode(lat, lng);
-          openEditor(null, { name:place.displayName||r.name, lat, lng, admin, source:"google", extId:r.prediction.placeId });
+          openSeed({ name:place.displayName||r.name, lat, lng, admin, source:"google", extId:r.prediction.placeId });
         } catch(e){ alert("取得地點失敗:"+e.message); }
       });
     }, 350);
@@ -1315,7 +1487,7 @@ async function nearbyPicker(lat, lng){
     const pl = results[+d.dataset.i]; closeModal();
     const la = pl.location.lat(), ln = pl.location.lng();
     const admin = await reverseGeocode(la, ln);
-    openEditor(null, { name: pl.displayName||"", lat: la, lng: ln, admin, source:"google", extId: pl.id });
+    openSeed({ name: pl.displayName||"", lat: la, lng: ln, admin, source:"google", extId: pl.id });
   });
   document.getElementById("nb_custom").onclick = async () => {
     closeModal();
@@ -1324,32 +1496,51 @@ async function nearbyPicker(lat, lng){
   };
 }
 
-function openEditor(id, seed){
+function addDays(date,n){
+  if(!date) return ""; const d=new Date(date+"T00:00:00"); d.setDate(d.getDate()+n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function openEditor(id, seed, opts={}){
   const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], ...seed };
   let docId = id || null, creating = false;
-  let cats = new Set((p.categories||[]).slice(0,1));   // 單選
+  let wishlistCats = new Set((p.categories||[]).slice(0,1));
   let status = p.status || "visited";
   let level = p.level || "旅遊";
   const pu = partnerUid();
   let whoSel = id ? whoModeOf(p) : (pu ? "both" : "me");
-  const filterTrip = (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : "";
+  const filterTrip = specificTripId();
   const TODAY = new Date().toISOString().slice(0,10);
-  const defaultDate = singleDayDate() || ((filterTrip && trips[filterTrip]?.startDate) ? trips[filterTrip].startDate : TODAY);
-  let visits = (p.visits && p.visits.length) ? p.visits.map(v=>({endDate:"",time:"",...v}))
-    : (p.visitedOn ? [{date:p.visitedOn, endDate:"", time:"", tripId:p.tripId||""}]
-    : (id ? [] : [{date:defaultDate, endDate:"", time:"", tripId:filterTrip||""}]));
+  const defaultDate = defaultDateForNewVisit();
+  let visits = placeVisits(p).map((v,i)=>({ ...normalizedVisit(p,v,i), id:(v.id&& !String(v.id).startsWith("legacy_"))?v.id:newVisitId() }));
+  let focusIndex = Number.isFinite(Number(opts.focusVisitIndex)) ? Number(opts.focusVisitIndex) : -1;
+  if (!id && status==="visited" && !visits.length){
+    const presetCat=filter.cats.size===1?[...filter.cats][0]:"";
+    visits.push({id:newVisitId(),kind:"visit",date:defaultDate,time:"",endDate:"",tripId:filterTrip||"",category:presetCat}); focusIndex=0;
+  }
+  if (id && opts.addVisit){
+    status="visited";
+    const prev=latestVisit(p), cat=prev?visitCategory(p,prev):((p.categories||[])[0]||"");
+    visits.push({id:newVisitId(),kind:"visit",date:defaultDate,time:"",endDate:"",tripId:filterTrip||"",category:cat});
+    focusIndex=visits.length-1;
+  }
 
+  const visitedHasHistory = () => visits.some(v=>v.date);
   modal(`
-    <h2 style="margin-bottom:12px">${esc(p.name||"新地點")}</h2>
+    <h2 style="margin-bottom:4px">${esc(p.name||"新地點")}</h2>
+    ${opts.addVisit?`<div class="admin" style="margin-bottom:10px">再次造訪：已沿用上一次的「在這裡做什麼」，可直接修改本次紀錄。</div>`:""}
     <div class="field"><input id="f_name" value="${esc(p.name||"")}" placeholder="名稱"/></div>
     <div class="field">
       <div class="seg" id="f_status">
         <button data-s="visited" class="${status==='visited'?'on-v':''}">去過了</button>
-        <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}">想去</button>
+        <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}" ${id&&visitedHasHistory()?'disabled title="已有造訪紀錄；請先刪除造訪紀錄"':''}>想去</button>
       </div>
     </div>
-    <div class="field"><label>在這裡做什麼(單選)</label>
-      <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${esc(c)}" style="${cats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
+    <div class="field" id="f_wishlistcat" style="${status==='wishlist'?'':'display:none'}"><label>想去這裡做什麼</label>
+      <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${wishlistCats.has(c)?'on':''}" data-c="${esc(c)}" style="${wishlistCats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
+    </div>
+    <div class="field" id="f_visitwrap" style="${status==='wishlist'?'display:none':''}">
+      <label>造訪紀錄 <span style="font-weight:400">（每次獨立；評價共用）</span></label>
+      <div id="f_visits"></div>
     </div>
     <div class="field">
       <div class="seg lvlseg" id="f_level">${LEVEL_ORDER.map(l=>`<button data-l="${l}" class="${level===l?'on':''}" style="${level===l?`background:${levelColors[l]};color:#fff`:''}">${l}</button>`).join("")}</div>
@@ -1361,172 +1552,151 @@ function openEditor(id, seed){
         <button data-w="both" class="${whoSel==='both'?'on-v':''}">一起</button>
       </div>
     </div>
-    <div class="field" id="f_visitwrap" style="${status==='wishlist'?'display:none':''}">
-      <label>造訪紀錄（同日可多筆；連住可設跨日）</label>
-      <div id="f_visits"></div>
+    <div class="field"><label>共用評價</label>
+      <div class="row" style="align-items:center;gap:10px"><input type="range" id="f_rating" min="0" max="5" step="0.5" value="${p.rating||0}" style="flex:1"><span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${p.rating?("★ "+p.rating):"未評分"}</span></div>
     </div>
-    <div class="field">
-      <div class="row" style="align-items:center;gap:10px">
-        <input type="range" id="f_rating" min="0" max="5" step="0.5" value="${p.rating||0}" style="flex:1">
-        <span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${p.rating?("★ "+p.rating):"未評分"}</span>
-      </div>
-    </div>
-    <div class="field"><textarea id="f_review" placeholder="評語…">${esc(p.review||"")}</textarea></div>
-    <div class="row">
-      <button class="btn" id="f_done">完成</button>
-      ${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除</button>`:``}
-    </div>
+    <div class="field"><textarea id="f_review" placeholder="這個地點的共用評語…">${esc(p.review||"")}</textarea></div>
+    <div class="row"><button class="btn" id="f_done">完成</button>${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除地點</button>`:``}</div>
   `);
 
-  const nameEl = document.getElementById("f_name");
-  const visitWrap = document.getElementById("f_visitwrap");
-
+  const nameEl=document.getElementById("f_name"), visitWrap=document.getElementById("f_visitwrap"), wishWrap=document.getElementById("f_wishlistcat");
+  function latestCatFromVisits(){
+    const v=visits.filter(x=>x.date).slice().sort((a,b)=>a.date.localeCompare(b.date)||timeMinutes(a.time)-timeMinutes(b.time)).pop();
+    return v?.category||"";
+  }
   function collect(){
-    const clean = visits.filter(v=>v.date).map(v=>{
-      const out={ date:v.date, endDate:(v.endDate && v.endDate>v.date)?v.endDate:"", time:v.time||"", tripId:v.tripId||"" };
-      if (Number.isFinite(Number(v.order))) out.order=Number(v.order);
+    const clean=visits.filter(v=>v.date).map(v=>{
+      const kind=v.kind==="stay"?"stay":"visit";
+      const out={id:v.id||newVisitId(),kind,date:v.date,time:v.time||"",tripId:v.tripId||"",category:v.category||""};
+      if(kind==="stay") out.endDate=(v.endDate&&v.endDate>v.date)?v.endDate:addDays(v.date,1);
+      else out.endDate="";
+      if(Number.isFinite(Number(v.order))) out.order=Number(v.order);
       return out;
     });
-    const latest = clean.slice().sort((a,b)=>visitEnd(a).localeCompare(visitEnd(b))).pop();
-    const who = whoSel==="me" ? [user.uid] : whoSel==="partner" ? (pu?[pu]:[]) : [user.uid, pu].filter(Boolean);
-    const rv = parseFloat(document.getElementById("f_rating").value);
+    const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||timeMinutes(a.time)-timeMinutes(b.time)).pop();
+    const who=whoSel==="me"?[user.uid]:whoSel==="partner"?(pu?[pu]:[]):[user.uid,pu].filter(Boolean);
+    const rv=parseFloat(document.getElementById("f_rating").value);
+    const latestCat=latest?.category||"";
     return {
-      name: nameEl.value.trim(), lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
-      admin:p.admin||{}, status, categories:[...cats], level,
-      whoMode: whoSel, who,
-      visits: status==="visited" ? clean : [],
-      visitedOn: status==="visited" ? (latest?visitEnd(latest):"") : "",
-      tripId: status==="visited" ? (latest?.tripId||"") : "",
-      rating: rv > 0 ? rv : null,
-      review: document.getElementById("f_review").value.trim()
+      name:nameEl.value.trim(),lat:p.lat,lng:p.lng,source:p.source||"google",extId:p.extId||null,admin:p.admin||{},
+      status, categories:status==="visited"?(latestCat?[latestCat]:[]):[...wishlistCats], level, whoMode:whoSel, who,
+      visits:status==="visited"?clean:[], visitedOn:status==="visited"?(latest?.date||""):"", tripId:status==="visited"?(latest?.tripId||""):"",
+      rating:rv>0?rv:null, review:document.getElementById("f_review").value.trim()
     };
   }
   async function persist(){
-    const data = collect();
-    if (!docId){
-      if (!data.name || creating) return;
-      creating = true;
-      data.createdBy = user.uid; data.createdAt = serverTimestamp();
-      const ref = await addDoc(placesCol(), data); docId = ref.id; creating = false;
-    } else {
-      await updateDoc(placeDoc(docId), data);
-    }
+    const data=collect();
+    if(!docId){
+      if(!data.name||creating) return; creating=true; data.createdBy=user.uid; data.createdAt=serverTimestamp();
+      const ref=await addDoc(placesCol(),data); docId=ref.id; creating=false;
+    }else await updateDoc(placeDoc(docId),data);
   }
-
+  function catOptions(selected){
+    return `<option value="">未分類</option>`+spaceCats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("")+`<option value="__new__">＋新增分類…</option>`;
+  }
+  function tripOptions(selected){
+    return `<option value="">日常</option>`+Object.values(trips).map(t=>`<option value="${t.id}" ${selected===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')+`<option value="__new__">＋新增旅程…</option>`;
+  }
   function renderVisits(){
-    const box = document.getElementById("f_visits");
-    box.innerHTML = visits.map((v,i)=>`
-      <div class="visitrow" data-i="${i}">
+    const box=document.getElementById("f_visits"); if(!box) return;
+    box.innerHTML=visits.map((v,i)=>{
+      const stay=v.kind==="stay", co=stay?(v.endDate&&v.endDate>v.date?v.endDate:addDays(v.date,1)):"";
+      const nights=stay?Math.max(1,Math.round((new Date(co+"T00:00:00")-new Date((v.date||co)+"T00:00:00"))/86400000)):0;
+      return `<div class="visitrow ${i===focusIndex?'focus':''}" data-i="${i}">
         <div class="visitmain">
-          <input type="date" class="v_date" value="${v.date||''}" title="造訪日期">
-          <input type="time" class="v_time" value="${v.time||''}" title="時間（可留空）">
-          <button type="button" class="v_range" title="連續住宿或跨日停留">${v.endDate?'跨日 ✓':'＋跨日'}</button>
+          <input type="date" class="v_date" value="${v.date||''}" title="${stay?'入住日':'造訪日'}">
+          <input type="time" class="v_time" value="${v.time||''}" title="${stay?'入住時間（可留空）':'時間（可留空）'}">
+          <select class="v_kind" title="紀錄類型"><option value="visit" ${!stay?'selected':''}>造訪</option><option value="stay" ${stay?'selected':''}>住宿</option></select>
           <button class="delx v_del" title="刪除此造訪">✕</button>
         </div>
         <div class="visitextra">
-          <select class="v_trip" style="${v.endDate?'':'grid-column:1/-1'}">
-            <option value="">日常</option>
-            ${Object.values(trips).map(t=>`<option value="${t.id}" ${v.tripId===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')}
-            <option value="__new__">＋新增旅程…</option>
-          </select>
-          ${v.endDate?`<div class="visitrange"><label>至</label><input type="date" class="v_end" min="${v.date||''}" value="${v.endDate||v.date||''}"></div>`:''}
+          <select class="v_cat" title="本次在這裡做什麼">${catOptions(v.category||'')}</select>
+          <select class="v_trip" title="所屬旅程">${tripOptions(v.tripId||'')}</select>
         </div>
-      </div>`).join("") +
-      `<button class="btn grey mini" id="v_add" style="margin-top:2px">＋ 再一次造訪</button>`;
-    box.querySelectorAll(".visitrow").forEach(row => {
-      const i = +row.dataset.i;
-      const d = row.querySelector(".v_date"), tm=row.querySelector(".v_time"), tsel = row.querySelector(".v_trip"), end=row.querySelector(".v_end");
-      d.addEventListener("change", () => {
-        visits[i].date = d.value;
-        if (visits[i].endDate && visits[i].endDate < d.value) visits[i].endDate=d.value;
-        if (d.value && !visits[i].tripId){
-          const t = Object.values(trips).find(t => t.startDate && t.endDate && d.value>=t.startDate && d.value<=t.endDate);
-          if (t){ visits[i].tripId = t.id; tsel.value = t.id; }
+        ${stay?`<div class="visitrange" style="margin-top:6px"><label>退房</label><input type="date" class="v_end" min="${v.date||''}" value="${co}"><span class="staymeta">${nights} 晚</span></div>`:''}
+      </div>`;
+    }).join("")+`<button class="btn grey mini" id="v_add" style="margin-top:2px">＋ 再一次造訪</button>`;
+    box.querySelectorAll(".visitrow").forEach(row=>{
+      const i=+row.dataset.i, d=row.querySelector(".v_date"), tm=row.querySelector(".v_time"), kind=row.querySelector(".v_kind"), cat=row.querySelector(".v_cat"), trip=row.querySelector(".v_trip"), end=row.querySelector(".v_end");
+      d.onchange=()=>{
+        visits[i].date=d.value;
+        if(visits[i].kind==="stay" && (!visits[i].endDate||visits[i].endDate<=d.value)) visits[i].endDate=addDays(d.value,1);
+        if(d.value&&!visits[i].tripId){ const t=Object.values(trips).find(t=>t.startDate&&t.endDate&&d.value>=t.startDate&&d.value<=t.endDate); if(t) visits[i].tripId=t.id; }
+        focusIndex=i; renderVisits(); persist();
+      };
+      tm.onchange=()=>{visits[i].time=tm.value;persist();}; tm.onblur=tm.onchange;
+      kind.onchange=()=>{
+        visits[i].kind=kind.value;
+        if(kind.value==="stay"){
+          visits[i].endDate=(visits[i].endDate&&visits[i].endDate>visits[i].date)?visits[i].endDate:addDays(visits[i].date||defaultDate,1);
+          if(spaceCats.includes("住宿")) visits[i].category="住宿";
+        }else visits[i].endDate="";
+        focusIndex=i; renderVisits(); persist();
+      };
+      cat.onchange=()=>{
+        if(cat.value==="__new__"){
+          const name=(prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
+          if(!name){ renderVisits(); return; }
+          if(!spaceCats.includes(name)){ spaceCats.push(name); setDoc(metaDoc(),{categories:arrayUnion(name)},{merge:true}); }
+          visits[i].category=name; focusIndex=i; renderVisits(); persist(); return;
         }
-        renderVisits(); persist();
-      });
-      tm.addEventListener("change",()=>{ visits[i].time=tm.value; persist(); });
-      tm.addEventListener("blur",()=>{ visits[i].time=tm.value; persist(); });
-      if(end) end.addEventListener("change",()=>{
-        visits[i].endDate = end.value && end.value>=visits[i].date ? end.value : visits[i].date;
-        renderVisits(); persist();
-      });
-      row.querySelector(".v_range").onclick = () => {
-        visits[i].endDate = visits[i].endDate ? "" : (visits[i].date||TODAY);
+        visits[i].category=cat.value; persist();
+      };
+      trip.onchange=()=>{
+        if(trip.value==="__new__"){
+          trip.value=visits[i].tripId||""; editTrip(null,t=>{visits[i].tripId=t.id;focusIndex=i;renderVisits();persist();}); return;
+        }
+        visits[i].tripId=trip.value; persist();
+      };
+      if(end) end.onchange=()=>{
+        visits[i].endDate=end.value&&end.value>visits[i].date?end.value:addDays(visits[i].date,1); focusIndex=i; renderVisits(); persist();
+      };
+      row.querySelector(".v_del").onclick=()=>{
+        visits.splice(i,1); focusIndex=Math.min(i,visits.length-1); if(!visits.length) status="wishlist";
+        visitWrap.style.display=status==="wishlist"?"none":"block"; wishWrap.style.display=status==="wishlist"?"block":"none";
+        document.querySelectorAll("#f_status button").forEach(x=>{ x.className=""; x.disabled=false; });
+        const sb=document.querySelector(`#f_status button[data-s="${status}"]`); if(sb) sb.className=status==="visited"?"on-v":"on-w";
         renderVisits(); persist();
       };
-      tsel.onchange = () => {
-        if (tsel.value === "__new__"){
-          tsel.value = visits[i].tripId || "";
-          editTrip(null, t => { visits[i].tripId = t.id; renderVisits(); persist(); });
-          return;
-        }
-        visits[i].tripId = tsel.value; persist();
-      };
-      row.querySelector(".v_del").onclick = () => { visits.splice(i,1); renderVisits(); persist(); };
     });
-    document.getElementById("v_add").onclick = () => {
-      visits.push({ date:singleDayDate()||defaultDate||TODAY, endDate:"", time:"", tripId:filterTrip||"" });
-      renderVisits(); persist();
+    document.getElementById("v_add").onclick=()=>{
+      const prev=visits.filter(v=>v.date).slice().sort((a,b)=>a.date.localeCompare(b.date)||timeMinutes(a.time)-timeMinutes(b.time)).pop();
+      visits.push({id:newVisitId(),kind:"visit",date:defaultDateForNewVisit(),time:"",endDate:"",tripId:filterTrip||"",category:prev?.category||latestVisitCategory(p)||""});
+      status="visited"; focusIndex=visits.length-1; visitWrap.style.display="block"; wishWrap.style.display="none"; renderVisits(); persist();
     };
+    if(focusIndex>=0){ setTimeout(()=>{ const r=box.querySelector(`.visitrow[data-i="${focusIndex}"]`); r?.scrollIntoView({block:"nearest"}); },0); }
   }
   renderVisits();
 
-  document.querySelectorAll("#f_status button").forEach(b => b.onclick = () => {
-    status = b.dataset.s;
-    document.querySelectorAll("#f_status button").forEach(x=>x.className="");
-    b.className = status==="visited" ? "on-v" : "on-w";
-    visitWrap.style.display = status==="wishlist" ? "none" : "block";
-    if (status==="visited" && !visits.length){ visits.push({ date:singleDayDate()||defaultDate||TODAY, endDate:"", time:"", tripId:filterTrip||"" }); renderVisits(); }
+  document.querySelectorAll("#f_status button").forEach(b=>b.onclick=()=>{
+    if(b.disabled) return; status=b.dataset.s;
+    document.querySelectorAll("#f_status button").forEach(x=>x.className=""); b.className=status==="visited"?"on-v":"on-w";
+    visitWrap.style.display=status==="wishlist"?"none":"block"; wishWrap.style.display=status==="wishlist"?"block":"none";
+    if(status==="visited"&&!visits.length){ visits.push({id:newVisitId(),kind:"visit",date:defaultDateForNewVisit(),time:"",endDate:"",tripId:filterTrip||"",category:[...wishlistCats][0]||""}); focusIndex=0; renderVisits(); }
     persist();
   });
-  // 分類單選
-  document.querySelectorAll("#f_cats .chip[data-c]").forEach(c => c.onclick = () => {
-    const k = c.dataset.c; const already = cats.has(k);
-    cats = new Set(already ? [] : [k]);
-    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x => {
-      const on = cats.has(x.dataset.c);
-      x.classList.toggle("on", on);
-      if (on){ const col=catColor(x.dataset.c); x.style.background=col; x.style.color=textOn(col); x.style.borderColor=col; }
-      else { x.style.background=""; x.style.color=""; x.style.borderColor=""; }
-    });
-    persist();
+  document.querySelectorAll("#f_cats .chip[data-c]").forEach(c=>c.onclick=()=>{
+    const k=c.dataset.c,already=wishlistCats.has(k); wishlistCats=new Set(already?[]:[k]);
+    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x=>{ const on=wishlistCats.has(x.dataset.c); x.classList.toggle("on",on); if(on){const col=catColor(x.dataset.c);x.style.background=col;x.style.color=textOn(col);x.style.borderColor=col;}else{x.style.background="";x.style.color="";x.style.borderColor="";} }); persist();
   });
-  document.getElementById("f_addcat").onclick = () => {
-    const name = (prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
-    if(!name) return;
-    if(!spaceCats.includes(name)){ spaceCats.push(name); setDoc(metaDoc(), { categories: arrayUnion(name) }, { merge:true }); }
-    cats = new Set([name]);
-    const col = catColor(name);
-    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x => { x.classList.remove("on"); x.style.background=""; x.style.color=""; x.style.borderColor=""; });
-    const chip = document.createElement("span");
-    chip.className = "chip on"; chip.dataset.c = name; chip.textContent = name;
-    chip.style.background = col; chip.style.color = textOn(col); chip.style.borderColor = col;
-    chip.onclick = () => { cats = new Set([name]); document.querySelectorAll("#f_cats .chip[data-c]").forEach(x=>{ if(x!==chip){x.classList.remove("on");x.style.background="";x.style.color="";x.style.borderColor="";} }); persist(); };
-    document.getElementById("f_addcat").before(chip); persist();
+  document.getElementById("f_addcat").onclick=()=>{
+    const name=(prompt("新增分類(例:溫泉、看展、爬山)")||"").trim(); if(!name)return;
+    if(!spaceCats.includes(name)){spaceCats.push(name);setDoc(metaDoc(),{categories:arrayUnion(name)},{merge:true});}
+    wishlistCats=new Set([name]);
+    const wrap=document.getElementById("f_cats");
+    wrap.querySelectorAll(".chip[data-c]").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";x.style.borderColor="";});
+    const chip=document.createElement("span"),col=catColor(name); chip.className="chip on";chip.dataset.c=name;chip.textContent=name;chip.style.background=col;chip.style.color=textOn(col);chip.style.borderColor=col;
+    chip.onclick=()=>{wishlistCats=new Set([name]);persist();}; document.getElementById("f_addcat").before(chip); persist();
   };
-  document.querySelectorAll("#f_level button").forEach(b => b.onclick = () => {
-    level = b.dataset.l;
-    document.querySelectorAll("#f_level button").forEach(x => { x.classList.remove("on"); x.style.background=""; x.style.color=""; });
-    b.classList.add("on"); b.style.background = levelColors[level]; b.style.color = "#fff";
-    persist();
-  });
-  document.querySelectorAll("#f_who button").forEach(b => b.onclick = () => {
-    whoSel = b.dataset.w;
-    document.querySelectorAll("#f_who button").forEach(x => x.className = "");
-    b.className = "on-v"; persist();
-  });
-  nameEl.addEventListener("change", persist);
-  nameEl.addEventListener("blur", persist);
-  const rEl = document.getElementById("f_rating"), rVal = document.getElementById("f_ratingval");
-  rEl.oninput = () => { const v = parseFloat(rEl.value); rVal.textContent = v>0 ? ("★ "+v) : "未評分"; };
-  rEl.addEventListener("change", persist);
-  document.getElementById("f_review").addEventListener("blur", persist);
-  document.getElementById("f_done").onclick = async () => { await persist(); closeModal(); };
-  const fdel = document.getElementById("f_del");
-  if (fdel) fdel.onclick = async () => { await deleteDoc(placeDoc(docId||id)); closeModal(); };
-
-  if (!id && collect().name) persist();
+  document.querySelectorAll("#f_level button").forEach(b=>b.onclick=()=>{ level=b.dataset.l; document.querySelectorAll("#f_level button").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";}); b.classList.add("on");b.style.background=levelColors[level];b.style.color="#fff";persist(); });
+  document.querySelectorAll("#f_who button").forEach(b=>b.onclick=()=>{whoSel=b.dataset.w;document.querySelectorAll("#f_who button").forEach(x=>x.className="");b.className="on-v";persist();});
+  nameEl.addEventListener("change",persist); nameEl.addEventListener("blur",persist);
+  const rEl=document.getElementById("f_rating"),rVal=document.getElementById("f_ratingval");
+  rEl.oninput=()=>{const v=parseFloat(rEl.value);rVal.textContent=v>0?("★ "+v):"未評分";}; rEl.addEventListener("change",persist);
+  document.getElementById("f_review").addEventListener("blur",persist);
+  document.getElementById("f_done").onclick=async()=>{await persist();closeModal();};
+  const fdel=document.getElementById("f_del"); if(fdel)fdel.onclick=async()=>{await deleteDoc(placeDoc(docId||id));closeModal();};
+  if(!id&&collect().name) persist();
 }
 
 /* ============================================================
@@ -1537,14 +1707,15 @@ function openEditor(id, seed){
    ============================================================ */
 function renderTrips(el){
   const list = Object.values(trips).sort((a,b)=>(b.startDate||"0000-00-00").localeCompare(a.startDate||"0000-00-00"));
-  const count = id => Object.values(places).filter(p => placeTrips(p).includes(id)).length;
+  const placeCount = id => Object.values(places).filter(p => placeTrips(p).includes(id)).length;
+  const visitCount = id => Object.values(places).reduce((n,p)=>n+placeVisits(p).filter(v=>v.tripId===id).length,0);
   el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新旅程</button>` +
     (list.length ? list.map(t=>`
       <div class="card triprow" id="t_${t.id}">
         <span style="font-size:20px;width:26px;text-align:center">${t.emoji||"🧭"}</span>
         <div style="flex:1">
           <h3>${esc(t.name)}</h3>
-          <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${count(t.id)} 個地點</div>
+          <div class="admin">${t.startDate||""}${t.endDate?" → "+t.endDate:""} · ${visitCount(t.id)} 次造訪 / ${placeCount(t.id)} 個地點</div>
         </div>
         <span style="width:12px;height:12px;border-radius:3px;background:${t.color||'#3f7d78'}"></span>
         <button class="btn mini grey" data-edit="${t.id}">編輯</button>
@@ -1554,6 +1725,7 @@ function renderTrips(el){
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
     filter.tripId = t.id; tab = "visited";
+    dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });
