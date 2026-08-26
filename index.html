@@ -1022,7 +1022,7 @@ function representativeDateOccurrence(p,mode){
   const arr=[];
   placeVisits(p).forEach((v,visitIndex)=>{
     if(!placeStaticFilter(p)||!visitMatchesTrip(v)||!visitMatchesCategory(p,v)) return;
-    if(visitKind(v)!==="stay"){
+    if(visitKind(v)!=="stay"){
       if(visitPassFilter(p,v)) arr.push({p,v,visitIndex,seqDate:v.date,stayAnchor:"",fixed:false});
       return;
     }
