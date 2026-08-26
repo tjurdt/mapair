@@ -28,34 +28,43 @@
   .btn.mini{padding:5px 10px;font-size:13px;border-radius:8px}
   .btn.grey{background:#eee;color:var(--ink)}
 
-  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 58px)}
-  .mapcol{position:relative;height:100%;min-width:0}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 58px);position:relative}
+  .mapcol{position:relative;height:100%;min-width:0;min-height:0}
   #map{width:100%;height:100%}
-  #mapctl{position:absolute;top:12px;left:12px;z-index:5;display:flex;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
-  #mapctl button{border:none;background:#fff;padding:8px 13px;font-size:13px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line)}
+  #maptop{position:absolute;top:10px;left:12px;right:12px;z-index:5;display:flex;align-items:stretch;gap:6px;pointer-events:none}
+  #maptop>*{pointer-events:auto}
+  #mapctl{display:flex;flex:1;min-width:0;height:24px;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:var(--shadow)}
+  #mapctl button{flex:1;min-width:0;height:22px;border:none;background:#fff;padding:0 7px;font-size:12px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line);white-space:nowrap}
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
-  #setBtn{position:absolute;top:12px;right:12px;z-index:5;height:38px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:13px;font-weight:500;color:var(--ink)}
-  #locBtn{position:absolute;top:12px;right:78px;z-index:5;width:40px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:15px}
-  #addBtn{position:absolute;top:12px;right:124px;z-index:5;width:40px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:18px;color:var(--ink)}
+  #setBtn,#locBtn,#addBtn{position:static;z-index:5;height:24px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);color:var(--ink)}
+  #setBtn{padding:0 10px;font-size:12px;font-weight:500;flex:0 0 auto}
+  #locBtn,#addBtn{width:32px;flex:0 0 32px;padding:0}
+  #locBtn{font-size:14px}
+  #addBtn{font-size:17px}
   #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
-  #multiBtn{position:absolute;top:58px;left:12px;z-index:5;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
+  #multiBtn{position:absolute;top:42px;left:12px;z-index:5;height:24px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:11px;color:var(--ink)}
+  .seqpin{width:24px;height:24px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(21,34,48,.28);cursor:pointer;user-select:none}
   #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
   .nb:hover{background:var(--paper)}
   #markerlegend{position:absolute;bottom:16px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
-  #filterbar{padding:8px 12px 0;position:relative}
-  #filterbar .frow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .fmini{padding:6px;border:1px solid var(--line);border-radius:8px;font-size:12px;max-width:130px;background:#fff}
-  #filterChips{display:block;margin-top:6px}
-  .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 9px;margin-left:4px;font-size:12px;color:var(--ink-soft)}
+  #filterbar{padding:5px 10px 0;position:relative}
+  #filterbar .frow{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.15fr) minmax(0,1fr) auto;gap:5px;align-items:center}
+  .fmini{width:100%;min-width:0;max-width:none;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff}
+  .filtermeta{display:flex;align-items:center;gap:4px;min-height:0}
+  #filterChips{display:block;flex:1;min-width:0;margin-top:3px;line-height:1.35}
+  #fl_more{height:32px;padding:0 8px}
+  #fl_clear{flex:0 0 auto;margin-top:3px;height:26px;padding:0 7px}
+  .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 8px;margin:2px 0 0 4px;font-size:11px;color:var(--ink-soft);vertical-align:middle}
+  button.fchip{border:none;font-family:inherit;cursor:pointer}
   .fchip.active{background:var(--ink);color:#fff}
   .fchip b{cursor:pointer;margin-left:3px}
-  #filterPanel{margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  #filterPanel{margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px;box-shadow:var(--shadow)}
   .delx{border:none;background:transparent;color:#b0a89c;font-size:15px;cursor:pointer;padding:0 4px;line-height:1}
   .delx:hover{color:#b23b3b}
-  .card.compact{padding:9px 11px;margin-bottom:7px}
+  .card.compact{padding:8px 10px;margin-bottom:6px}
   .cname{font-family:"Fraunces",serif;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ptags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
   .ptag{font-size:11px;padding:1px 7px;border-radius:999px;color:var(--ink);white-space:nowrap}
@@ -72,37 +81,44 @@
   .colitem{display:flex;justify-content:space-between;align-items:center;font-size:13px}
   .catrow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .catrow .catname{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
-  .visitrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
-  .visitrow .v_date{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
-  .visitrow .v_trip{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
+  .visitrow{border:1px solid var(--line);border-radius:9px;background:#fff;padding:7px;margin-bottom:6px}
+  .visitmain,.visitextra{display:grid;align-items:center;gap:6px}
+  .visitmain{grid-template-columns:minmax(0,1fr) 86px auto auto}
+  .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:6px}
+  .visitrow .v_date,.visitrow .v_end,.visitrow .v_time,.visitrow .v_trip{width:100%;min-width:0;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
+  .visitrow .v_range{height:32px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:#f6f2ec;color:var(--ink-soft);font-size:11px;white-space:nowrap}
+  .visitrow .v_del{font-size:16px;padding:6px}
+  .visitrange{display:flex;align-items:center;gap:5px;min-width:0}
+  .visitrange label{font-size:11px;color:var(--ink-soft);white-space:nowrap}
   @media(max-width:760px){
     .colgrid{grid-template-columns:1fr}
     .modal{padding:16px}
-    .field input,.field textarea,.field select,.fmini,.sselect{font-size:16px}
+    .field input,.field textarea,.field select,.sselect{font-size:16px}
     .seg button{padding:11px 2px}
-    .tab{padding:11px 4px;font-size:15px}
-    #mapctl button{padding:9px 11px}
-    .btn{padding:11px 16px}
+    .tab{font-size:15px}
+    .btn{padding:9px 13px}
+    .btn.mini{padding:5px 8px;font-size:12px}
   }
-  #filterPanel .ffgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  #filterPanel .ff{margin-bottom:10px;font-size:13px}
-  #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:4px}
-  #filterPanel select,#filterPanel input[type=date]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  #filterPanel .ffgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  #filterPanel .ff{margin-bottom:6px;font-size:12px}
+  #filterPanel .ff:last-child{margin-bottom:0}
+  #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:2px}
+  #filterPanel select,#filterPanel input[type=date]{width:100%;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px}
   .card.triprow{display:flex;align-items:center;gap:8px}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
   .lg{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px}
   .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12);flex:0 0 auto;display:inline-block}
-  .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
-  .tabs{display:flex;padding:10px 12px 0;gap:6px}
-  .tab{flex:1;border:none;background:transparent;padding:9px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
+  .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+  .tabs{display:flex;padding:6px 10px 0;gap:4px}
+  .tab{flex:1;border:none;background:transparent;padding:7px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
   .tab.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
-  .search{padding:10px 12px;position:relative}
-  .search input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .search{padding:6px 10px;position:relative}
+  .search input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
   .results{position:absolute;left:12px;right:12px;top:52px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);z-index:500;max-height:280px;overflow:auto}
   .results div{padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}
   .results div:last-child{border-bottom:none}
   .results div:hover{background:var(--paper)}
-  .list{flex:1;overflow:auto;padding:6px 12px 20px}
+  .list{flex:1;min-height:0;overflow:auto;padding:4px 10px 20px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:var(--shadow);cursor:pointer}
   .card h3{margin:0 0 3px;font-size:16px}
   .card .admin{font-size:12px;color:var(--ink-soft)}
@@ -110,6 +126,14 @@
   .chip{font-size:12px;padding:3px 9px;border-radius:999px;background:#f0ebe3;color:var(--ink-soft)}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
   .empty{color:var(--ink-soft);text-align:center;padding:40px 20px;font-size:14px;line-height:1.7}
+  .layoutctl{position:fixed;right:10px;bottom:62px;z-index:850}
+  .layoutfab{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.96);box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
+  .layoutmenu{display:none;position:absolute;right:0;bottom:40px;min-width:116px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+  .layoutmenu.open{display:grid;gap:4px}
+  .layoutmenu button{height:32px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:12px;text-align:left;padding:0 9px}
+  .layoutmenu button.off{color:var(--ink-soft);background:#faf8f4}
+  .wrap.filter-hidden #filterbar{display:none}
+  .wrap.list-hidden .search,.wrap.list-hidden .list{display:none!important}
 
   .modal-bg{position:fixed;inset:0;background:rgba(21,34,48,.4);display:flex;align-items:flex-end;justify-content:center;z-index:1000}
   .modal{background:var(--paper);width:100%;max-width:520px;max-height:90vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px}
@@ -152,8 +176,21 @@
   .setup code{background:#f0ebe3;padding:1px 6px;border-radius:5px;font-size:13px}
   .setup pre{background:#f0ebe3;padding:12px;border-radius:8px;overflow:auto;font-size:12px;line-height:1.5}
   @media(max-width:760px){
-    .wrap{grid-template-columns:1fr;grid-template-rows:38vh 1fr;height:calc(100vh - 58px)}
+    .wrap{grid-template-columns:1fr;grid-template-rows:34vh minmax(0,1fr);height:calc(100vh - 58px)}
     .side{border-left:none;border-top:1px solid var(--line)}
+    .wrap.map-hidden{grid-template-rows:0 minmax(0,1fr)}
+    .wrap.map-hidden .mapcol{height:0;overflow:hidden}
+    .wrap.list-hidden:not(.map-hidden){grid-template-rows:minmax(0,1fr) auto}
+    .wrap.list-hidden .side{min-height:0}
+    #maptop{left:10px;right:10px;gap:5px}
+    #mapctl button{padding:0 5px;font-size:11px}
+    #setBtn{padding:0 8px;font-size:11px}
+    #locBtn,#addBtn{width:30px;flex-basis:30px}
+    #filterbar .frow{grid-template-columns:minmax(0,.85fr) minmax(0,1.12fr) minmax(0,.95fr) auto}
+    .fmini{font-size:14px}
+    #filterPanel select,#filterPanel input[type=date]{font-size:14px}
+    .visitmain{grid-template-columns:minmax(0,1fr) 78px auto auto}
+    .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   }
 </style>
 </head>
@@ -273,7 +310,7 @@ let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, Autocomplete
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let choroLevel = "off", choroLayer = null, geoCache = {};
-let showPins = true, choroAlpha = 0.7, choroMetric = "level";
+let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let nicknames = {}, levelColors = { ...LEVEL_COLORS }, addMode = false;
 let choroLayerLevel = null, legendCollapsed = false;
@@ -288,6 +325,7 @@ function textOn(hex){
 let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
+let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let dateScope = "month";   // month(預設) / today / custom / all
 function applyDateScope(){
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
@@ -316,29 +354,77 @@ function whoModeOf(p){
   if (other && w.includes(other) && !(creator && w.includes(creator))) return "partner";
   return "me";
 }
-// 多次造訪
+// 多次造訪：每一筆可記錄日期、時間與跨日區間；舊資料仍相容
 function placeVisits(p){
   if (p.visits && p.visits.length) return p.visits;
-  if (p.visitedOn) return [{ date:p.visitedOn, tripId:p.tripId||"" }];
+  if (p.visitedOn) return [{ date:p.visitedOn, endDate:"", time:"", tripId:p.tripId||"" }];
   return [];
 }
-const placeDates = p => placeVisits(p).map(v=>v.date).filter(Boolean);
+function visitEnd(v){ return (v.endDate && v.endDate >= v.date) ? v.endDate : (v.date||""); }
+function visitCoversDate(v, d){
+  if (!v?.date || !d) return false;
+  return v.date <= d && visitEnd(v) >= d;
+}
+function visitIntersects(v, from, to){
+  if (!v?.date) return false;
+  const a=v.date, b=visitEnd(v);
+  if (from && b < from) return false;
+  if (to && a > to) return false;
+  return true;
+}
+const placeDates = p => placeVisits(p).flatMap(v=>[v.date, visitEnd(v)]).filter(Boolean);
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
-const primaryDate = p => { const d=placeDates(p).slice().sort(); return d[d.length-1]||""; };
+const primaryDate = p => { const d=placeVisits(p).map(v=>v.date).filter(Boolean).sort(); return d[d.length-1]||""; };
+const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
+function visitMatchesTrip(v){
+  if (filter.tripId === "all") return true;
+  if (filter.tripId === "daily") return !v.tripId;
+  return v.tripId === filter.tripId;
+}
 function passFilter(p){
   const f = filter;
   if (f.who !== "all"){ const w=whoUids(p); if (whoModeOf(p)!=="both" && !w.includes(f.who)) return false; }
-  const tr = placeTrips(p);
-  if (f.tripId === "daily" && tr.length) return false;
-  if (f.tripId !== "all" && f.tripId !== "daily" && !tr.includes(f.tripId)) return false;
   if (f.cats.size && !(p.categories||[]).some(c => f.cats.has(c))) return false;
-  const ds = placeDates(p);
-  if (p.status === "visited"){
-    if (f.from && !ds.some(d => d >= f.from)) return false;
-    if (f.to && !ds.some(d => d <= f.to)) return false;
-  }
   if (f.regions.length && !f.regions.some(r => p[r.key] === r.code)) return false;
+
+  if (p.status === "visited"){
+    const vv = placeVisits(p);
+    const hasVisitConstraint = f.tripId !== "all" || !!f.from || !!f.to;
+    if (hasVisitConstraint && !vv.some(v => visitMatchesTrip(v) && visitIntersects(v, f.from, f.to))) return false;
+  } else {
+    const tr = placeTrips(p);
+    if (f.tripId === "daily" && tr.length) return false;
+    if (f.tripId !== "all" && f.tripId !== "daily" && !tr.includes(f.tripId)) return false;
+  }
   return true;
+}
+function timeMinutes(t){
+  if (!t || !/^\d{2}:\d{2}$/.test(t)) return 9999;
+  const [h,m]=t.split(":").map(Number); return h*60+m;
+}
+function getDayOccurrences(date){
+  if (!date) return [];
+  const out=[];
+  Object.values(places).forEach(p => {
+    if (p.status !== "visited" || !passFilter(p)) return;
+    placeVisits(p).forEach((v,visitIndex) => {
+      if (!visitCoversDate(v,date) || !visitMatchesTrip(v)) return;
+      out.push({ p, v, visitIndex });
+    });
+  });
+  const anyManual = out.some(o => Number.isFinite(Number(o.v.order)));
+  out.sort((a,b) => {
+    if (anyManual){
+      const ao=Number.isFinite(Number(a.v.order)) ? Number(a.v.order) : 1e9;
+      const bo=Number.isFinite(Number(b.v.order)) ? Number(b.v.order) : 1e9;
+      if (ao!==bo) return ao-bo;
+    }
+    const at=timeMinutes(a.v.time), bt=timeMinutes(b.v.time);
+    if (at!==bt) return at-bt;
+    const eo=effOrd(a.p)-effOrd(b.p); if(eo) return eo;
+    return a.visitIndex-b.visitIndex;
+  });
+  return out;
 }
 
 function boot(){
@@ -378,15 +464,17 @@ async function renderApp(){
     <div class="wrap">
       <div class="mapcol">
         <div id="map"></div>
-        <div id="mapctl">
-          <button data-l="off" class="on">地標</button>
-          <button data-l="county">縣市</button>
-          <button data-l="town">鄉鎮</button>
-          <button data-l="village">村里</button>
+        <div id="maptop">
+          <div id="mapctl">
+            <button data-l="off" class="on">地標</button>
+            <button data-l="county">縣市</button>
+            <button data-l="town">鄉鎮</button>
+            <button data-l="village">村里</button>
+          </div>
+          <button id="addBtn" title="新增地點模式">＋</button>
+          <button id="locBtn" title="定位到我的位置">📍</button>
+          <button id="setBtn">設定</button>
         </div>
-        <button id="addBtn" title="新增地點模式">＋</button>
-        <button id="locBtn" title="定位到我的位置">📍</button>
-        <button id="setBtn">設定</button>
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
         <div id="legend" style="display:none"></div>
         <div id="markerlegend" style="display:none"></div>
@@ -403,9 +491,8 @@ async function renderApp(){
             <select id="fl_trip" class="fmini"></select>
             <select id="fl_who" class="fmini"></select>
             <button id="fl_more" class="btn grey mini">更多 ▾</button>
-            <button id="fl_clear" class="btn grey mini" style="display:none">取消篩選</button>
           </div>
-          <span id="filterChips"></span>
+          <div class="filtermeta"><span id="filterChips"></span><button id="fl_clear" class="btn grey mini" style="display:none">取消篩選</button></div>
           <div id="filterPanel" style="display:none">
             <div class="ff"><label>日期範圍</label>
               <div class="ffgrid"><input type="date" id="fl_from"><input type="date" id="fl_to"></div>
@@ -419,10 +506,38 @@ async function renderApp(){
         </div>
         <div class="list" id="list"></div>
       </div>
+    </div>
+    <div class="layoutctl" id="layoutCtl">
+      <button class="layoutfab" id="layoutBtn" title="調整畫面空間">版面</button>
+      <div class="layoutmenu" id="layoutMenu">
+        <button id="toggleMap">地圖：顯示</button>
+        <button id="toggleFilter">篩選：顯示</button>
+        <button id="toggleList">清單：顯示</button>
+      </div>
     </div>`;
 
   document.getElementById("logout").onclick = () => signOut(auth);
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; renderList(); });
+
+  // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
+  const wrapEl = document.querySelector(".wrap");
+  const layoutMenu = document.getElementById("layoutMenu");
+  const applyLayoutState = () => {
+    wrapEl.classList.toggle("map-hidden", layoutState.map);
+    wrapEl.classList.toggle("filter-hidden", layoutState.filter);
+    wrapEl.classList.toggle("list-hidden", layoutState.list);
+    [["toggleMap","map","地圖"],["toggleFilter","filter","篩選"],["toggleList","list","清單"]].forEach(([id,key,label])=>{
+      const b=document.getElementById(id); if(!b) return;
+      b.textContent = (layoutState[key] ? "○ " : "✓ ") + label;
+      b.classList.toggle("off", layoutState[key]);
+    });
+    if (map && !layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"), 50);
+  };
+  document.getElementById("layoutBtn").onclick = e => { e.stopPropagation(); layoutMenu.classList.toggle("open"); };
+  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); layoutMenu.classList.remove("open"); };
+  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); layoutMenu.classList.remove("open"); };
+  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); layoutMenu.classList.remove("open"); };
+  applyLayoutState();
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
@@ -455,14 +570,16 @@ async function renderApp(){
   // 記錄自己是這個空間的成員(單/雙人篩選用)
   setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
 
-  document.getElementById("fl_more").onclick = () => {
+  document.getElementById("fl_more").onclick = e => {
     const p = document.getElementById("filterPanel");
-    p.style.display = p.style.display === "none" ? "block" : "none";
+    const opening = p.style.display === "none";
+    p.style.display = opening ? "block" : "none";
+    e.currentTarget.textContent = opening ? "更多 ▴" : "更多 ▾";
   };
   document.getElementById("fl_scope").onchange = e => {
     dateScope = e.target.value;
     applyDateScope();
-    if (dateScope === "custom") document.getElementById("filterPanel").style.display = "block";
+    if (dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
     refreshFilterUI(); applyFilter();
   };
   document.getElementById("fl_trip").onchange = e => { filter.tripId = e.target.value; applyFilter(); };
@@ -473,6 +590,7 @@ async function renderApp(){
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
     dateScope = "all";
     document.getElementById("filterPanel").style.display = "none";
+    document.getElementById("fl_more").textContent="更多 ▾";
     refreshFilterUI(); applyFilter();
   };
   applyDateScope();
@@ -602,10 +720,14 @@ function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
-  const n = Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
+  const oneDay = tab==="visited" ? singleDayDate() : "";
+  const n = oneDay ? getDayOccurrences(oneDay).length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
+  if (oneDay) html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖以當日造訪順序編號">${numberPins?'●':'○'} 1·2·3 順序</button>`;
   filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
   el.innerHTML = html;
+  const op = document.getElementById("orderPinToggle");
+  if (op) op.onclick = () => { numberPins=!numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
     filter.regions.splice(+x.dataset.rx, 1); applyFilter();
     if (choroLevel!=="off") setChoro(choroLevel);
@@ -699,11 +821,38 @@ function markerColor(p){
   else if (markerMode === "rating" && p.rating) return ratingColor(p.rating);
   return p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
 }
+function markerColorForVisit(p,v){
+  if (markerMode === "trip" && v?.tripId && trips[v.tripId]?.color) return trips[v.tripId].color;
+  return markerColor(p);
+}
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
   renderMarkerLegend();
   if (!showPins) return;
+
+  const day = tab==="visited" ? singleDayDate() : "";
+  if (day && numberPins){
+    const occ = getDayOccurrences(day);
+    const totals = {}; occ.forEach(o => totals[o.p.id]=(totals[o.p.id]||0)+1);
+    const seen = {};
+    occ.forEach((o,i) => {
+      const p=o.p, col=markerColorForVisit(p,o.v), idx=seen[p.id]||0; seen[p.id]=idx+1;
+      const bubble=document.createElement("div"); bubble.className="seqpin"; bubble.textContent=String(i+1);
+      bubble.style.background=col; bubble.style.color=textOn(col);
+      if (totals[p.id]>1){
+        const offset=(idx-(totals[p.id]-1)/2)*18;
+        bubble.style.transform=`translateX(${offset}px)`;
+      }
+      const tm=o.v.time ? ` ${o.v.time}` : "";
+      const m=new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:bubble,
+        title:`${i+1}. ${p.name}${tm}`, gmpClickable:true, zIndex:1000+i });
+      m.addListener("gmp-click", () => { lastMarkerClick=Date.now(); openEditor(p.id); });
+      markers.push(m);
+    });
+    return;
+  }
+
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
     const pin = new Pin({ background:markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
@@ -719,8 +868,14 @@ function renderMarkerLegend(){
   const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分" };
   el.style.display = "block";
   el.onclick = () => { legendCollapsed = !legendCollapsed; renderMarkerLegend(); };
-  const head = `<div style="font-size:11px;font-weight:600;color:var(--ink)">${titles[markerMode]||"地標"} <span style="color:var(--ink-soft);font-weight:400">${legendCollapsed?"▸":"▾"}</span></div>`;
+  const orderMode = tab==="visited" && !!singleDayDate() && numberPins;
+  const title = orderMode ? "當日造訪順序" : (titles[markerMode]||"地標");
+  const head = `<div style="font-size:11px;font-weight:600;color:var(--ink)">${title} <span style="color:var(--ink-soft);font-weight:400">${legendCollapsed?"▸":"▾"}</span></div>`;
   if (legendCollapsed){ el.innerHTML = head; return; }
+  if (orderMode){
+    el.innerHTML = head + `<div style="font-size:10px;color:var(--ink-soft);margin-top:4px">圓圈數字依清單順序；顏色沿用目前地標配色</div>`;
+    return;
+  }
   if (markerMode === "rating"){
     el.innerHTML = head +
       `<div style="height:10px;width:100px;border-radius:3px;margin-top:4px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
@@ -922,13 +1077,16 @@ async function setChoro(level){
 /* ============================================================
    4) 清單
    ============================================================ */
-let listItems = [];
+let listItems = [], dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
+
+  const oneDay = tab==="visited" ? singleDayDate() : "";
+  if (oneDay){ renderDayVisitList(el, oneDay); renderFilterChips(); return; }
 
   listItems = Object.values(places).filter(p => p.status === tab && passFilter(p))
     .sort((a,b) => {
@@ -973,7 +1131,9 @@ function cardHTML(p, dayNum){
   const col = cat ? catColor(cat) : "#9aa5ad";
   const mode = whoModeOf(p);
   const whoTxt = mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
-  const nVisits = placeVisits(p).length;
+  const pv = placeVisits(p), nVisits = pv.length;
+  const latestVisit = pv.filter(v=>v.date).slice().sort((a,b)=>a.date.localeCompare(b.date)).pop();
+  const latestSpan = latestVisit && visitEnd(latestVisit)>latestVisit.date ? daySpanCount(latestVisit) : 1;
   const tripTags = placeTrips(p).map(id=>trips[id]).filter(Boolean)
     .map(t=>`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`).join("");
   const tags = [
@@ -981,6 +1141,7 @@ function cardHTML(p, dayNum){
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
     tripTags,
     p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : "",
+    latestSpan>1 ? `<span class="ptag" style="background:#e6efe9">${esc(latestVisit.date)} → ${esc(visitEnd(latestVisit))} · 跨${latestSpan}日</span>` : "",
     nVisits>1 ? `<span class="ptag" style="background:#e7edf0">共${nVisits}次</span>` : (p.status==="wishlist"?`<span class="ptag" style="background:#e6efe9">想去</span>`:"")
   ].filter(Boolean).join("");
   return `<div class="card compact" id="c_${p.id}" style="background:${col}14">
@@ -995,6 +1156,77 @@ function cardHTML(p, dayNum){
       <button class="delx" data-del="${p.id}" title="刪除">✕</button>
     </div>
   </div>`;
+}
+function daySpanCount(v){
+  if (!v.date || !visitEnd(v)) return 1;
+  return Math.max(1, Math.round((new Date(visitEnd(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000)+1);
+}
+function visitCardHTML(o, dayNum, date){
+  const p=o.p, v=o.v, cat=(p.categories||[])[0];
+  const col=cat ? catColor(cat) : "#9aa5ad";
+  const mode=whoModeOf(p);
+  const whoTxt=mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
+  const t=v.tripId ? trips[v.tripId] : null;
+  const span=daySpanCount(v);
+  const tags=[
+    v.time ? `<span class="ptag" style="background:#e9eef2">${esc(v.time)}</span>` : "",
+    cat ? `<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>` : "",
+    `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
+    t ? `<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>` : `<span class="ptag" style="background:#f2f0eb">日常</span>`,
+    span>1 ? `<span class="ptag" style="background:#e6efe9">${esc(v.date)} → ${esc(visitEnd(v))} · 跨${span}日</span>` : "",
+    p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : ""
+  ].filter(Boolean).join("");
+  const key=`${p.id}:${o.visitIndex}`;
+  return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" style="background:${col}14">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="dot" style="background:${col};flex:0 0 auto"></span>
+      <div style="flex:1;min-width:0">
+        <div class="cname">${esc(p.name)}</div>
+        <div class="ptags">${tags}</div>
+      </div>
+      <span class="daynum">${dayNum}</span>
+      <div class="ordcol"><button class="ordbtn" data-vup="${key}">▲</button><button class="ordbtn" data-vdown="${key}">▼</button></div>
+      <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>
+    </div>
+  </div>`;
+}
+function renderDayVisitList(el,date){
+  dayVisitItems=getDayOccurrences(date);
+  if (!dayVisitItems.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
+  el.innerHTML=`<div class="daysep">${date}</div>` + dayVisitItems.map((o,i)=>visitCardHTML(o,i+1,date)).join("");
+  dayVisitItems.forEach(o => {
+    const c=document.getElementById(`vc_${o.p.id}_${o.visitIndex}`);
+    if (c) c.onclick=ev => {
+      if (ev.target.closest("[data-vdel]") || ev.target.closest(".ordbtn")) return;
+      openEditor(o.p.id);
+    };
+  });
+  el.querySelectorAll("[data-vup]").forEach(b => b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(date,b.dataset.vup,-1);});
+  el.querySelectorAll("[data-vdown]").forEach(b => b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(date,b.dataset.vdown,1);});
+  el.querySelectorAll("[data-vdel]").forEach(b => b.onclick=ev=>{ev.stopPropagation();deleteVisitOccurrence(b.dataset.vdel);});
+}
+function visitLegacyFields(vv){
+  const clean=vv.filter(v=>v.date);
+  const latest=clean.slice().sort((a,b)=>visitEnd(a).localeCompare(visitEnd(b))).pop();
+  return { visitedOn: latest ? visitEnd(latest) : "", tripId: latest?.tripId||"" };
+}
+async function moveVisitOccurrence(date,key,dir){
+  const items=getDayOccurrences(date); const i=items.findIndex(o=>`${o.p.id}:${o.visitIndex}`===key), j=i+dir;
+  if (i<0 || j<0 || j>=items.length) return;
+  [items[i],items[j]]=[items[j],items[i]];
+  const byPlace=new Map();
+  items.forEach((o,idx)=>{
+    if(!byPlace.has(o.p.id)) byPlace.set(o.p.id, placeVisits(o.p).map(v=>({...v})));
+    byPlace.get(o.p.id)[o.visitIndex].order=idx+1;
+  });
+  await Promise.all([...byPlace.entries()].map(([pid,vv])=>updateDoc(placeDoc(pid),{visits:vv,...visitLegacyFields(vv)})));
+}
+async function deleteVisitOccurrence(key){
+  const [pid,idxRaw]=key.split(":"); const p=places[pid], idx=+idxRaw; if(!p) return;
+  const vv=placeVisits(p).map(v=>({...v})); if(idx<0 || idx>=vv.length) return;
+  if(vv.length===1){ await deleteDoc(placeDoc(pid)); return; }
+  vv.splice(idx,1);
+  await updateDoc(placeDoc(pid),{visits:vv,...visitLegacyFields(vv)});
 }
 
 /* ============================================================
@@ -1100,12 +1332,12 @@ function openEditor(id, seed){
   let level = p.level || "旅遊";
   const pu = partnerUid();
   let whoSel = id ? whoModeOf(p) : (pu ? "both" : "me");
-  const filterTrip = (!id && filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : "";
+  const filterTrip = (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : "";
   const TODAY = new Date().toISOString().slice(0,10);
-  const defaultDate = (filterTrip && trips[filterTrip]?.startDate) ? trips[filterTrip].startDate : TODAY;
-  let visits = (p.visits && p.visits.length) ? p.visits.map(v=>({...v}))
-    : (p.visitedOn ? [{date:p.visitedOn, tripId:p.tripId||""}]
-    : (id ? [] : [{date:defaultDate, tripId:filterTrip||""}]));
+  const defaultDate = singleDayDate() || ((filterTrip && trips[filterTrip]?.startDate) ? trips[filterTrip].startDate : TODAY);
+  let visits = (p.visits && p.visits.length) ? p.visits.map(v=>({endDate:"",time:"",...v}))
+    : (p.visitedOn ? [{date:p.visitedOn, endDate:"", time:"", tripId:p.tripId||""}]
+    : (id ? [] : [{date:defaultDate, endDate:"", time:"", tripId:filterTrip||""}]));
 
   modal(`
     <h2 style="margin-bottom:12px">${esc(p.name||"新地點")}</h2>
@@ -1130,7 +1362,7 @@ function openEditor(id, seed){
       </div>
     </div>
     <div class="field" id="f_visitwrap" style="${status==='wishlist'?'display:none':''}">
-      <label>造訪紀錄(可多次)</label>
+      <label>造訪紀錄（同日可多筆；連住可設跨日）</label>
       <div id="f_visits"></div>
     </div>
     <div class="field">
@@ -1150,9 +1382,12 @@ function openEditor(id, seed){
   const visitWrap = document.getElementById("f_visitwrap");
 
   function collect(){
-    const clean = visits.filter(v=>v.date).map(v=>({date:v.date, tripId:v.tripId||""}));
-    const dates = clean.map(v=>v.date).sort();
-    const latest = clean.slice().sort((a,b)=>a.date.localeCompare(b.date)).pop();
+    const clean = visits.filter(v=>v.date).map(v=>{
+      const out={ date:v.date, endDate:(v.endDate && v.endDate>v.date)?v.endDate:"", time:v.time||"", tripId:v.tripId||"" };
+      if (Number.isFinite(Number(v.order))) out.order=Number(v.order);
+      return out;
+    });
+    const latest = clean.slice().sort((a,b)=>visitEnd(a).localeCompare(visitEnd(b))).pop();
     const who = whoSel==="me" ? [user.uid] : whoSel==="partner" ? (pu?[pu]:[]) : [user.uid, pu].filter(Boolean);
     const rv = parseFloat(document.getElementById("f_rating").value);
     return {
@@ -1160,7 +1395,7 @@ function openEditor(id, seed){
       admin:p.admin||{}, status, categories:[...cats], level,
       whoMode: whoSel, who,
       visits: status==="visited" ? clean : [],
-      visitedOn: status==="visited" ? (dates[dates.length-1]||"") : "",
+      visitedOn: status==="visited" ? (latest?visitEnd(latest):"") : "",
       tripId: status==="visited" ? (latest?.tripId||"") : "",
       rating: rv > 0 ? rv : null,
       review: document.getElementById("f_review").value.trim()
@@ -1182,26 +1417,44 @@ function openEditor(id, seed){
     const box = document.getElementById("f_visits");
     box.innerHTML = visits.map((v,i)=>`
       <div class="visitrow" data-i="${i}">
-        <input type="date" class="v_date" value="${v.date||''}">
-        <select class="v_trip">
-          <option value="">日常</option>
-          ${Object.values(trips).map(t=>`<option value="${t.id}" ${v.tripId===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')}
-          <option value="__new__">＋新增旅程…</option>
-        </select>
-        <button class="delx v_del">✕</button>
+        <div class="visitmain">
+          <input type="date" class="v_date" value="${v.date||''}" title="造訪日期">
+          <input type="time" class="v_time" value="${v.time||''}" title="時間（可留空）">
+          <button type="button" class="v_range" title="連續住宿或跨日停留">${v.endDate?'跨日 ✓':'＋跨日'}</button>
+          <button class="delx v_del" title="刪除此造訪">✕</button>
+        </div>
+        <div class="visitextra">
+          <select class="v_trip" style="${v.endDate?'':'grid-column:1/-1'}">
+            <option value="">日常</option>
+            ${Object.values(trips).map(t=>`<option value="${t.id}" ${v.tripId===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')}
+            <option value="__new__">＋新增旅程…</option>
+          </select>
+          ${v.endDate?`<div class="visitrange"><label>至</label><input type="date" class="v_end" min="${v.date||''}" value="${v.endDate||v.date||''}"></div>`:''}
+        </div>
       </div>`).join("") +
-      `<button class="btn grey mini" id="v_add" style="margin-top:4px">＋ 再一次造訪</button>`;
+      `<button class="btn grey mini" id="v_add" style="margin-top:2px">＋ 再一次造訪</button>`;
     box.querySelectorAll(".visitrow").forEach(row => {
       const i = +row.dataset.i;
-      const d = row.querySelector(".v_date"), tsel = row.querySelector(".v_trip");
+      const d = row.querySelector(".v_date"), tm=row.querySelector(".v_time"), tsel = row.querySelector(".v_trip"), end=row.querySelector(".v_end");
       d.addEventListener("change", () => {
         visits[i].date = d.value;
+        if (visits[i].endDate && visits[i].endDate < d.value) visits[i].endDate=d.value;
         if (d.value && !visits[i].tripId){
           const t = Object.values(trips).find(t => t.startDate && t.endDate && d.value>=t.startDate && d.value<=t.endDate);
           if (t){ visits[i].tripId = t.id; tsel.value = t.id; }
         }
-        persist();
+        renderVisits(); persist();
       });
+      tm.addEventListener("change",()=>{ visits[i].time=tm.value; persist(); });
+      tm.addEventListener("blur",()=>{ visits[i].time=tm.value; persist(); });
+      if(end) end.addEventListener("change",()=>{
+        visits[i].endDate = end.value && end.value>=visits[i].date ? end.value : visits[i].date;
+        renderVisits(); persist();
+      });
+      row.querySelector(".v_range").onclick = () => {
+        visits[i].endDate = visits[i].endDate ? "" : (visits[i].date||TODAY);
+        renderVisits(); persist();
+      };
       tsel.onchange = () => {
         if (tsel.value === "__new__"){
           tsel.value = visits[i].tripId || "";
@@ -1212,7 +1465,10 @@ function openEditor(id, seed){
       };
       row.querySelector(".v_del").onclick = () => { visits.splice(i,1); renderVisits(); persist(); };
     });
-    document.getElementById("v_add").onclick = () => { visits.push({ date:TODAY, tripId:"" }); renderVisits(); persist(); };
+    document.getElementById("v_add").onclick = () => {
+      visits.push({ date:singleDayDate()||defaultDate||TODAY, endDate:"", time:"", tripId:filterTrip||"" });
+      renderVisits(); persist();
+    };
   }
   renderVisits();
 
@@ -1221,7 +1477,7 @@ function openEditor(id, seed){
     document.querySelectorAll("#f_status button").forEach(x=>x.className="");
     b.className = status==="visited" ? "on-v" : "on-w";
     visitWrap.style.display = status==="wishlist" ? "none" : "block";
-    if (status==="visited" && !visits.length){ visits.push({ date:TODAY, tripId:"" }); renderVisits(); }
+    if (status==="visited" && !visits.length){ visits.push({ date:singleDayDate()||defaultDate||TODAY, endDate:"", time:"", tripId:filterTrip||"" }); renderVisits(); }
     persist();
   });
   // 分類單選
