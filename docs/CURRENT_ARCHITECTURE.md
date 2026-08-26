@@ -1,0 +1,107 @@
+# Current Architecture
+
+## Repository shape
+
+The current application is a static client-only site:
+
+- `index.html` contains the document shell, all CSS, HTML templates, application state, domain helpers, rendering, Firebase access, and Google Maps integration.
+- `geo/county.json` contains 22 county features.
+- `geo/town.json` contains 368 town features.
+- `geo/village/` contains one file per county code, totaling 7,986 village features.
+- Firebase ES modules and Google Maps are loaded from vendor CDNs. Turf 7 is loaded as a global from jsDelivr.
+- There is no package manifest, bundler, router, test suite, or separate source tree.
+
+## Main runtime flow
+
+1. An early non-module script installs global error and unhandled-rejection handlers.
+2. The module script checks embedded Firebase and Google configuration.
+3. `boot()` initializes Firebase Auth and Firestore and subscribes to authentication state.
+4. Signed-out users see the Google sign-in gate.
+5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, starts Firestore subscriptions, records the current member, and initializes date filters.
+6. Firestore snapshots replace the in-memory `places`, `trips`, and shared meta state, then invoke the relevant render functions.
+7. UI handlers mutate global state or write directly to Firestore. Snapshot updates eventually reconcile the rendered application with stored data.
+
+There is no component lifecycle or listener teardown. Rendering is imperative: template strings replace DOM subtrees and handlers are rebound after replacement.
+
+## Application state
+
+The module uses shared mutable globals in several groups:
+
+- Infrastructure: `db`, `auth`, `user`, Google API classes, `map`, and `geocoder`.
+- Data: `places`, `trips`, `spaceCats`, `members`, `nicknames`, `catColors`, and `levelColors`.
+- Map presentation: `markers`, `choroLevel`, `choroLayer`, `geoCache`, `showPins`, `choroAlpha`, `choroMetric`, `markerMode`, `numberPins`, and legend state.
+- Navigation and filters: `tab`, `filter`, `dateScope`, `pickedMonth`, and administrative-region selection state.
+- Interaction: add mode, Places session token, search timer, marker-click suppression, modal DOM, list ordering arrays, and responsive layout state.
+
+Most domain and rendering functions read these globals directly, so dependencies are implicit rather than passed through interfaces.
+
+## Firebase integration
+
+The configured shared-space root is `spaces/{spaceId}`. Current paths are:
+
+- `spaces/{spaceId}/places/{placeId}`
+- `spaces/{spaceId}/trips/{tripId}`
+- `spaces/{spaceId}/meta/config`
+
+Place and Trip collections are observed with `onSnapshot(query(..., orderBy("createdAt", "desc")))`. The meta document is observed directly. The meta document stores categories, members, nicknames, category colors, and visit-depth colors.
+
+Authentication uses Firebase Google popup sign-in. Authorization is not enforced in application code; it depends on deployed Firestore rules. The setup text shows an example allowlist for two authenticated UIDs, but the deployed rules are outside this repository.
+
+Editors autosave through `addDoc`, `updateDoc`, or `setDoc`. Deletion occurs directly through `deleteDoc`. Administrative point-in-polygon results are also written back to Place documents as cached codes.
+
+## Google Maps and geographic data
+
+The application installs the Google Maps bootstrap and imports the maps, marker, places, and geocoding libraries. The map uses an Advanced Marker-compatible Map ID, disables several default controls, and uses greedy gesture handling.
+
+Places autocomplete uses `AutocompleteSuggestion`, a session token, `toPlace()`, and `fetchFields()`. Map-click addition uses nearby search before offering a custom coordinate. Reverse geocoding stores country/county/city display metadata.
+
+Markers are rebuilt completely on render. Normal markers use `PinElement`; sequence mode uses HTML markers labeled by daily position or Trip day/stop. Marker coloring has Place-, Visit-, and occurrence-level paths because some metrics are shared while others belong to a specific Visit.
+
+Administrative rendering loads GeoJSON through `fetch()` and caches it in memory. Turf `booleanPointInPolygon` assigns missing county, town, or village codes. A `google.maps.Data` layer renders boundaries. Region color is derived from filtered visited Places by maximum depth, Place count, earliest occurrence, or latest occurrence.
+
+Village mode first ensures county codes, then sequentially loads all county village files and concatenates their features. Some village features contain null geometry; point-in-polygon errors are caught and ignored.
+
+## Filtering and render flow
+
+The filter contains participant, Trip, category set, from/to dates, and selected regions. Date presets populate the date fields. A specific Trip or a single-day range also establishes a sequence context.
+
+`placeStaticFilter()` applies administrative regions. `visitPassFilter()` combines static, participant, Trip, category, and date intersection tests. `passFilter()` makes visited Places pass when any Visit matches; wishlist Places use Place-level compatibility fields and do not apply date constraints.
+
+`applyFilter()` is the central render cascade:
+
+1. Render the current list.
+2. Rebuild markers.
+3. Recompute an active choropleth.
+4. Rebuild filter chips and result counts.
+5. Schedule map viewport fitting.
+
+Firestore listeners invoke overlapping subsets of the same cascade. Rendering one concern can also update another; for example, list rendering updates filter chips, and marker rendering updates the unified legend.
+
+## Important dependency relationships
+
+- `placeVisits()` normalizes current and legacy records and feeds filtering, lists, Trip counts, marker colors, date calculations, ordering, and legacy summaries.
+- `getDayOccurrences()` expands Visits and stays into sequence occurrences. Together with `sortOccurrences()`, it feeds daily lists, Trip sequences, numbered markers, date colors, and reordering.
+- `passFilter()` feeds markers, wishlist lists, viewport fitting, and choropleth aggregation.
+- `sequenceContext()`, `sequenceOccurrences()`, and `sequenceLabels()` connect date/Trip filters to lists and markers.
+- `visitLegacyFields()` mirrors the latest Visit back to compatibility fields whenever Visit order or history changes.
+- `ensureCounty()`, `ensureTown()`, and `ensureVillage()` connect local geometry, Turf classification, Place mutation, and Firestore writes.
+
+## Known fragility and regression risks
+
+- Category rename and deletion update Place-level `categories` but not embedded `visits[].category`.
+- Trip deletion does not clear Visit references to the deleted Trip.
+- Whole `visits` arrays are rewritten, so concurrent editors can overwrite one another.
+- Autosave writes are not serialized; older asynchronous writes may complete after newer edits.
+- Bulk category updates are not awaited or batched.
+- Snapshot subscriptions have no error handlers or teardown.
+- `orderBy("createdAt")` can exclude legacy documents without that field.
+- Choropleth requests can overlap and finish out of order.
+- Village rendering loads and processes all county files and performs linear point-in-polygon scans.
+- Active tabs constrain lists and viewport fitting differently from marker rendering; markers can include both statuses.
+- Wishlist date filters remain active in the UI but are not applied to wishlist records.
+- Stay checkout is generally exclusive, but date-range intersection uses a boundary comparison that can include checkout day at the range start.
+- Cached administrative codes are not invalidated if Place coordinates change.
+- Category, visitor, latest-Visit, stay expansion, sorting, and marker-color logic have parallel implementations that can drift.
+- Deletions generally have no confirmation or referential cleanup.
+- API security depends on external Google key restrictions and deployed Firestore rules.
+- Several globals/helpers appear unused, including `MapCtor`, `tripLine`, `NAMEKEY`, `placeDates`, `tripDayNo`, and `dayVisitItems`; removal still requires behavioral verification.
