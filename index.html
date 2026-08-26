@@ -36,9 +36,11 @@
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
   #setBtn{position:absolute;top:12px;right:12px;z-index:5;height:38px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:13px;font-weight:500;color:var(--ink)}
-  #addBtn{position:absolute;top:58px;left:12px;z-index:5;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:13px;color:var(--ink)}
+  #locBtn{position:absolute;top:12px;right:78px;z-index:5;width:40px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:15px}
+  #addBtn{position:absolute;top:12px;right:124px;z-index:5;width:40px;height:38px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:18px;color:var(--ink)}
   #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
-  #locBtn{position:absolute;top:58px;left:132px;z-index:5;width:34px;height:34px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:15px}
+  #multiBtn{position:absolute;top:58px;left:12px;z-index:5;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
+  #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
   .nb:hover{background:var(--paper)}
   #markerlegend{position:absolute;bottom:16px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
@@ -58,6 +60,9 @@
   .ptags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
   .ptag{font-size:11px;padding:1px 7px;border-radius:999px;color:var(--ink);white-space:nowrap}
   .card.compact .dot{width:11px;height:11px}
+  .ordcol{display:flex;flex-direction:column;gap:1px}
+  .ordbtn{border:none;background:transparent;color:#b0a89c;font-size:10px;cursor:pointer;padding:0 3px;line-height:1.1}
+  .ordbtn:hover{color:var(--ink)}
   .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
   .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:9px 0;font-size:14px;color:var(--ink)}
   .sselect{flex:0 0 55%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff}
@@ -65,6 +70,9 @@
   .colitem{display:flex;justify-content:space-between;align-items:center;font-size:13px}
   .catrow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .catrow .catname{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  .visitrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+  .visitrow .v_date{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  .visitrow .v_trip{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
   @media(max-width:760px){
     .colgrid{grid-template-columns:1fr}
     .modal{padding:16px}
@@ -80,8 +88,8 @@
   #filterPanel select,#filterPanel input[type=date]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:13px}
   .card.triprow{display:flex;align-items:center;gap:8px}
   #legend{position:absolute;bottom:16px;left:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--ink-soft)}
-  #legend .lg{display:flex;align-items:center;gap:7px;margin:3px 0}
-  #legend .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
+  .lg{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px}
+  .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12);flex:0 0 auto;display:inline-block}
   .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
   .tabs{display:flex;padding:10px 12px 0;gap:6px}
   .tab{flex:1;border:none;background:transparent;padding:9px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
@@ -276,20 +284,47 @@ function textOn(hex){
   return (0.299*r+0.587*g+0.114*b) > 150 ? "#152230" : "#ffffff";
 }
 let members = {};   // uid -> 顯示名稱(兩人)
-let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
+let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
+let regionMulti = false;
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
 const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
-const whoOf = p => (p.who && p.who.length) ? p.who : (p.createdBy ? [p.createdBy] : []);
+const otherOf = uid => Object.keys(members).find(u => u !== uid) || null;
+// 誰在場:優先用 whoMode(相對於建立者),相容舊資料的 who 陣列
+function whoUids(p){
+  const creator = p.createdBy, other = otherOf(creator);
+  if (p.whoMode === "both") return [creator, other].filter(Boolean);
+  if (p.whoMode === "me")   return [creator].filter(Boolean);
+  if (p.whoMode === "partner") return [other].filter(Boolean);
+  return (p.who && p.who.length) ? p.who : (creator ? [creator] : []);
+}
+function whoModeOf(p){
+  if (p.whoMode) return p.whoMode;
+  const w = p.who||[], creator = p.createdBy, other = otherOf(creator);
+  if (creator && w.includes(creator) && other && w.includes(other)) return "both";
+  if (other && w.includes(other) && !(creator && w.includes(creator))) return "partner";
+  return "me";
+}
+// 多次造訪
+function placeVisits(p){
+  if (p.visits && p.visits.length) return p.visits;
+  if (p.visitedOn) return [{ date:p.visitedOn, tripId:p.tripId||"" }];
+  return [];
+}
+const placeDates = p => placeVisits(p).map(v=>v.date).filter(Boolean);
+const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
+const primaryDate = p => { const d=placeDates(p).slice().sort(); return d[d.length-1]||""; };
 function passFilter(p){
   const f = filter;
-  if (f.who !== "all" && !whoOf(p).includes(f.who)) return false;
-  if (f.tripId === "daily" && p.tripId) return false;
-  if (f.tripId !== "all" && f.tripId !== "daily" && p.tripId !== f.tripId) return false;
+  if (f.who !== "all"){ const w=whoUids(p); if (whoModeOf(p)!=="both" && !w.includes(f.who)) return false; }
+  const tr = placeTrips(p);
+  if (f.tripId === "daily" && tr.length) return false;
+  if (f.tripId !== "all" && f.tripId !== "daily" && !tr.includes(f.tripId)) return false;
   if (f.cats.size && !(p.categories||[]).some(c => f.cats.has(c))) return false;
-  if (f.from && (!p.visitedOn || p.visitedOn < f.from)) return false;
-  if (f.to && (!p.visitedOn || p.visitedOn > f.to)) return false;
-  if (f.region && p[f.region.key] !== f.region.code) return false;
+  const ds = placeDates(p);
+  if (f.from && !ds.some(d => d >= f.from)) return false;
+  if (f.to && !ds.some(d => d <= f.to)) return false;
+  if (f.regions.length && !f.regions.some(r => p[r.key] === r.code)) return false;
   return true;
 }
 
@@ -336,11 +371,12 @@ async function renderApp(){
           <button data-l="town">鄉鎮</button>
           <button data-l="village">村里</button>
         </div>
-        <button id="addBtn" title="新增地點模式">＋ 點圖新增</button>
+        <button id="addBtn" title="新增地點模式">＋</button>
         <button id="locBtn" title="定位到我的位置">📍</button>
+        <button id="setBtn">設定</button>
+        <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
         <div id="legend" style="display:none"></div>
         <div id="markerlegend" style="display:none"></div>
-        <button id="setBtn">設定</button>
       </div>
       <div class="side">
         <div class="tabs">
@@ -378,9 +414,10 @@ async function renderApp(){
   wireSearch();
   subscribe();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
-    if (filter.region){ filter.region = null; renderList(); renderFilterChips(); }
+    if (filter.regions.length){ filter.regions = []; renderList(); renderFilterChips(); }
     setChoro(b.dataset.l);
     renderMarkers();
+    document.getElementById("multiBtn").style.display = b.dataset.l === "off" ? "none" : "block";
   });
   document.getElementById("addBtn").onclick = e => {
     addMode = !addMode;
@@ -396,6 +433,10 @@ async function renderApp(){
     );
   };
   document.getElementById("setBtn").onclick = openSettings;
+  document.getElementById("multiBtn").onclick = e => {
+    regionMulti = !regionMulti;
+    e.target.classList.toggle("on", regionMulti);
+  };
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
   setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
@@ -409,7 +450,7 @@ async function renderApp(){
   document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
-    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", region:null };
+    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
     document.getElementById("filterPanel").style.display = "none";
     refreshFilterUI(); applyFilter();
   };
@@ -534,14 +575,16 @@ function refreshFilterUI(){
 }
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
-  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.region;
+  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
-  if (filter.region) html += `<span class="fchip">${esc(filter.region.name)} <b data-x="region">✕</b></span>`;
+  filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
   el.innerHTML = html;
-  const x = el.querySelector('[data-x="region"]');
-  if (x) x.onclick = () => { filter.region = null; applyFilter(); };
+  el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
+    filter.regions.splice(+x.dataset.rx, 1); applyFilter();
+    if (choroLevel!=="off") setChoro(choroLevel);
+  });
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -616,12 +659,10 @@ const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
 function whoColor(p){
-  const w = whoOf(p), pu = partnerUid();
-  const hasMe = w.includes(user.uid), hasPu = pu && w.includes(pu);
-  if (hasMe && hasPu) return "#b25b6b";
-  if (hasMe) return "#3f7d78";
-  if (hasPu) return "#d98b3f";
-  return getCSS("--visited");
+  const m = whoModeOf(p);
+  if (m === "both") return "#b25b6b";
+  if (m === "partner") return "#d98b3f";
+  return "#3f7d78";
 }
 function ratingColor(r){ return lerpHex("#e9d8c0","#8f4f18",(Math.max(1,Math.min(5,r))-1)/4); }
 function markerColor(p){
@@ -639,7 +680,7 @@ function renderMarkers(){
   if (!showPins) return;
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
-    const pin = new Pin({ background:markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:1 });
+    const pin = new Pin({ background:markerColor(p), borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
     pin.element.style.cursor = "pointer";
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
     m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
@@ -740,7 +781,7 @@ function regionPlaces(codeOf){
   return m;
 }
 function regionDate(pls, which){
-  const ds = pls.map(p => p.visitedOn).filter(Boolean).sort();
+  const ds = pls.flatMap(p => placeDates(p)).filter(Boolean).sort();
   return which === "first" ? ds[0] : ds[ds.length-1];
 }
 const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
@@ -810,20 +851,20 @@ async function setChoro(level){
     if (choroMetric === "count") return countColor(pls.length);
     const d = regionDate(pls, choroMetric); return d ? dateColor(d, dmin, dmax) : null;
   };
+  const selCodes = new Set(filter.regions.filter(r => r.key === CODEKEY[level]).map(r => r.code));
   const styleFn = f => {
     const code = f.getProperty(codeProp);
-    if (filter.region && filter.region.key === CODEKEY[level] && code !== filter.region.code){
-      return { fillColor:"#12202e", fillOpacity:0.55, strokeWeight:0, clickable:true };
+    if (selCodes.size && !selCodes.has(code)){
+      return { fillColor:"#12202e", fillOpacity:0.55, strokeWeight:0, clickable:true };  // 其餘變暗
     }
     const c = colorOf(code);
     return {
       fillColor: c || "#e5e0d6", fillOpacity: c ? choroAlpha : 0.12,
-      strokeColor: (filter.region && code===filter.region.code) ? "#152230" : "#ffffff",
-      strokeWeight: (filter.region && code===filter.region.code) ? 1.6 : 0.6, clickable: true
+      strokeColor: selCodes.has(code) ? "#152230" : "#ffffff",
+      strokeWeight: selCodes.has(code) ? 1.6 : 0.6, clickable: true
     };
   };
 
-  // 同一層級只重新上色,不重建圖層(避免村里 8000 多塊每次重畫而卡死)
   if (!choroLayer || choroLayerLevel !== level){
     if (choroLayer) choroLayer.setMap(null);
     choroLayer = new google.maps.Data({ map });
@@ -833,10 +874,17 @@ async function setChoro(level){
       const parts = level==="county" ? [f.getProperty("COUNTYNAME")]
         : level==="town" ? [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME")]
         : [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME"), f.getProperty("VILLNAME")];
-      filter.region = { key: CODEKEY[level], code: f.getProperty(codeProp), name: parts.filter(Boolean).join("") };
+      const entry = { key: CODEKEY[level], code: f.getProperty(codeProp), name: parts.filter(Boolean).join("") };
+      const idx = filter.regions.findIndex(r => r.key===entry.key && r.code===entry.code);
+      if (regionMulti){
+        if (idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
+      } else {
+        filter.regions = (idx>=0 && filter.regions.length===1) ? [] : [entry];
+      }
       tab = "visited";
       document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
       applyFilter();
+      setChoro(level);   // 重新套遮罩
     });
     choroLayerLevel = level;
   }
@@ -848,52 +896,65 @@ async function setChoro(level){
 /* ============================================================
    4) 清單
    ============================================================ */
+let listItems = [];
+const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
 
-  const items = Object.values(places).filter(p => p.status === tab && passFilter(p))
+  listItems = Object.values(places).filter(p => p.status === tab && passFilter(p))
     .sort((a,b) => {
-      const d = (b.visitedOn||"0000-00-00").localeCompare(a.visitedOn||"0000-00-00");
+      const d = (primaryDate(b)||"0000-00-00").localeCompare(primaryDate(a)||"0000-00-00");
       if (d) return d;
-      return (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0);  // 同日:先加入的在前(近似造訪順序)
+      return effOrd(a) - effOrd(b);   // 同日:可用 ▲▼ 手動調整順序
     });
-  if (!items.length){
-    el.innerHTML = `<div class="empty">${tab==="visited"?"沒有符合的地點。":"沒有符合的地點。"}</div>`;
+  if (!listItems.length){
+    el.innerHTML = `<div class="empty">沒有符合的地點。</div>`;
     renderFilterChips(); return;
   }
-  el.innerHTML = items.map(cardHTML).join("");
-  items.forEach(p => document.getElementById("c_"+p.id).onclick = ev => {
-    if (ev.target.closest("[data-del]")) return;
+  el.innerHTML = listItems.map(cardHTML).join("");
+  listItems.forEach(p => document.getElementById("c_"+p.id).onclick = ev => {
+    if (ev.target.closest("[data-del]") || ev.target.closest(".ordbtn")) return;
     openEditor(p.id);
   });
-  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation(); deleteDoc(placeDoc(b.dataset.del));
-  });
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => { ev.stopPropagation(); deleteDoc(placeDoc(b.dataset.del)); });
+  el.querySelectorAll("[data-up]").forEach(b => b.onclick = ev => { ev.stopPropagation(); movePlace(b.dataset.up, -1); });
+  el.querySelectorAll("[data-down]").forEach(b => b.onclick = ev => { ev.stopPropagation(); movePlace(b.dataset.down, 1); });
   renderFilterChips();
+}
+function movePlace(id, dir){
+  const i = listItems.findIndex(p => p.id === id); const j = i + dir;
+  if (j < 0 || j >= listItems.length) return;
+  const a = listItems[i], b = listItems[j];
+  updateDoc(placeDoc(a.id), { ord: effOrd(b) });
+  updateDoc(placeDoc(b.id), { ord: effOrd(a) });
 }
 function cardHTML(p){
   const cat = (p.categories||[])[0];
-  const dotColor = cat ? catColor(cat) : (p.status==="wishlist" ? "var(--wish)" : "var(--visited)");
-  const admin = [p.admin?.city, p.admin?.county].filter(Boolean).join(" · ");
-  const t = p.tripId && trips[p.tripId];
-  const w = whoOf(p), pu = partnerUid();
-  const whoTxt = (w.includes(user.uid)&&pu&&w.includes(pu)) ? "一起" : (pu&&w.includes(pu)&&!w.includes(user.uid)) ? nameFor(pu) : nameFor(user.uid);
+  const col = cat ? catColor(cat) : "#9aa5ad";
+  const mode = whoModeOf(p);
+  const whoTxt = mode==="both" ? "一起" : mode==="partner" ? nameFor(otherOf(p.createdBy)) : nameFor(p.createdBy||user.uid);
+  const dateTxt = primaryDate(p);
+  const nVisits = placeVisits(p).length;
+  const tripTags = placeTrips(p).map(id=>trips[id]).filter(Boolean)
+    .map(t=>`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`).join("");
   const tags = [
-    `<span class="ptag" style="background:${p.status==='wishlist'?'#e6efe9':'#f0e6d8'}">${p.status==='wishlist'?'想去':'去過'}</span>`,
-    t ? `<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||"🧭"} ${esc(t.name)}</span>` : "",
+    cat ? `<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>` : "",
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
-    p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : ""
+    tripTags,
+    p.rating ? `<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>` : "",
+    dateTxt ? `<span class="ptag" style="background:#e7edf0">${dateTxt}${nVisits>1?` +${nVisits-1}`:""}</span>` : (p.status==="wishlist"?`<span class="ptag" style="background:#e6efe9">想去</span>`:"")
   ].filter(Boolean).join("");
-  return `<div class="card compact" id="c_${p.id}">
+  return `<div class="card compact" id="c_${p.id}" style="background:${col}14">
     <div style="display:flex;align-items:center;gap:8px">
-      <span class="dot" style="background:${dotColor};flex:0 0 auto"></span>
+      <span class="dot" style="background:${col};flex:0 0 auto"></span>
       <div style="flex:1;min-width:0">
         <div class="cname">${esc(p.name)}</div>
         <div class="ptags">${tags}</div>
       </div>
+      <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
       <button class="delx" data-del="${p.id}" title="刪除">✕</button>
     </div>
   </div>`;
@@ -997,17 +1058,17 @@ async function nearbyPicker(lat, lng){
 function openEditor(id, seed){
   const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], ...seed };
   let docId = id || null, creating = false;
-  let cats = new Set(p.categories||[]);
+  let cats = new Set((p.categories||[]).slice(0,1));   // 單選
   let status = p.status || "visited";
   let level = p.level || "旅遊";
   const pu = partnerUid();
-  let whoSel = "me";
-  if (id){ const pw = p.who||[]; if (pu && pw.includes(pu)) whoSel = pw.includes(user.uid) ? "both" : "partner"; }
-  else if (pu) whoSel = "both";
+  let whoSel = id ? whoModeOf(p) : (pu ? "both" : "me");
   const filterTrip = (!id && filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : "";
-  let tripSel = p.tripId || filterTrip || "";
   const TODAY = new Date().toISOString().slice(0,10);
   const defaultDate = (filterTrip && trips[filterTrip]?.startDate) ? trips[filterTrip].startDate : TODAY;
+  let visits = (p.visits && p.visits.length) ? p.visits.map(v=>({...v}))
+    : (p.visitedOn ? [{date:p.visitedOn, tripId:p.tripId||""}]
+    : (id ? [] : [{date:defaultDate, tripId:filterTrip||""}]));
 
   modal(`
     <h2 style="margin-bottom:2px">${esc(p.name||"新地點")}</h2>
@@ -1019,7 +1080,7 @@ function openEditor(id, seed){
         <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}">想去</button>
       </div>
     </div>
-    <div class="field"><label>在這裡做什麼</label>
+    <div class="field"><label>在這裡做什麼(單選)</label>
       <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${esc(c)}" style="${cats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
     </div>
     <div class="field"><label>造訪深度</label>
@@ -1032,15 +1093,9 @@ function openEditor(id, seed){
         <button data-w="both" class="${whoSel==='both'?'on-v':''}">一起</button>
       </div>
     </div>
-    <div class="field"><label>哪趟旅程</label>
-      <select id="f_trip">
-        <option value="">日常</option>
-        ${Object.values(trips).map(t=>`<option value="${t.id}" ${tripSel===t.id?'selected':''}>${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("")}
-        <option value="__new__">＋ 新增旅程…</option>
-      </select>
-    </div>
-    <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
-      <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn || (id?'':defaultDate)}"/>
+    <div class="field" id="f_visitwrap" style="${status==='wishlist'?'display:none':''}">
+      <label>造訪紀錄(可多次)</label>
+      <div id="f_visits"></div>
     </div>
     <div class="field"><label>評分</label>
       <div class="row" style="align-items:center;gap:10px">
@@ -1058,24 +1113,23 @@ function openEditor(id, seed){
   `);
 
   const nameEl = document.getElementById("f_name");
-  const dateEl = document.getElementById("f_date");
-  const fTrip  = document.getElementById("f_trip");
-  const dateWrap = document.getElementById("f_datewrap");
-  fTrip.dataset.prev = tripSel;
+  const visitWrap = document.getElementById("f_visitwrap");
 
   function collect(){
-    const pu2 = partnerUid();
-    const who = whoSel==="me" ? [user.uid]
-              : whoSel==="partner" ? (pu2?[pu2]:[user.uid])
-              : [user.uid, pu2].filter(Boolean);
+    const clean = visits.filter(v=>v.date).map(v=>({date:v.date, tripId:v.tripId||""}));
+    const dates = clean.map(v=>v.date).sort();
+    const latest = clean.slice().sort((a,b)=>a.date.localeCompare(b.date)).pop();
+    const who = whoSel==="me" ? [user.uid] : whoSel==="partner" ? (pu?[pu]:[]) : [user.uid, pu].filter(Boolean);
     const rv = parseFloat(document.getElementById("f_rating").value);
     return {
       name: nameEl.value.trim(), lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
-      admin:p.admin||{}, status, categories:[...cats], level, who,
-      tripId: fTrip.value==="__new__" ? "" : fTrip.value,
+      admin:p.admin||{}, status, categories:[...cats], level,
+      whoMode: whoSel, who,
+      visits: status==="visited" ? clean : [],
+      visitedOn: status==="visited" ? (dates[dates.length-1]||"") : "",
+      tripId: status==="visited" ? (latest?.tripId||"") : "",
       rating: rv > 0 ? rv : null,
-      review: document.getElementById("f_review").value.trim(),
-      visitedOn: status==="visited" ? (dateEl.value||"") : ""
+      review: document.getElementById("f_review").value.trim()
     };
   }
   async function persist(){
@@ -1090,28 +1144,75 @@ function openEditor(id, seed){
     }
   }
 
+  function renderVisits(){
+    const box = document.getElementById("f_visits");
+    box.innerHTML = visits.map((v,i)=>`
+      <div class="visitrow" data-i="${i}">
+        <input type="date" class="v_date" value="${v.date||''}">
+        <select class="v_trip">
+          <option value="">日常</option>
+          ${Object.values(trips).map(t=>`<option value="${t.id}" ${v.tripId===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')}
+          <option value="__new__">＋新增旅程…</option>
+        </select>
+        <button class="delx v_del">✕</button>
+      </div>`).join("") +
+      `<button class="btn grey mini" id="v_add" style="margin-top:4px">＋ 再一次造訪</button>`;
+    box.querySelectorAll(".visitrow").forEach(row => {
+      const i = +row.dataset.i;
+      const d = row.querySelector(".v_date"), tsel = row.querySelector(".v_trip");
+      d.addEventListener("change", () => {
+        visits[i].date = d.value;
+        if (d.value && !visits[i].tripId){
+          const t = Object.values(trips).find(t => t.startDate && t.endDate && d.value>=t.startDate && d.value<=t.endDate);
+          if (t){ visits[i].tripId = t.id; tsel.value = t.id; }
+        }
+        persist();
+      });
+      tsel.onchange = () => {
+        if (tsel.value === "__new__"){
+          tsel.value = visits[i].tripId || "";
+          editTrip(null, t => { visits[i].tripId = t.id; renderVisits(); persist(); });
+          return;
+        }
+        visits[i].tripId = tsel.value; persist();
+      };
+      row.querySelector(".v_del").onclick = () => { visits.splice(i,1); renderVisits(); persist(); };
+    });
+    document.getElementById("v_add").onclick = () => { visits.push({ date:TODAY, tripId:"" }); renderVisits(); persist(); };
+  }
+  renderVisits();
+
   document.querySelectorAll("#f_status button").forEach(b => b.onclick = () => {
     status = b.dataset.s;
     document.querySelectorAll("#f_status button").forEach(x=>x.className="");
     b.className = status==="visited" ? "on-v" : "on-w";
-    dateWrap.style.display = status==="wishlist" ? "none" : "block";
+    visitWrap.style.display = status==="wishlist" ? "none" : "block";
+    if (status==="visited" && !visits.length){ visits.push({ date:TODAY, tripId:"" }); renderVisits(); }
     persist();
   });
+  // 分類單選
   document.querySelectorAll("#f_cats .chip[data-c]").forEach(c => c.onclick = () => {
-    const k=c.dataset.c; const on = !cats.has(k);
-    on ? cats.add(k) : cats.delete(k); c.classList.toggle("on", on);
-    if (on){ const col=catColor(k); c.style.background=col; c.style.color=textOn(col); c.style.borderColor=col; }
-    else { c.style.background=""; c.style.color=""; c.style.borderColor=""; }
+    const k = c.dataset.c; const already = cats.has(k);
+    cats = new Set(already ? [] : [k]);
+    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x => {
+      const on = cats.has(x.dataset.c);
+      x.classList.toggle("on", on);
+      if (on){ const col=catColor(x.dataset.c); x.style.background=col; x.style.color=textOn(col); x.style.borderColor=col; }
+      else { x.style.background=""; x.style.color=""; x.style.borderColor=""; }
+    });
     persist();
   });
   document.getElementById("f_addcat").onclick = () => {
     const name = (prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
     if(!name) return;
     if(!spaceCats.includes(name)){ spaceCats.push(name); setDoc(metaDoc(), { categories: arrayUnion(name) }, { merge:true }); }
-    cats.add(name);
+    cats = new Set([name]);
+    const col = catColor(name);
+    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x => { x.classList.remove("on"); x.style.background=""; x.style.color=""; x.style.borderColor=""; });
     const chip = document.createElement("span");
     chip.className = "chip on"; chip.dataset.c = name; chip.textContent = name;
-    chip.onclick = () => { cats.has(name)?cats.delete(name):cats.add(name); chip.classList.toggle("on"); persist(); };
+    chip.style.background = col; chip.style.color = textOn(col); chip.style.borderColor = col;
+    chip.onclick = () => { cats = new Set([name]); document.querySelectorAll("#f_cats .chip[data-c]").forEach(x=>{ if(x!==chip){x.classList.remove("on");x.style.background="";x.style.color="";x.style.borderColor="";} }); persist(); };
     document.getElementById("f_addcat").before(chip); persist();
   };
   document.querySelectorAll("#f_level button").forEach(b => b.onclick = () => {
@@ -1127,36 +1228,14 @@ function openEditor(id, seed){
   });
   nameEl.addEventListener("change", persist);
   nameEl.addEventListener("blur", persist);
-  dateEl.addEventListener("change", () => {
-    const d = dateEl.value;
-    if (d && !fTrip.value){                          // 目前是「日常」才自動帶入
-      const t = Object.values(trips).find(t => t.startDate && t.endDate && d>=t.startDate && d<=t.endDate);
-      if (t){ fTrip.value = t.id; fTrip.dataset.prev = t.id; }
-    }
-    persist();
-  });
   const rEl = document.getElementById("f_rating"), rVal = document.getElementById("f_ratingval");
   rEl.oninput = () => { const v = parseFloat(rEl.value); rVal.textContent = v>0 ? ("★ "+v) : "未評分"; };
   rEl.addEventListener("change", persist);
   document.getElementById("f_review").addEventListener("blur", persist);
-  fTrip.onchange = () => {
-    if (fTrip.value === "__new__"){
-      fTrip.value = fTrip.dataset.prev || "";
-      editTrip(null, t => {
-        const opt = document.createElement("option");
-        opt.value = t.id; opt.textContent = (t.emoji?t.emoji+" ":"")+t.name;
-        fTrip.querySelector('option[value="__new__"]').before(opt);
-        fTrip.value = t.id; fTrip.dataset.prev = t.id; persist();
-      });
-      return;
-    }
-    fTrip.dataset.prev = fTrip.value; persist();
-  };
   document.getElementById("f_done").onclick = async () => { await persist(); closeModal(); };
   const fdel = document.getElementById("f_del");
   if (fdel) fdel.onclick = async () => { await deleteDoc(placeDoc(docId||id)); closeModal(); };
 
-  // 由搜尋/點圖新增、且已有名稱 → 立即建立(自動儲存)
   if (!id && collect().name) persist();
 }
 
@@ -1168,7 +1247,7 @@ function openEditor(id, seed){
    ============================================================ */
 function renderTrips(el){
   const list = Object.values(trips).sort((a,b)=>(b.startDate||"0000-00-00").localeCompare(a.startDate||"0000-00-00"));
-  const count = id => Object.values(places).filter(p => p.tripId === id).length;
+  const count = id => Object.values(places).filter(p => placeTrips(p).includes(id)).length;
   el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新旅程</button>` +
     (list.length ? list.map(t=>`
       <div class="card triprow" id="t_${t.id}">
