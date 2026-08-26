@@ -50,6 +50,22 @@
   #filterPanel{margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
   .delx{border:none;background:transparent;color:#b0a89c;font-size:15px;cursor:pointer;padding:0 4px;line-height:1}
   .delx:hover{color:#b23b3b}
+  .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
+  .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:9px 0;font-size:14px;color:var(--ink)}
+  .sselect{flex:0 0 55%;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff}
+  .colgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
+  .colitem{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+  .catrow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .catrow .catname{flex:1;padding:7px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  @media(max-width:760px){
+    .colgrid{grid-template-columns:1fr}
+    .modal{padding:16px}
+    .field input,.field textarea,.field select,.fmini,.sselect{font-size:16px}
+    .seg button{padding:11px 2px}
+    .tab{padding:11px 4px;font-size:15px}
+    #mapctl button{padding:9px 11px}
+    .btn{padding:11px 16px}
+  }
   #filterPanel .ffgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   #filterPanel .ff{margin-bottom:10px;font-size:13px}
   #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:4px}
@@ -93,13 +109,15 @@
   .seg button{flex:1;border:none;background:#fff;padding:10px;font-weight:500;color:var(--ink-soft)}
   .seg button.on-v{background:var(--visited);color:#fff}
   .seg button.on-w{background:var(--wish);color:#fff}
+  .lvlseg button{font-size:13px;padding:9px 2px}
+  .lvlseg button.on{font-weight:600}
   .note{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
   .note .meta{font-size:12px;color:var(--ink-soft);display:flex;justify-content:space-between;margin-bottom:4px}
   .note .who-tag{font-weight:700;color:var(--us)}
   .stars{color:var(--visited);letter-spacing:1px}
   .row{display:flex;gap:8px;align-items:center}
   .row>*{flex:1}
-  .danger{color:#b23b3b;background:transparent;border:1px solid #e3c4c4}
+  .danger{color:#b23b3b;background:transparent;border:1px solid #e3c4c4;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500}
 
   .trip-place{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:7px}
   .trip-place .name{flex:1;font-size:14px}
@@ -377,31 +395,37 @@ async function renderApp(){
 function openSettings(){
   const markerOpts = [["status","是否去過"],["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"]];
   const metricOpts = [["level","造訪深度"],["count","地標數"],["first","初次造訪"],["last","最後造訪"]];
-  const colorRow = (label,val,attrs) => `<div class="row" style="align-items:center;margin-bottom:8px">
-     <span style="flex:1">${esc(label)}</span>
-     <input type="color" ${attrs} value="${val}" style="width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px"></div>`;
+  const sw = (val,attrs) => `<input type="color" ${attrs} value="${val}" style="width:40px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px">`;
+  const colorItem = (label,val,attrs) => `<div class="colitem"><span>${esc(label)}</span>${sw(val,attrs)}</div>`;
   modal(`
-    <h2 style="margin-bottom:12px">設定</h2>
-    <div class="field"><label>顯示</label>
-      <label class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="s_pins" ${showPins?'checked':''}> 顯示地標</label>
-      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">地標配色
-        <select id="s_markermode" style="flex:1;padding:6px;border:1px solid var(--line);border-radius:8px">${markerOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
-    </div>
-    <div class="field"><label>行政區上色</label>
-      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">透明度
-        <input type="range" id="s_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:1"></div>
-      <div class="setrow" style="display:flex;gap:8px;align-items:center;margin:6px 0">依據
-        <select id="s_metric" style="flex:1;padding:6px;border:1px solid var(--line);border-radius:8px">${metricOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
-    </div>
-    <div class="field"><label>你的綽號</label>
-      <input id="s_nick" value="${esc(nicknames[user.uid]||"")}" placeholder="例:小明"></div>
-    <div class="field"><label>造訪深度顏色</label>
-      ${["居住","住宿","旅遊","接地","經過"].map(l=>colorRow(l, levelColors[l], `data-lv="${l}"`)).join("")}</div>
-    <div class="field"><label>分類顏色</label>
-      ${spaceCats.length ? spaceCats.map(c=>colorRow(c, catColors[c]||"#d98b3f", `data-cat="${esc(c)}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無分類</div>`}</div>
-    <div class="field"><label>旅程顏色</label>
-      ${Object.values(trips).length ? Object.values(trips).map(t=>colorRow((t.emoji?t.emoji+" ":"")+t.name, t.color||"#3f7d78", `data-trip="${t.id}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無旅程</div>`}</div>
-    <div class="row"><button class="btn" id="s_done">完成</button></div>
+    <h2 style="margin-bottom:14px">設定</h2>
+
+    <div class="sethead">你的綽號</div>
+    <input id="s_nick" value="${esc(nicknames[user.uid]||"")}" placeholder="例:小明" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
+
+    <div class="sethead">顯示</div>
+    <div class="srow"><span>顯示地標</span><input type="checkbox" id="s_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
+    <div class="srow"><span>地標配色</span><select id="s_markermode" class="sselect">${markerOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
+
+    <div class="sethead">行政區上色</div>
+    <div class="srow"><span>透明度</span><input type="range" id="s_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
+    <div class="srow"><span>上色依據</span><select id="s_metric" class="sselect">${metricOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
+
+    <div class="sethead">造訪深度顏色</div>
+    <div class="colgrid">${["居住","住宿","旅遊","接地","經過"].map(l=>colorItem(l, levelColors[l], `data-lv="${l}"`)).join("")}</div>
+
+    <div class="sethead">分類</div>
+    <div id="s_cats">${spaceCats.length ? spaceCats.map(c=>`
+      <div class="catrow">
+        <input class="catname" data-old="${esc(c)}" value="${esc(c)}">
+        ${sw(catColors[c]||"#d98b3f", `data-cat="${esc(c)}"`)}
+        <button class="delx" data-catdel="${esc(c)}" title="刪除分類">✕</button>
+      </div>`).join("") : `<div style="font-size:12px;color:var(--ink-soft)">還沒有分類。到地點編輯裡用「＋自訂」新增。</div>`}</div>
+
+    <div class="sethead">旅程顏色</div>
+    <div class="colgrid">${Object.values(trips).length ? Object.values(trips).map(t=>colorItem((t.emoji?t.emoji+" ":"")+t.name, t.color||"#3f7d78", `data-trip="${t.id}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無旅程</div>`}</div>
+
+    <div class="row" style="margin-top:8px"><button class="btn" id="s_done">完成</button></div>
   `);
   const g = x => document.getElementById(x);
   g("s_markermode").value = markerMode;
@@ -429,7 +453,31 @@ function openSettings(){
   document.querySelectorAll("input[data-trip]").forEach(inp => inp.onchange = () => {
     updateDoc(tripDoc(inp.dataset.trip), { color: inp.value }); renderMarkers();
   });
+  document.querySelectorAll(".catname").forEach(inp => inp.addEventListener("change", () => renameCat(inp.dataset.old, inp.value)));
+  document.querySelectorAll("[data-catdel]").forEach(b => b.onclick = () => deleteCat(b.dataset.catdel));
   g("s_done").onclick = closeModal;
+}
+async function renameCat(oldN, newN){
+  newN = (newN||"").trim();
+  if (!newN || newN === oldN || spaceCats.includes(newN)) return;
+  const i = spaceCats.indexOf(oldN); if (i < 0) return;
+  spaceCats[i] = newN;
+  const cc = { ...catColors }; if (cc[oldN] !== undefined){ cc[newN] = cc[oldN]; delete cc[oldN]; }
+  catColors = cc;
+  await setDoc(metaDoc(), { categories: spaceCats, catColors: cc }, { merge:true });
+  for (const p of Object.values(places)){
+    if ((p.categories||[]).includes(oldN)) updateDoc(placeDoc(p.id), { categories: p.categories.map(x=>x===oldN?newN:x) });
+  }
+  openSettings();  // 重繪
+}
+async function deleteCat(c){
+  spaceCats = spaceCats.filter(x => x !== c);
+  const cc = { ...catColors }; delete cc[c]; catColors = cc;
+  await setDoc(metaDoc(), { categories: spaceCats, catColors: cc }, { merge:true });
+  for (const p of Object.values(places)){
+    if ((p.categories||[]).includes(c)) updateDoc(placeDoc(p.id), { categories: p.categories.filter(x=>x!==c) });
+  }
+  closeModal(); openSettings();
 }
 
 /* ---------- 篩選 UI ---------- */
@@ -574,7 +622,8 @@ function renderMarkers(){
 }
 function renderMarkerLegend(){
   const el = document.getElementById("markerlegend"); if(!el) return;
-  if (!showPins || markerMode === "status"){ el.style.display="none"; return; }
+  if (!showPins){ el.style.display="none"; return; }
+  const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分" };
   if (markerMode === "rating"){
     el.style.display="block";
     el.innerHTML = `<div style="font-size:11px;margin-bottom:4px">評分</div>`+
@@ -583,13 +632,14 @@ function renderMarkerLegend(){
     return;
   }
   let rows = [];
-  if (markerMode === "who") rows = [["#3f7d78", nameFor(user.uid)], ["#d98b3f", partnerUid()?nameFor(partnerUid()):"對方"], ["#b25b6b","一起"]];
+  if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
+  else if (markerMode === "who") rows = [["#3f7d78", nameFor(user.uid)], ["#d98b3f", partnerUid()?nameFor(partnerUid()):"對方"], ["#b25b6b","一起"]];
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.filter(c=>catColors[c]).map(c=>[catColors[c], c]);
   else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
   if (!rows.length){ el.style.display="none"; return; }
   el.style.display="block";
-  el.innerHTML = `<div style="font-size:11px;margin-bottom:4px">地標</div>`+
+  el.innerHTML = `<div style="font-size:11px;margin-bottom:4px">${titles[markerMode]||"地標"}</div>`+
     rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("");
 }
 const getCSS = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -746,10 +796,14 @@ async function setChoro(level){
     };
   });
   choroLayer.addListener("click", ev => {
+    const f = ev.feature;
+    const parts = level==="county" ? [f.getProperty("COUNTYNAME")]
+      : level==="town" ? [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME")]
+      : [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME"), f.getProperty("VILLNAME")];
     filter.region = {
       key: CODEKEY[level],
-      code: ev.feature.getProperty(codeProp),
-      name: ev.feature.getProperty(NAMEKEY[level])
+      code: f.getProperty(codeProp),
+      name: parts.filter(Boolean).join("")
     };
     tab = "visited";
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
@@ -768,7 +822,8 @@ function renderList(){
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
 
-  const items = Object.values(places).filter(p => p.status === tab && passFilter(p));
+  const items = Object.values(places).filter(p => p.status === tab && passFilter(p))
+    .sort((a,b) => (b.visitedOn||"0000-00-00").localeCompare(a.visitedOn||"0000-00-00"));
   if (!items.length){
     el.innerHTML = `<div class="empty">${tab==="visited"?"沒有符合的地點。":"沒有符合的地點。"}</div>`;
     renderFilterChips(); return;
@@ -868,7 +923,7 @@ function openEditor(id, seed){
   let docId = id || null, creating = false;
   let cats = new Set(p.categories||[]);
   let status = p.status || "visited";
-  let level = p.level || "";
+  let level = p.level || "旅遊";
   const pu = partnerUid();
   let whoSel = "me";
   if (id){ const pw = p.who||[]; if (pu && pw.includes(pu)) whoSel = pw.includes(user.uid) ? "both" : "partner"; }
@@ -889,8 +944,8 @@ function openEditor(id, seed){
     <div class="field"><label>在這裡做什麼</label>
       <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
     </div>
-    <div class="field"><label>造訪深度(地圖染色用)</label>
-      <div class="pick" id="f_level">${LEVELS_UI.map(l=>{const on=(l==='無'?!level:level===l);return `<span class="chip ${on?'on':''}" data-l="${l}">${l}</span>`;}).join("")}</div>
+    <div class="field"><label>造訪深度</label>
+      <div class="seg lvlseg" id="f_level">${LEVEL_ORDER.map(l=>`<button data-l="${l}" class="${level===l?'on':''}" style="${level===l?`background:${levelColors[l]};color:#fff`:''}">${l}</button>`).join("")}</div>
     </div>
     <div class="field"><label>誰去的</label>
       <div class="seg" id="f_who">
@@ -909,8 +964,11 @@ function openEditor(id, seed){
     <div class="field" id="f_datewrap" style="${status==='wishlist'?'display:none':''}">
       <label>造訪日期</label><input type="date" id="f_date" value="${p.visitedOn || (id?'':TODAY)}"/>
     </div>
-    <div class="field"><label>評分(1–5,可小數)</label>
-      <input type="number" id="f_rating" min="1" max="5" step="0.1" value="${p.rating??""}" style="width:100px"/>
+    <div class="field"><label>評分</label>
+      <div class="row" style="align-items:center;gap:10px">
+        <input type="range" id="f_rating" min="0" max="5" step="0.5" value="${p.rating||0}" style="flex:1">
+        <span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${p.rating?("★ "+p.rating):"未評分"}</span>
+      </div>
     </div>
     <div class="field"><label>評語</label>
       <textarea id="f_review" placeholder="想記下的感想…">${esc(p.review||"")}</textarea>
@@ -937,7 +995,7 @@ function openEditor(id, seed){
       name: nameEl.value.trim(), lat:p.lat, lng:p.lng, source:p.source||"google", extId:p.extId||null,
       admin:p.admin||{}, status, categories:[...cats], level, who,
       tripId: fTrip.value==="__new__" ? "" : fTrip.value,
-      rating: isNaN(rv) ? null : Math.max(1, Math.min(5, rv)),
+      rating: rv > 0 ? rv : null,
       review: document.getElementById("f_review").value.trim(),
       visitedOn: status==="visited" ? (dateEl.value||"") : ""
     };
@@ -974,10 +1032,11 @@ function openEditor(id, seed){
     chip.onclick = () => { cats.has(name)?cats.delete(name):cats.add(name); chip.classList.toggle("on"); persist(); };
     document.getElementById("f_addcat").before(chip); persist();
   };
-  document.querySelectorAll("#f_level .chip").forEach(c => c.onclick = () => {
-    level = c.dataset.l === "無" ? "" : c.dataset.l;
-    document.querySelectorAll("#f_level .chip").forEach(x => x.classList.remove("on"));
-    c.classList.add("on"); persist();
+  document.querySelectorAll("#f_level button").forEach(b => b.onclick = () => {
+    level = b.dataset.l;
+    document.querySelectorAll("#f_level button").forEach(x => { x.classList.remove("on"); x.style.background=""; x.style.color=""; });
+    b.classList.add("on"); b.style.background = levelColors[level]; b.style.color = "#fff";
+    persist();
   });
   document.querySelectorAll("#f_who button").forEach(b => b.onclick = () => {
     whoSel = b.dataset.w;
@@ -986,18 +1045,28 @@ function openEditor(id, seed){
   });
   nameEl.addEventListener("change", persist);
   nameEl.addEventListener("blur", persist);
-  dateEl.addEventListener("change", persist);
-  document.getElementById("f_rating").addEventListener("change", persist);
+  dateEl.addEventListener("change", () => {
+    const d = dateEl.value;
+    if (d && !fTrip.value){                          // 目前是「日常」才自動帶入
+      const t = Object.values(trips).find(t => t.startDate && t.endDate && d>=t.startDate && d<=t.endDate);
+      if (t){ fTrip.value = t.id; fTrip.dataset.prev = t.id; }
+    }
+    persist();
+  });
+  const rEl = document.getElementById("f_rating"), rVal = document.getElementById("f_ratingval");
+  rEl.oninput = () => { const v = parseFloat(rEl.value); rVal.textContent = v>0 ? ("★ "+v) : "未評分"; };
+  rEl.addEventListener("change", persist);
   document.getElementById("f_review").addEventListener("blur", persist);
-  fTrip.onchange = async () => {
+  fTrip.onchange = () => {
     if (fTrip.value === "__new__"){
-      const t = await createTripInline();
-      if (t){
+      fTrip.value = fTrip.dataset.prev || "";
+      editTrip(null, t => {
         const opt = document.createElement("option");
-        opt.value = t.id; opt.textContent = t.name;
+        opt.value = t.id; opt.textContent = (t.emoji?t.emoji+" ":"")+t.name;
         fTrip.querySelector('option[value="__new__"]').before(opt);
-        fTrip.value = t.id;
-      } else { fTrip.value = fTrip.dataset.prev || ""; return; }
+        fTrip.value = t.id; fTrip.dataset.prev = t.id; persist();
+      });
+      return;
     }
     fTrip.dataset.prev = fTrip.value; persist();
   };
@@ -1015,14 +1084,8 @@ function openEditor(id, seed){
 /* ============================================================
    7) 旅程(以 tripId 歸屬;點旅程 = 篩選該趟)
    ============================================================ */
-async function createTripInline(){
-  const name = (prompt("新旅程名稱(例:2026 東京)")||"").trim();
-  if (!name) return null;
-  const ref = await addDoc(tripsCol(), { name, startDate:"", endDate:"", createdBy:user.uid, createdAt:serverTimestamp() });
-  return { id: ref.id, name };
-}
 function renderTrips(el){
-  const list = Object.values(trips);
+  const list = Object.values(trips).sort((a,b)=>(b.startDate||"0000-00-00").localeCompare(a.startDate||"0000-00-00"));
   const count = id => Object.values(places).filter(p => p.tripId === id).length;
   el.innerHTML = `<button class="btn" id="newtrip" style="width:100%;margin-bottom:12px">＋ 新旅程</button>` +
     (list.length ? list.map(t=>`
@@ -1046,7 +1109,7 @@ function renderTrips(el){
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => { ev.stopPropagation(); deleteDoc(tripDoc(b.dataset.del)); });
 }
-function editTrip(id){
+function editTrip(id, onDone){
   let docId = id || null, creating = false;
   const t = id ? trips[id] : {};
   let emoji = t.emoji || "";
@@ -1092,7 +1155,11 @@ function editTrip(id){
   ["t_name","t_start","t_end","t_color"].forEach(x => {
     g(x).addEventListener("change", persist); g(x).addEventListener("blur", persist);
   });
-  g("t_done").onclick = async () => { await persist(); closeModal(); };
+  g("t_done").onclick = async () => {
+    await persist();
+    if (onDone && docId) onDone({ id: docId, ...collect() });
+    closeModal();
+  };
   const td = g("t_del");
   if (td) td.onclick = async () => { await deleteDoc(tripDoc(docId||id)); closeModal(); };
 }
@@ -1106,7 +1173,7 @@ function modal(html){
   bg.onclick = e => { if(e.target===bg) closeModal(); };
   document.body.appendChild(bg);
 }
-function closeModal(){ const m=document.querySelector(".modal-bg"); if(m) m.remove(); }
+function closeModal(){ const ms=document.querySelectorAll(".modal-bg"); if(ms.length) ms[ms.length-1].remove(); }
 function me(){ return user.displayName || user.email || "我"; }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
