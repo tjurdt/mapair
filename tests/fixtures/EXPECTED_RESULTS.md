@@ -2,6 +2,18 @@
 
 These outcomes describe the current code against `mapair-baseline.json`. They are human-readable assertions for later domain, emulator, and manual tests. Any loader-dependent result assumes the documented tagged timestamps have first been converted to native Firestore `Timestamp` values.
 
+## Administrative regions
+
+Each Place coordinate falls inside the county, town, and village polygon identified by its cached codes:
+
+- `place-test-station`: Taipei City (`63000`), Songshan District (`63000010`), Ciyou Village (`63000010018`)
+- `place-test-park`: Taipei City (`63000`), Beitou District (`63000120`), Guandu Village (`63000120038`)
+- `place-test-cafe`: Taichung City (`66000`), Xitun District (`66000060`), Dapeng Village (`66000060014`)
+- `place-test-hotel`: Taichung City (`66000`), Heping District (`66000290`), Pingdeng Village (`66000290008`)
+- `place-test-wishlist`: Kaohsiung City (`64000`), Zuoying District (`64000030`), Chengnan Village (`64000030025`)
+- `place-test-legacy-no-created-at`: Changhua County (`10007`), Lukang Township (`10007020`), Ludong Village (`10007020031`)
+- `place-test-dangling-trip`: Yilan County (`10002`), Luodong Township (`10002020`), Daxin Village (`10002020004`)
+
 ## Repeated Visits and Visit-level fields
 
 - `place-test-station` renders as two distinct Visit occurrences without duplicating the Place: `visit-test-station-daily` on 2024-03-01 and `visit-test-station-trip` on 2024-04-11.

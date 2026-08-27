@@ -24,7 +24,7 @@ JSON cannot contain native Firestore `Timestamp` values. Every fixture timestamp
 
 A future loader must validate the ISO value and convert the complete tagged object to a native Firestore `Timestamp` before writing. It must not store the tagged object or ISO string as the document's `createdAt`. All dates and timestamps are fixed historical values; none are relative to the current day.
 
-Document IDs, Visit IDs, participant UIDs, dates, ordering values, coordinates, colors, and timestamp strings are stable. The coordinates are invented test coordinates. The cached administrative codes are valid values confirmed in the repository geo assets: county `63000`, town `63000010`, and village `63000010018`. The fixture does not assert that the invented coordinates would be reclassified to those codes by point-in-polygon logic.
+Document IDs, Visit IDs, participant UIDs, dates, ordering values, coordinates, colors, and timestamp strings are stable. The Place names and data are synthetic. Each coordinate has been validated with point-in-polygon checks against the repository's county, town, and village GeoJSON, and its cached administrative codes identify the containing polygons. The seven Places cover distinct villages and districts across Taipei, Taichung, Kaohsiung, Changhua, and Yilan.
 
 ## Record purposes
 
