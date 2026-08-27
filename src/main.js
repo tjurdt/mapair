@@ -4,53 +4,14 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, si
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
          onSnapshot, query, orderBy, arrayUnion, serverTimestamp, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
+import { resolveRuntimeConfig } from "./config.js";
 
 /* ============================================================
    1) 設定
    ============================================================ */
-const CONFIG = {
-  firebase: {
-    apiKey: "AIzaSyBICWMjy3b-1SblR7Q2j04xVozitopfHhE",
-    authDomain: "mapping-505208.firebaseapp.com",
-    projectId: "mapping-505208",
-    storageBucket: "mapping-505208.firebasestorage.app",
-    messagingSenderId: "5834589386",
-    appId: "1:5834589386:web:83a2d341a008ad8bdbe033",
-    measurementId: "G-Z3SMTEMHKW"
-  },
-  google: {
-    apiKey: "AIzaSyDL41HwqYYTdgDWVjurVCOtxZfmVErDGy4",   // 記得綁 HTTP referrer + API restrictions
-    mapId: "ab521a22dfdf46ce4d5c8faf"                     // Advanced Marker 用的 Map ID
-  },
-  spaceId: "us"                 // 兩人用同一個字串即共享
-};
+let runtimeConfig = null, localFailure = false;
 
-/* 分類無預設,使用者自行新增,存在共享的 meta/config,兩人共用 */
-const LOCAL_TEST_CONFIG = {
-  firebase: {
-    apiKey: "fake-local-api-key",
-    authDomain: "demo-mapair-local.localhost",
-    projectId: "demo-mapair-local",
-    storageBucket: "demo-mapair-local.localhost",
-    messagingSenderId: "000000000000",
-    appId: "1:000000000000:web:localtest"
-  },
-  spaceId: "test-space-baseline"
-};
-let runtimeMode = null, activeFirebaseConfig = null, activeSpaceId = null, localFailure = false;
-
-function resolveRuntimeMode(){
-  const localHost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-  const values = new URLSearchParams(location.search).getAll("firebaseEnv");
-  if (values.length){
-    if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
-    if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
-    return "local";
-  }
-  if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
-  return "production";
-}
-function isLocalTest(){ return runtimeMode === "local"; }
+function isLocalTest(){ return runtimeConfig?.mode === "local"; }
 function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
 const LOCAL_TEST_IDENTITIES = Object.freeze({
   a: Object.freeze({ uid:"test-user-a", email:"test-user-a@example.invalid", name:"測試使用者甲" }),
@@ -63,7 +24,7 @@ function encodeLocalTestTokenPart(value){
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 function createLocalTestCustomToken(identityKey){
-  if (!isLocalTest() || activeFirebaseConfig?.projectId !== "demo-mapair-local"){
+  if (!isLocalTest() || runtimeConfig.firebase.projectId !== "demo-mapair-local"){
     throw new Error("Local test identities are unavailable outside LOCAL TEST mode.");
   }
   const identity = LOCAL_TEST_IDENTITIES[identityKey];
@@ -469,13 +430,13 @@ function boot(){
   document.getElementById("app").innerHTML =
     `<div class="center"><div class="gate">${localBadge()}<p style="color:var(--ink-soft)">連線中…</p></div></div>`;
   try {
-    const app = initializeApp(activeFirebaseConfig);
+    const app = initializeApp(runtimeConfig.firebase);
     auth = getAuth(app);
     db = getFirestore(app);
     if (isLocalTest()){
       try {
-        connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings:true });
-        connectFirestoreEmulator(db, "127.0.0.1", 8080);
+        connectAuthEmulator(auth, runtimeConfig.emulators.auth.url, { disableWarnings:true });
+        connectFirestoreEmulator(db, runtimeConfig.emulators.firestore.host, runtimeConfig.emulators.firestore.port);
       } catch(e){ failLocal("emulator connection setup", e); return; }
     }
     onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); },
@@ -847,7 +808,7 @@ function loadGoogleBootstrap(){
     for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);
     a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));
     m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
-    ({key:CONFIG.google.apiKey, v:"weekly", language:"zh-TW", region:"TW"});
+    ({key:runtimeConfig.google.apiKey, v:"weekly", language:"zh-TW", region:"TW"});
 }
 
 async function initMap(){
@@ -865,7 +826,7 @@ async function initMap(){
   geocoder = new Geocoder();
 
   map = new Map(document.getElementById("map"), {
-    center:{lat:23.7,lng:120.9}, zoom:7, mapId:CONFIG.google.mapId||"DEMO_MAP_ID",
+    center:{lat:23.7,lng:120.9}, zoom:7, mapId:runtimeConfig.google.mapId||"DEMO_MAP_ID",
     mapTypeControl:false, streetViewControl:false, fullscreenControl:false,
     clickableIcons:false, gestureHandling:"greedy"      // 單指即可拖動,避免手機卡住
   });
@@ -879,7 +840,7 @@ async function initMap(){
 
 /* ---------- Firestore 即時同步 ---------- */
 function subscribe(){
-  const base = ["spaces", activeSpaceId];
+  const base = ["spaces", runtimeConfig.spaceId];
   onSnapshot(query(collection(db, ...base, "places"), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
@@ -906,11 +867,11 @@ function subscribe(){
     if (choroLevel !== "off") setChoro(choroLevel);
   }, error => handleFirestoreError("meta/config", error));
 }
-const metaDoc   = () => doc(db, "spaces", activeSpaceId, "meta", "config");
-const placesCol = () => collection(db, "spaces", activeSpaceId, "places");
-const placeDoc  = id => doc(db, "spaces", activeSpaceId, "places", id);
-const tripsCol  = () => collection(db, "spaces", activeSpaceId, "trips");
-const tripDoc   = id => doc(db, "spaces", activeSpaceId, "trips", id);
+const metaDoc   = () => doc(db, "spaces", runtimeConfig.spaceId, "meta", "config");
+const placesCol = () => collection(db, "spaces", runtimeConfig.spaceId, "places");
+const placeDoc  = id => doc(db, "spaces", runtimeConfig.spaceId, "places", id);
+const tripsCol  = () => collection(db, "spaces", runtimeConfig.spaceId, "trips");
+const tripDoc   = id => doc(db, "spaces", runtimeConfig.spaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
 function whoColor(p){
@@ -1872,10 +1833,8 @@ function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">
 
 /* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
 try {
-  runtimeMode = resolveRuntimeMode();
-  activeFirebaseConfig = isLocalTest() ? LOCAL_TEST_CONFIG.firebase : CONFIG.firebase;
-  activeSpaceId = isLocalTest() ? LOCAL_TEST_CONFIG.spaceId : CONFIG.spaceId;
-  if (!activeFirebaseConfig.projectId || !CONFIG.google.apiKey) renderSetup();
+  runtimeConfig = resolveRuntimeConfig();
+  if (!runtimeConfig.firebase.projectId || !runtimeConfig.google.apiKey) renderSetup();
   else boot();
 } catch(e){
   showRuntimeFatal(`Firebase environment safety check failed.\n${e.message}`, true);
