@@ -16,6 +16,16 @@ import {
   shouldAutoFitViewport,
   visitMatchesReorderScope
 } from "./ux-policies.js";
+import {
+  PROXIMITY_RADIUS_MAX,
+  PROXIMITY_RADIUS_MIN,
+  buildProximityFeatureCollection,
+  createMaskIndex,
+  normalizeProximityRadius,
+  readProximityPreferences,
+  selectEligibleProximitySeeds,
+  writeProximityPreferences
+} from "./proximity-geometry.js";
 
 /* ============================================================
    1) 設定
@@ -146,6 +156,14 @@ let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let nicknames = {}, levelColors = { ...LEVEL_COLORS }, addMode = false;
 let choroLayerLevel = null, legendCollapsed = false;
+let proximityStorage = null;
+try { proximityStorage = globalThis.localStorage; } catch(e) {}
+const initialProximityPreferences = readProximityPreferences(proximityStorage);
+let proximityRadius = initialProximityPreferences.radius;
+let proximityMaskTaiwan = initialProximityPreferences.maskToTaiwan;
+let proximityLayer = null, proximityLayerKey = "", proximityMaskIndex = null, proximityRenderVersion = 0;
+let proximitySeedCount = 0, proximityRadiusTimer = null;
+const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
 const nameFor = uid => nicknames[uid] || members[uid] || (uid===(user&&user.uid) ? "我" : "對方");
 function catColor(c){ return catColors[c] || CAT_PALETTE[Math.max(0, spaceCats.indexOf(c)) % CAT_PALETTE.length]; }
@@ -522,6 +540,9 @@ function renderGate(){
    3) 主畫面
    ============================================================ */
 async function renderApp(){
+  proximityRenderVersion++;
+  removeAdministrativeLayer();
+  removeProximityLayer();
   document.getElementById("app").innerHTML = `
     <header>
       <span class="title">我們去過的地方</span>
@@ -539,12 +560,19 @@ async function renderApp(){
             <button data-l="county">縣市</button>
             <button data-l="town">鄉鎮</button>
             <button data-l="village">村里</button>
+            <button data-l="proximity">鄰近</button>
           </div>
           <button id="addBtn" title="新增地點模式">＋</button>
           <button id="locBtn" title="定位到我的位置">📍</button>
           <button id="setBtn">設定</button>
         </div>
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
+        <div id="proximityCtl" style="display:none">
+          <label for="proximityRadius">半徑</label>
+          <input id="proximityRadius" type="number" min="${PROXIMITY_RADIUS_MIN}" max="${PROXIMITY_RADIUS_MAX}" step="0.1" inputmode="decimal" value="${proximityRadius.toFixed(1)}" aria-label="鄰近涵蓋半徑（公里）">
+          <span>km</span>
+          <label class="proximity-mask"><input id="proximityMask" type="checkbox" ${proximityMaskTaiwan?'checked':''}> 僅限台灣陸地</label>
+        </div>
         <div id="maplegend" style="display:none"></div>
       </div>
       <div class="side">
@@ -639,10 +667,9 @@ async function renderApp(){
   wireSearch();
   subscribe();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
-    if (filter.regions.length){ filter.regions = []; renderList(); renderFilterChips(); }
+    if (b.dataset.l !== "proximity" && filter.regions.length){ filter.regions = []; renderList(); renderFilterChips(); }
     setChoro(b.dataset.l);
     renderMarkers();
-    document.getElementById("multiBtn").style.display = b.dataset.l === "off" ? "none" : "block";
   });
   document.getElementById("addBtn").onclick = e => {
     addMode = !addMode;
@@ -661,6 +688,30 @@ async function renderApp(){
   document.getElementById("multiBtn").onclick = e => {
     regionMulti = !regionMulti;
     e.target.classList.toggle("on", regionMulti);
+  };
+  const proximityRadiusInput = document.getElementById("proximityRadius");
+  const saveProximityPreferences = () => writeProximityPreferences(proximityStorage, {
+    radius:proximityRadius,
+    maskToTaiwan:proximityMaskTaiwan
+  });
+  const commitProximityRadius = () => {
+    clearTimeout(proximityRadiusTimer);
+    const next = normalizeProximityRadius(proximityRadiusInput.value, proximityRadius);
+    proximityRadiusInput.value = next.toFixed(1);
+    if (next === proximityRadius) return;
+    proximityRadius = next;
+    saveProximityPreferences();
+    if (choroLevel === "proximity") setChoro("proximity");
+  };
+  proximityRadiusInput.oninput = () => {
+    clearTimeout(proximityRadiusTimer);
+    proximityRadiusTimer = setTimeout(commitProximityRadius, 280);
+  };
+  proximityRadiusInput.onchange = commitProximityRadius;
+  document.getElementById("proximityMask").onchange = e => {
+    proximityMaskTaiwan = e.target.checked;
+    saveProximityPreferences();
+    if (choroLevel === "proximity") setChoro("proximity");
   };
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
@@ -1042,10 +1093,25 @@ function markerColorForOccurrence(o){
   if(markerMode==="dateFirst" || markerMode==="dateLast") return dateOccurrenceColor(o);
   return markerColorForVisit(o.p,o.v);
 }
+function effectiveMarkerColor(p){
+  let color=markerColor(p);
+  if(p.status!=="visited") return color;
+  if(markerMode==="dateFirst" || markerMode==="dateLast"){
+    const occurrence=representativeDateOccurrence(p,markerMode);
+    return occurrence ? dateOccurrenceColor(occurrence) : color;
+  }
+  const visits=placeVisits(p)
+    .map((v,visitIndex)=>({p,v,visitIndex,seqDate:v.date,stayAnchor:visitKind(v)==="stay"?"night":""}))
+    .filter(o=>visitPassFilter(p,o.v))
+    .sort(sortOccurrences);
+  const occurrence=visits[visits.length-1];
+  return occurrence ? markerColorForVisit(p,occurrence.v) : color;
+}
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
   renderMarkerLegend();
+  restyleProximityLayer();
   if (!showPins) return;
 
   const seq=sequenceContext();
@@ -1070,15 +1136,7 @@ function renderMarkers(){
 
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
-    let col=markerColor(p);
-    if(p.status==="visited"){
-      if(markerMode==="dateFirst" || markerMode==="dateLast"){
-        const o=representativeDateOccurrence(p,markerMode); if(o) col=dateOccurrenceColor(o);
-      }else{
-        const vv=placeVisits(p).map((v,visitIndex)=>({p,v,visitIndex,seqDate:v.date,stayAnchor:visitKind(v)==="stay"?"night":""})).filter(o=>visitPassFilter(p,o.v)).sort(sortOccurrences);
-        const o=vv[vv.length-1]; if(o) col=markerColorForVisit(p,o.v);
-      }
-    }
+    const col=effectiveMarkerColor(p);
     const pin = new Pin({ background:col, borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
     pin.element.style.cursor = "pointer";
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
@@ -1090,24 +1148,24 @@ function dateMarkerLegendBody(){
   const b=markerDateBounds(), grad=VISIT_DATE_RAINBOW.join(",");
   return `<div class="legendsection"><div class="legendtitle">地標 · ${markerMode==="dateFirst"?"最早造訪":"最後造訪"}</div>`+
     `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-    `<div style="display:flex;justify-content:space-between;width:108px;font-size:9px"><span>${esc((b.from||"").slice(5)||"早")}</span><span>${esc((b.to||"").slice(5)||"晚")}</span></div>`+
-    `<div style="font-size:9px;margin-top:2px">同日：淺 → 深 = 第一站 → 最後一站</div></div>`;
+    `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((b.from||"").slice(5)||"早")}</span><span>${esc((b.to||"").slice(5)||"晚")}</span></div>`+
+    `<div style="font-size:11px;margin-top:2px">同日：淺 → 深 = 第一站 → 最後一站</div></div>`;
 }
 function markerLegendBody(){
-  if (!showPins) return "";
+  if (!showPins && choroLevel!=="proximity") return "";
   const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
   const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
   let order="";
   if(orderMode){
     const txt=seq.type==="trip" ? "D1-1 = 第1天第1站" : "數字 = 當日造訪順序";
-    order=`<div class="legendsection"><div class="legendtitle">地標 · 順序</div><div style="font-size:10px">${txt}</div></div>`;
+    order=`<div class="legendsection"><div class="legendtitle">地標 · 順序</div><div style="font-size:11px">${txt}</div></div>`;
   }
   if(markerMode==="dateFirst" || markerMode==="dateLast") return order+dateMarkerLegendBody();
-  if(orderMode) return order+`<div style="font-size:9px;margin-top:3px">顏色沿用目前地標配色</div>`;
+  if(orderMode) return order+`<div style="font-size:11px;margin-top:3px">顏色沿用目前地標配色</div>`;
   if (markerMode === "rating"){
     return `<div class="legendsection"><div class="legendtitle">地標 · 評分</div>`+
       `<div style="height:8px;width:92px;border-radius:3px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:92px;font-size:9px"><span>1</span><span>5</span></div></div>`;
+      `<div style="display:flex;justify-content:space-between;width:92px;font-size:11px"><span>1</span><span>5</span></div></div>`;
   }
   let rows=[];
   if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
@@ -1115,7 +1173,7 @@ function markerLegendBody(){
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.map(c=>[catColor(c), c]);
   else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
-  const body=rows.length ? rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") : `<div style="font-size:10px">尚無項目</div>`;
+  const body=rows.length ? rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") : `<div style="font-size:11px">尚無項目</div>`;
   return `<div class="legendsection"><div class="legendtitle">地標 · ${titles[markerMode]||"地標"}</div>${body}</div>`;
 }
 
@@ -1126,7 +1184,7 @@ function regionLegendBody(){
     const lab=metric==="first"?"初次造訪":"最後造訪", grad=VISIT_DATE_RAINBOW.join(",");
     return `<div class="legendsection"><div class="legendtitle">行政區 · ${lab}</div>`+
       `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:108px;font-size:9px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
+      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
   }
   let rows=metric==="count"
     ? [[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]]
@@ -1134,13 +1192,21 @@ function regionLegendBody(){
   return `<div class="legendsection"><div class="legendtitle">行政區 · ${metric==="count"?"地標數":"造訪深度"}</div>`+
     rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("")+`</div>`;
 }
+function proximityLegendBody(){
+  if(choroLevel!=="proximity") return "";
+  const landText=proximityMaskTaiwan ? "僅顯示台灣行政陸地" : "顯示完整半徑（含水域與境外）";
+  const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
+  return `<div class="legendsection"><div class="legendtitle">最近造訪涵蓋 · ${proximityRadius.toFixed(1)} km</div>`+
+    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
+}
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
-  const hasMarker=showPins, hasRegion=choroLevel!=="off" && !!regionLegendState;
-  if(!hasMarker && !hasRegion){ el.style.display="none"; return; }
+  const hasMarker=showPins, hasRegion=choroLevel!=="off" && choroLevel!=="proximity" && !!regionLegendState;
+  const hasProximity=choroLevel==="proximity";
+  if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
   el.style.display="block";
   const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${legendCollapsed?"▸":"▾"}</span></div>`;
-  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody());
+  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
   document.getElementById("legendHead").onclick=()=>{ legendCollapsed=!legendCollapsed; renderUnifiedLegend(); };
 }
 function renderMarkerLegend(){ renderUnifiedLegend(); }
@@ -1238,11 +1304,97 @@ function renderLegend(metric,ctx){
   renderUnifiedLegend();
 }
 
-async function setChoro(level){
-  choroLevel = level;
+function updateSurfaceControls(level){
   document.querySelectorAll("#mapctl button").forEach(b => b.classList.toggle("on", b.dataset.l === level));
+  const administrative=["county","town","village"].includes(level);
+  const multi=document.getElementById("multiBtn");
+  const proximity=document.getElementById("proximityCtl");
+  if(multi) multi.style.display=administrative ? "block" : "none";
+  if(proximity) proximity.style.display=level==="proximity" ? "flex" : "none";
+}
+function removeAdministrativeLayer(){
+  if(!choroLayer) return;
+  choroLayer.setMap(null);
+  choroLayer=null;
+  choroLayerLevel=null;
+}
+function removeProximityLayer(){
+  if(!proximityLayer) return;
+  proximityLayer.setMap(null);
+  proximityLayer=null;
+  proximityLayerKey="";
+}
+function restyleProximityLayer(){
+  if(!proximityLayer) return;
+  proximityLayer.setStyle(feature=>{
+    const place=places[String(feature.getProperty("seedId"))];
+    const color=place ? effectiveMarkerColor(place) : getCSS("--visited");
+    return {
+      fillColor:color,
+      fillOpacity:choroAlpha,
+      strokeColor:color,
+      strokeOpacity:0.28,
+      strokeWeight:0.35,
+      clickable:false
+    };
+  });
+}
+function proximityGeometryKey(seeds){
+  const seedKey=seeds.map(seed=>`${seed.id}:${seed.lat.toFixed(7)},${seed.lng.toFixed(7)}`).join("|");
+  return `${proximityRadius.toFixed(1)}:${proximityMaskTaiwan?"land":"full"}:${seedKey}`;
+}
+async function renderProximityCoverage(requestVersion){
+  const seeds=selectEligibleProximitySeeds(places, passFilter);
+  proximitySeedCount=seeds.length;
+  renderUnifiedLegend();
+  const key=proximityGeometryKey(seeds);
+  let featureCollection=proximityGeometryCache.get(key);
+  if(!featureCollection){
+    if(!seeds.length){
+      featureCollection=turf.featureCollection([]);
+    }else{
+      if(proximityMaskTaiwan && !proximityMaskIndex){
+        const townGeo=await loadGeo("geo/town.json");
+        proximityMaskIndex=createMaskIndex(turf,townGeo.features);
+      }
+      featureCollection=buildProximityFeatureCollection({
+        turfApi:turf,
+        seeds,
+        radiusKm:proximityRadius,
+        maskIndex:proximityMaskTaiwan ? proximityMaskIndex : null
+      });
+    }
+    proximityGeometryCache.set(key,featureCollection);
+    while(proximityGeometryCache.size>6) proximityGeometryCache.delete(proximityGeometryCache.keys().next().value);
+  }
+  if(requestVersion!==proximityRenderVersion || choroLevel!=="proximity") return;
+  if(proximityLayer && proximityLayerKey===key){ restyleProximityLayer(); return; }
+  removeProximityLayer();
+  proximityLayer=new google.maps.Data({map});
+  proximityLayer.addGeoJson(featureCollection);
+  proximityLayerKey=key;
+  restyleProximityLayer();
+  renderUnifiedLegend();
+}
+
+async function setChoro(level){
+  const requestVersion=++proximityRenderVersion;
+  choroLevel = level;
+  updateSurfaceControls(level);
+  if(level==="proximity"){
+    removeAdministrativeLayer();
+    regionLegendState=null;
+    try { await renderProximityCoverage(requestVersion); }
+    catch(e){
+      if(requestVersion!==proximityRenderVersion) return;
+      alert("鄰近涵蓋範圍計算失敗：\n"+e.message);
+      setChoro("off");
+    }
+    return;
+  }
+  removeProximityLayer();
   if (level === "off"){
-    if (choroLayer){ choroLayer.setMap(null); choroLayer = null; choroLayerLevel = null; }
+    removeAdministrativeLayer();
     regionLegendState=null; renderUnifiedLegend(); return;
   }
 
@@ -1255,6 +1407,7 @@ async function setChoro(level){
     alert("行政區資料載入失敗——確認 geo/ 資料夾已上傳到 repo:\n" + e.message);
     setChoro("off"); return;
   }
+  if(requestVersion!==proximityRenderVersion || choroLevel!==level) return;
 
   const byRegion = regionPlaces(codeOf);
   let dmin, dmax;
@@ -1402,7 +1555,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
   const key=`${p.id}:${o.visitIndex}`;
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
-    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
+    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="移動造訪位置" title="移動到指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
     <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button></div></div>`;
 }
@@ -1413,7 +1566,7 @@ function stayAnchorCardHTML(o,label,date){
   const t=v.tripId?trips[v.tripId]:null;
   return `<div class="card compact stayanchor" data-stay-anchor="1" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}10"><div style="display:flex;align-items:center;gap:8px">
     <span style="font-size:15px">🏨</span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags"><span class="stayedge">${edge}</span><span class="ptag" style="background:#efe9df">${esc(visitWhoText(p,v))}</span>${t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:""}</div></div>
-    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
+    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
   </div></div>`;
 }
 function renderDayVisitList(el,date){
