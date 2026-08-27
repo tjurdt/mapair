@@ -11,3 +11,4 @@ dist/
 # Local environment files
 .env
 .env.*
+.vite/
