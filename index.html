@@ -50,6 +50,7 @@
   #proximityCtl input[type=number]{width:58px;height:26px;padding:2px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12px}
   #proximityCtl .proximity-mask{display:flex;align-items:center;gap:3px;margin-left:5px;white-space:nowrap}
   #proximityCtl input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto}
+  #proximityCtl .proximity-region-status{margin-left:5px;color:var(--ink-soft);font-size:12px;white-space:nowrap}
   .seqpin{width:24px;height:24px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(21,34,48,.28);cursor:pointer;user-select:none}
   #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
@@ -119,7 +120,6 @@
   @media(max-width:760px){
     .colgrid{grid-template-columns:1fr}
     .modal{padding:16px}
-    input:not([type=color]):not([type=range]):not([type=checkbox]),textarea,select{font-size:16px!important}
     .seg button{padding:11px 2px}
     .tab{font-size:15px}
     .btn{padding:9px 13px}
@@ -225,7 +225,11 @@
     .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.78fr)}
     #maplegend{right:8px;bottom:10px;max-width:min(220px,calc(100% - 20px));max-height:calc(100% - 102px)}
     #multiBtn,#proximityCtl{left:10px}
-    input:not([type=color]):not([type=range]):not([type=checkbox]),textarea,select{font-size:16px!important}
+    input:not([type=color]):not([type=range]):not([type=checkbox]):not([type=radio]),textarea{font-size:16px}
+    select,.fmini,#filterPanel select{font-size:14px}
+    #filterPanel input[type=date],.visitrow .v_date,.visitrow .v_end{font-size:16px}
+    .visitrow .v_trip,.visitrow .v_cat,.visitrow .v_who{font-size:14px}
+    .ordselect{font-size:12px}
   }
   @media(max-width:520px){
     header .who{display:none}

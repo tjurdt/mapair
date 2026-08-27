@@ -21,9 +21,13 @@ import {
   PROXIMITY_RADIUS_MIN,
   buildProximityFeatureCollection,
   createMaskIndex,
+  formatProximityRadius,
   normalizeProximityRadius,
+  parseProximityRadius,
   readProximityPreferences,
+  resolveProximityMaskMode,
   selectEligibleProximitySeeds,
+  selectRegionMaskCandidates,
   writeProximityPreferences
 } from "./proximity-geometry.js";
 
@@ -162,6 +166,8 @@ const initialProximityPreferences = readProximityPreferences(proximityStorage);
 let proximityRadius = initialProximityPreferences.radius;
 let proximityMaskTaiwan = initialProximityPreferences.maskToTaiwan;
 let proximityLayer = null, proximityLayerKey = "", proximityMaskIndex = null, proximityRenderVersion = 0;
+let proximityOutlineLayer = null, proximityOutlineKey = "";
+let selectedRegionMaskCache = { identity:"", maskIndex:null, outline:null };
 let proximitySeedCount = 0, proximityRadiusTimer = null;
 const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
@@ -218,6 +224,10 @@ function defaultDateForNewVisit(){
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
+const REGION_GEO = {
+  countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
+  townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
+};
 const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
 const otherOf = uid => Object.keys(members).find(u => u !== uid) || null;
 // 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.who 為準
@@ -569,9 +579,10 @@ async function renderApp(){
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
         <div id="proximityCtl" style="display:none">
           <label for="proximityRadius">半徑</label>
-          <input id="proximityRadius" type="number" min="${PROXIMITY_RADIUS_MIN}" max="${PROXIMITY_RADIUS_MAX}" step="0.1" inputmode="decimal" value="${proximityRadius.toFixed(1)}" aria-label="鄰近涵蓋半徑（公里）">
+          <input id="proximityRadius" type="number" min="${PROXIMITY_RADIUS_MIN}" max="${PROXIMITY_RADIUS_MAX}" step="any" inputmode="decimal" value="${formatProximityRadius(proximityRadius)}" aria-label="鄰近涵蓋半徑（公里）">
           <span>km</span>
-          <label class="proximity-mask"><input id="proximityMask" type="checkbox" ${proximityMaskTaiwan?'checked':''}> 僅限台灣陸地</label>
+          <label class="proximity-mask" id="proximityMaskLabel"><input id="proximityMask" type="checkbox" ${proximityMaskTaiwan?'checked':''}> 僅限台灣陸地</label>
+          <span class="proximity-region-status" id="proximityRegionStatus" style="display:none"></span>
         </div>
         <div id="maplegend" style="display:none"></div>
       </div>
@@ -694,20 +705,32 @@ async function renderApp(){
     radius:proximityRadius,
     maskToTaiwan:proximityMaskTaiwan
   });
-  const commitProximityRadius = () => {
-    clearTimeout(proximityRadiusTimer);
-    const next = normalizeProximityRadius(proximityRadiusInput.value, proximityRadius);
-    proximityRadiusInput.value = next.toFixed(1);
+  const applyProximityRadius = next => {
     if (next === proximityRadius) return;
     proximityRadius = next;
     saveProximityPreferences();
     if (choroLevel === "proximity") setChoro("proximity");
   };
+  const finalizeProximityRadius = () => {
+    clearTimeout(proximityRadiusTimer);
+    const parsed = parseProximityRadius(proximityRadiusInput.value);
+    const next = parsed == null ? proximityRadius : normalizeProximityRadius(parsed, proximityRadius);
+    proximityRadiusInput.value = formatProximityRadius(next);
+    applyProximityRadius(next);
+  };
   proximityRadiusInput.oninput = () => {
     clearTimeout(proximityRadiusTimer);
-    proximityRadiusTimer = setTimeout(commitProximityRadius, 280);
+    const parsed = parseProximityRadius(proximityRadiusInput.value);
+    if (parsed == null || parsed < PROXIMITY_RADIUS_MIN || parsed > PROXIMITY_RADIUS_MAX) return;
+    proximityRadiusTimer = setTimeout(()=>applyProximityRadius(parsed), 280);
   };
-  proximityRadiusInput.onchange = commitProximityRadius;
+  proximityRadiusInput.onchange = finalizeProximityRadius;
+  proximityRadiusInput.onblur = finalizeProximityRadius;
+  proximityRadiusInput.onkeydown = e => {
+    if(e.key!=="Enter") return;
+    finalizeProximityRadius();
+    proximityRadiusInput.blur();
+  };
   document.getElementById("proximityMask").onchange = e => {
     proximityMaskTaiwan = e.target.checked;
     saveProximityPreferences();
@@ -909,6 +932,7 @@ function refreshFilterUI(){
 }
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
+  updateProximityMaskControl();
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
@@ -1194,9 +1218,11 @@ function regionLegendBody(){
 }
 function proximityLegendBody(){
   if(choroLevel!=="proximity") return "";
-  const landText=proximityMaskTaiwan ? "僅顯示台灣行政陸地" : "顯示完整半徑（含水域與境外）";
+  const maskMode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
+    : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
   const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
-  return `<div class="legendsection"><div class="legendtitle">最近造訪涵蓋 · ${proximityRadius.toFixed(1)} km</div>`+
+  return `<div class="legendsection"><div class="legendtitle">最近造訪涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
     `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
 }
 function renderUnifiedLegend(){
@@ -1311,6 +1337,16 @@ function updateSurfaceControls(level){
   const proximity=document.getElementById("proximityCtl");
   if(multi) multi.style.display=administrative ? "block" : "none";
   if(proximity) proximity.style.display=level==="proximity" ? "flex" : "none";
+  updateProximityMaskControl();
+}
+function updateProximityMaskControl(){
+  const maskLabel=document.getElementById("proximityMaskLabel");
+  const regionStatus=document.getElementById("proximityRegionStatus");
+  if(!maskLabel || !regionStatus) return;
+  const mode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  maskLabel.style.display=mode.type==="regions" ? "none" : "flex";
+  regionStatus.style.display=mode.type==="regions" ? "inline" : "none";
+  regionStatus.textContent=mode.type==="regions" ? `限制於已選 ${mode.count} 個行政區` : "";
 }
 function removeAdministrativeLayer(){
   if(!choroLayer) return;
@@ -1319,10 +1355,16 @@ function removeAdministrativeLayer(){
   choroLayerLevel=null;
 }
 function removeProximityLayer(){
-  if(!proximityLayer) return;
-  proximityLayer.setMap(null);
-  proximityLayer=null;
-  proximityLayerKey="";
+  if(proximityLayer){
+    proximityLayer.setMap(null);
+    proximityLayer=null;
+    proximityLayerKey="";
+  }
+  if(proximityOutlineLayer){
+    proximityOutlineLayer.setMap(null);
+    proximityOutlineLayer=null;
+    proximityOutlineKey="";
+  }
 }
 function restyleProximityLayer(){
   if(!proximityLayer) return;
@@ -1335,33 +1377,114 @@ function restyleProximityLayer(){
       strokeColor:color,
       strokeOpacity:0.28,
       strokeWeight:0.35,
+      zIndex:1,
       clickable:false
     };
   });
 }
-function proximityGeometryKey(seeds){
+async function selectedRegionFeatures(regions){
+  const candidates=[];
+  for(const key of ["countyCode","townCode"]){
+    if(!regions.some(region=>region.key===key)) continue;
+    const spec=REGION_GEO[key], geo=await loadGeo(spec.url);
+    geo.features.forEach(feature=>candidates.push({
+      key,
+      code:String(feature.properties?.[spec.codeProperty] ?? ""),
+      feature
+    }));
+  }
+  const villageRegions=regions.filter(region=>region.key==="villCode");
+  if(villageRegions.length){
+    const urls=new Set(villageRegions.map(region=>region.countyCode ? `geo/village/${region.countyCode}.json` : "").filter(Boolean));
+    if(villageRegions.some(region=>!region.countyCode)){
+      const countyGeo=await loadGeo("geo/county.json");
+      countyGeo.features.forEach(feature=>urls.add(`geo/village/${feature.properties.COUNTYCODE}.json`));
+    }
+    for(const url of urls){
+      let geo; try { geo=await loadGeo(url); } catch(e){ continue; }
+      geo.features.forEach(feature=>candidates.push({
+        key:"villCode",
+        code:String(feature.properties?.VILLCODE ?? ""),
+        feature
+      }));
+    }
+  }
+  return selectRegionMaskCandidates(candidates,regions).map(candidate=>candidate.feature);
+}
+async function selectedRegionMask(mode,regions){
+  if(selectedRegionMaskCache.identity===mode.identity) return selectedRegionMaskCache;
+  const selectedFeatures=await selectedRegionFeatures(regions);
+  let maskFeatures=selectedFeatures;
+  if(selectedFeatures.length>1){
+    try {
+      const combined=turf.union(turf.featureCollection(selectedFeatures),{properties:{mask:"selected-regions"}});
+      if(combined) maskFeatures=[combined];
+    } catch(e) {}
+  }
+  selectedRegionMaskCache={
+    identity:mode.identity,
+    maskIndex:createMaskIndex(turf,maskFeatures),
+    outline:turf.featureCollection(selectedFeatures)
+  };
+  return selectedRegionMaskCache;
+}
+function renderProximityOutline(mode,outline){
+  if(mode.type!=="regions"){
+    if(proximityOutlineLayer) proximityOutlineLayer.setMap(null);
+    proximityOutlineLayer=null;
+    proximityOutlineKey="";
+    return;
+  }
+  if(proximityOutlineLayer && proximityOutlineKey===mode.identity) return;
+  if(proximityOutlineLayer) proximityOutlineLayer.setMap(null);
+  proximityOutlineLayer=new google.maps.Data({map});
+  proximityOutlineLayer.addGeoJson(outline);
+  proximityOutlineLayer.setStyle({
+    fillOpacity:0,
+    strokeColor:"#152230",
+    strokeOpacity:0.58,
+    strokeWeight:1.4,
+    zIndex:2,
+    clickable:false
+  });
+  proximityOutlineKey=mode.identity;
+}
+function proximityGeometryKey(seeds,maskMode){
   const seedKey=seeds.map(seed=>`${seed.id}:${seed.lat.toFixed(7)},${seed.lng.toFixed(7)}`).join("|");
-  return `${proximityRadius.toFixed(1)}:${proximityMaskTaiwan?"land":"full"}:${seedKey}`;
+  return `${formatProximityRadius(proximityRadius)}:${maskMode.identity}:${seedKey}`;
 }
 async function renderProximityCoverage(requestVersion){
+  const selectedRegions=filter.regions.map(region=>({...region}));
   const seeds=selectEligibleProximitySeeds(places, passFilter);
+  const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
+  updateProximityMaskControl();
   renderUnifiedLegend();
-  const key=proximityGeometryKey(seeds);
+  let maskIndex=null, outline=null;
+  if(maskMode.type==="regions"){
+    const selectedMask=await selectedRegionMask(maskMode,selectedRegions);
+    maskIndex=selectedMask.maskIndex;
+    outline=selectedMask.outline;
+  }else if(maskMode.type==="taiwan" && seeds.length){
+    if(!proximityMaskIndex){
+      const townGeo=await loadGeo("geo/town.json");
+      proximityMaskIndex=createMaskIndex(turf,townGeo.features);
+    }
+    maskIndex=proximityMaskIndex;
+  }
+  if(requestVersion!==proximityRenderVersion || choroLevel!=="proximity") return;
+  renderProximityOutline(maskMode,outline);
+  const key=proximityGeometryKey(seeds,maskMode);
   let featureCollection=proximityGeometryCache.get(key);
   if(!featureCollection){
     if(!seeds.length){
       featureCollection=turf.featureCollection([]);
     }else{
-      if(proximityMaskTaiwan && !proximityMaskIndex){
-        const townGeo=await loadGeo("geo/town.json");
-        proximityMaskIndex=createMaskIndex(turf,townGeo.features);
-      }
       featureCollection=buildProximityFeatureCollection({
         turfApi:turf,
         seeds,
         radiusKm:proximityRadius,
-        maskIndex:proximityMaskTaiwan ? proximityMaskIndex : null
+        maskIndex
       });
     }
     proximityGeometryCache.set(key,featureCollection);
@@ -1369,7 +1492,7 @@ async function renderProximityCoverage(requestVersion){
   }
   if(requestVersion!==proximityRenderVersion || choroLevel!=="proximity") return;
   if(proximityLayer && proximityLayerKey===key){ restyleProximityLayer(); return; }
-  removeProximityLayer();
+  if(proximityLayer) proximityLayer.setMap(null);
   proximityLayer=new google.maps.Data({map});
   proximityLayer.addGeoJson(featureCollection);
   proximityLayerKey=key;
@@ -1446,7 +1569,12 @@ async function setChoro(level){
       const parts = level==="county" ? [f.getProperty("COUNTYNAME")]
         : level==="town" ? [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME")]
         : [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME"), f.getProperty("VILLNAME")];
-      const entry = { key: CODEKEY[level], code: f.getProperty(codeProp), name: parts.filter(Boolean).join("") };
+      const entry = {
+        key:CODEKEY[level],
+        code:f.getProperty(codeProp),
+        name:parts.filter(Boolean).join(""),
+        ...(level==="village" ? {countyCode:f.getProperty("COUNTYCODE")} : {})
+      };
       const idx = filter.regions.findIndex(r => r.key===entry.key && r.code===entry.code);
       if (regionMulti){
         if (idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);

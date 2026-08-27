@@ -5,12 +5,21 @@ export const PROXIMITY_RADIUS_MAX = 20;
 const EARTH_RADIUS_KM = 6371.0088;
 
 export function normalizeProximityRadius(value, fallback = PROXIMITY_RADIUS_DEFAULT) {
-  if (value == null || String(value).trim() === "") return normalizeProximityRadius(fallback, PROXIMITY_RADIUS_DEFAULT);
-  const parsed = Number(value);
-  const safeFallback = Number.isFinite(Number(fallback)) ? Number(fallback) : PROXIMITY_RADIUS_DEFAULT;
+  const parsed = parseProximityRadius(value);
+  const fallbackValue = parseProximityRadius(fallback);
+  const safeFallback = fallbackValue == null ? PROXIMITY_RADIUS_DEFAULT : fallbackValue;
   if (!Number.isFinite(parsed)) return Math.max(PROXIMITY_RADIUS_MIN, Math.min(PROXIMITY_RADIUS_MAX, safeFallback));
-  const clamped = Math.max(PROXIMITY_RADIUS_MIN, Math.min(PROXIMITY_RADIUS_MAX, parsed));
-  return Math.round(clamped * 10) / 10;
+  return Math.max(PROXIMITY_RADIUS_MIN, Math.min(PROXIMITY_RADIUS_MAX, parsed));
+}
+
+export function parseProximityRadius(value) {
+  if (value == null || String(value).trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function formatProximityRadius(value, fallback = PROXIMITY_RADIUS_DEFAULT) {
+  return String(normalizeProximityRadius(value, fallback));
 }
 
 export function readProximityPreferences(storage) {
@@ -27,9 +36,35 @@ export function readProximityPreferences(storage) {
 
 export function writeProximityPreferences(storage, { radius, maskToTaiwan }) {
   try {
-    storage?.setItem("mapair.proximity.radius", normalizeProximityRadius(radius).toFixed(1));
+    storage?.setItem("mapair.proximity.radius", formatProximityRadius(radius));
     storage?.setItem("mapair.proximity.maskTaiwan", String(maskToTaiwan !== false));
   } catch (error) {}
+}
+
+export function normalizedRegionSelections(regions = []) {
+  const unique = new Map();
+  for (const region of regions) {
+    const key = String(region?.key || ""), code = String(region?.code || "");
+    if (!key || !code) continue;
+    unique.set(`${key}:${code}`, { key, code });
+  }
+  return [...unique.values()].sort((a, b) => a.key.localeCompare(b.key) || a.code.localeCompare(b.code));
+}
+
+export function resolveProximityMaskMode(regions = [], maskToTaiwan = true) {
+  const selected = normalizedRegionSelections(regions);
+  if (selected.length) {
+    const selectionIdentity = selected.map(region => `${region.key}:${region.code}`).join("|");
+    return { type:"regions", count:selected.length, identity:`regions:${selectionIdentity}` };
+  }
+  return maskToTaiwan
+    ? { type:"taiwan", count:0, identity:"taiwan" }
+    : { type:"none", count:0, identity:"none" };
+}
+
+export function selectRegionMaskCandidates(candidates = [], regions = []) {
+  const selected = new Set(normalizedRegionSelections(regions).map(region => `${region.key}:${region.code}`));
+  return candidates.filter(candidate => selected.has(`${candidate?.key || ""}:${candidate?.code || ""}`));
 }
 
 function coordinateKey(lat, lng) {
@@ -154,8 +189,9 @@ export function runProximityGeometryAssertions() {
   const assert = (condition, message) => { if (!condition) throw new Error(`Proximity assertion failed: ${message}`); };
   assert(normalizeProximityRadius("0") === 0.1, "radius minimum");
   assert(normalizeProximityRadius("99") === 20, "radius maximum");
-  assert(normalizeProximityRadius("1.06") === 1.1, "radius step");
+  assert(normalizeProximityRadius("1.25") === 1.25, "radius does not round");
   assert(normalizeProximityRadius(null) === 1, "missing radius default");
+  assert(formatProximityRadius(1) === "1" && formatProximityRadius(1.25) === "1.25", "natural radius formatting");
 
   const places = [
     { id:"wish", status:"wishlist", lat:25, lng:121 },
@@ -191,4 +227,18 @@ export function runProximityGeometryAssertions() {
   assert(preferences.radius === 2.4 && preferences.maskToTaiwan === false, "mask preference state");
   writeProximityPreferences(storage, { radius:1, maskToTaiwan:true });
   assert(memory.get("mapair.proximity.maskTaiwan") === "true", "mask preference persistence");
+  writeProximityPreferences(storage, { radius:1.25, maskToTaiwan:true });
+  assert(memory.get("mapair.proximity.radius") === "1.25", "natural radius persistence");
+
+  const selectedRegions = [{ key:"countyCode", code:"A" }, { key:"townCode", code:"B" }];
+  const selectedMode = resolveProximityMaskMode(selectedRegions, false);
+  assert(selectedMode.type === "regions" && selectedMode.count === 2, "selected-region mask takes precedence");
+  assert(resolveProximityMaskMode([], true).type === "taiwan", "Taiwan mask without selected regions");
+  assert(resolveProximityMaskMode([], false).type === "none", "no mask without selected regions or Taiwan preference");
+  const unionCandidates = selectRegionMaskCandidates([
+    { key:"countyCode", code:"A", id:"first" },
+    { key:"townCode", code:"B", id:"second" },
+    { key:"townCode", code:"C", id:"outside" }
+  ], selectedRegions);
+  assert(unionCandidates.map(candidate => candidate.id).join(",") === "first,second", "multiple selected regions use OR/union semantics");
 }
