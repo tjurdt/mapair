@@ -5,6 +5,17 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
          onSnapshot, query, orderBy, arrayUnion, serverTimestamp, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
+import {
+  isVisitReorderAvailable,
+  layoutViewState,
+  ordinaryOccurrences,
+  placeSharedFields,
+  reorderWithinSlots,
+  resolveVisitMoveTarget,
+  shouldShowReorderControls,
+  shouldAutoFitViewport,
+  visitMatchesReorderScope
+} from "./ux-policies.js";
 
 /* ============================================================
    1) 設定
@@ -147,6 +158,7 @@ let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
+let layoutDismissController = null;
 let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
 let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
@@ -426,6 +438,42 @@ function sequenceLabels(){
   });
 }
 
+function visitReorderScope(){
+  const tripId=specificTripId();
+  const available=isVisitReorderAvailable({
+    categoryCount:filter.cats.size,
+    regionCount:filter.regions.length,
+    textSearch:"",
+    tripId:filter.tripId,
+    hasSpecificTrip:!!tripId
+  });
+  if(!available) return null;
+  return {
+    tripId,
+    participantId:filter.who==="all"?"":filter.who
+  };
+}
+
+function fullDayOrdinaryOccurrences(date){
+  const out=[];
+  Object.values(places).forEach(p=>{
+    if(p.status!=="visited") return;
+    placeVisits(p).forEach((v,visitIndex)=>{
+      if(visitKind(v)==="visit" && v.date===date) out.push({p,v,visitIndex,seqDate:date,stayAnchor:"",fixed:false});
+    });
+  });
+  return ordinaryOccurrences(out.sort(sortOccurrences));
+}
+
+function reorderableDayOccurrences(date,scope=visitReorderScope()){
+  if(!scope) return [];
+  const full=fullDayOrdinaryOccurrences(date);
+  return full.filter(o=>visitMatchesReorderScope({
+    tripId:o.v.tripId,
+    participants:visitWhoUids(o.p,o.v)
+  },scope));
+}
+
 function boot(){
   document.getElementById("app").innerHTML =
     `<div class="center"><div class="gate">${localBadge()}<p style="color:var(--ink-soft)">連線中…</p></div></div>`;
@@ -500,6 +548,14 @@ async function renderApp(){
         <div id="maplegend" style="display:none"></div>
       </div>
       <div class="side">
+        <div class="layoutctl" id="layoutCtl">
+          <button class="layoutfab" id="layoutBtn" title="調整畫面空間" aria-controls="layoutMenu" aria-expanded="false">版面</button>
+          <div class="layoutmenu" id="layoutMenu">
+            <button id="toggleMap">地圖：顯示</button>
+            <button id="toggleFilter">篩選：顯示</button>
+            <button id="toggleList">清單：顯示</button>
+          </div>
+        </div>
         <div class="tabs">
           <button class="tab" data-t="visited">去過</button>
           <button class="tab" data-t="wishlist">想去</button>
@@ -527,14 +583,6 @@ async function renderApp(){
         </div>
         <div class="list" id="list"></div>
       </div>
-    </div>
-    <div class="layoutctl" id="layoutCtl">
-      <button class="layoutfab" id="layoutBtn" title="調整畫面空間">版面</button>
-      <div class="layoutmenu" id="layoutMenu">
-        <button id="toggleMap">地圖：顯示</button>
-        <button id="toggleFilter">篩選：顯示</button>
-        <button id="toggleList">清單：顯示</button>
-      </div>
     </div>`;
 
   document.getElementById("logout").onclick = () => signOut(auth);
@@ -542,22 +590,49 @@ async function renderApp(){
 
   // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
   const wrapEl = document.querySelector(".wrap");
+  const layoutCtl = document.getElementById("layoutCtl");
   const layoutMenu = document.getElementById("layoutMenu");
+  const layoutBtn = document.getElementById("layoutBtn");
+  const resizeVisibleMap = () => {
+    if(map&&!layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"),50);
+  };
   const applyLayoutState = () => {
-    wrapEl.classList.toggle("map-hidden", layoutState.map);
-    wrapEl.classList.toggle("filter-hidden", layoutState.filter);
-    wrapEl.classList.toggle("list-hidden", layoutState.list);
+    const view=layoutViewState(layoutState,layoutMenu.classList.contains("open"));
+    wrapEl.classList.toggle("map-hidden",view.mapHidden);
+    wrapEl.classList.toggle("filter-hidden",view.filterHidden);
+    wrapEl.classList.toggle("list-hidden",view.listHidden);
+    wrapEl.classList.toggle("content-hidden",view.contentHidden);
+    wrapEl.classList.toggle("layout-menu-open",view.menuOpen);
+    wrapEl.classList.toggle("layout-compact",view.compactSidebar);
     [["toggleMap","map","地圖"],["toggleFilter","filter","篩選"],["toggleList","list","清單"]].forEach(([id,key,label])=>{
       const b=document.getElementById(id); if(!b) return;
       b.textContent = (layoutState[key] ? "○ " : "✓ ") + label;
       b.classList.toggle("off", layoutState[key]);
     });
-    if (map && !layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"), 50);
+    resizeVisibleMap();
   };
-  document.getElementById("layoutBtn").onclick = e => { e.stopPropagation(); layoutMenu.classList.toggle("open"); };
-  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); layoutMenu.classList.remove("open"); };
-  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); layoutMenu.classList.remove("open"); };
-  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); layoutMenu.classList.remove("open"); };
+  const setLayoutMenuOpen = open => {
+    layoutMenu.classList.toggle("open",open);
+    layoutBtn.setAttribute("aria-expanded",String(open));
+    applyLayoutState();
+  };
+  layoutBtn.onclick = e => {
+    e.stopPropagation();
+    setLayoutMenuOpen(!layoutMenu.classList.contains("open"));
+  };
+  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); };
+  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); };
+  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); };
+  layoutDismissController?.abort();
+  layoutDismissController=new AbortController();
+  document.addEventListener("click",e=>{
+    if(layoutMenu.classList.contains("open")&&!layoutCtl.contains(e.target)) setLayoutMenuOpen(false);
+  },{signal:layoutDismissController.signal});
+  document.addEventListener("keydown",e=>{
+    if(e.key==="Escape"&&layoutMenu.classList.contains("open")){
+      setLayoutMenuOpen(false); layoutBtn.focus();
+    }
+  },{signal:layoutDismissController.signal});
   applyLayoutState();
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
@@ -721,6 +796,7 @@ async function deleteCat(c){
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
   if(!map || layoutState.map || tab==="trips") return;
+  if(!shouldAutoFitViewport({tripId:filter.tripId,regionCount:filter.regions.length})) return;
   const status=tab==="wishlist"?"wishlist":"visited";
   const pts=Object.values(places).filter(p=>p.status===status && passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
@@ -734,6 +810,11 @@ function fitMapToCurrentFilter(){
   uniq.forEach(p=>bounds.extend({lat:p.lat,lng:p.lng}));
   map.fitBounds(bounds,48);
   google.maps.event.addListenerOnce(map,"idle",()=>{ if(map.getZoom()>15) map.setZoom(15); });
+}
+function focusMapOnPlace(p){
+  if(!map || !Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
+  map.setCenter({lat:p.lat,lng:p.lng});
+  map.setZoom(14);
 }
 function scheduleFilterFit(){
   clearTimeout(filterFitTimer);
@@ -1246,7 +1327,8 @@ function renderList(){
     if(!listItems.length){ el.innerHTML=`<div class="empty">沒有符合的地點。</div>`; renderFilterChips(); return; }
     el.innerHTML=listItems.map(p=>cardHTML(p)).join("");
     listItems.forEach(p=>document.getElementById("c_"+p.id).onclick=ev=>{
-      if(ev.target.closest("[data-del]")||ev.target.closest(".ordbtn")) return; openEditor(p.id);
+      if(ev.target.closest("[data-del]")||ev.target.closest(".ordbtn")) return;
+      focusMapOnPlace(p); openEditor(p.id);
     });
     el.querySelectorAll("[data-del]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteDoc(placeDoc(b.dataset.del));});
     el.querySelectorAll("[data-up]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();movePlace(b.dataset.up,-1);});
@@ -1254,6 +1336,7 @@ function renderList(){
     renderFilterChips(); return;
   }
 
+  const reorderScope=visitReorderScope();
   const oneDay=singleDayDate();
   if(oneDay){ renderDayVisitList(el,oneDay); renderFilterChips(); return; }
 
@@ -1276,7 +1359,9 @@ function renderList(){
     if(d!==lastDate){ html+=`<div class="daysep">${tripId?`D${tripDayNoByDate(d,tripId,occ)} · `:""}${esc(d)}</div>`; lastDate=d; dayIdx=0; }
     dayIdx++;
     const label=labels?.get(occurrenceKey(o))||String(dayIdx);
-    html+=o.fixed ? stayAnchorCardHTML(o,label,d) : visitCardHTML(o,label,d,!!tripId);
+    const reorderable=reorderScope && visitKind(o.v)==="visit" ? reorderableDayOccurrences(d,reorderScope) : [];
+    const position=reorderable.findIndex(x=>x.p.id===o.p.id&&x.visitIndex===o.visitIndex)+1;
+    html+=o.fixed ? stayAnchorCardHTML(o,label,d) : visitCardHTML(o,label,d,position&&shouldShowReorderControls(reorderable.length)?{position,total:reorderable.length}:null);
   });
   el.innerHTML=html; wireVisitCards(el);
   renderFilterChips();
@@ -1303,7 +1388,7 @@ function cardHTML(p){
     <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
     <button class="delx" data-del="${p.id}" title="刪除地點">✕</button></div></div>`;
 }
-function visitCardHTML(o,label,date,allowOrder=false){
+function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
   const whoTxt=visitWhoText(p,v);
   const t=v.tripId?trips[v.tripId]:null, stay=visitKind(v)==="stay", nights=stayNights(v);
@@ -1318,7 +1403,7 @@ function visitCardHTML(o,label,date,allowOrder=false){
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
-    ${allowOrder?`<div class="ordcol"><button class="ordbtn" data-vup="${key}" data-date="${esc(date)}" title="往前一站">▲</button><button class="ordbtn" data-vdown="${key}" data-date="${esc(date)}" title="往後一站">▼</button></div>`:""}
+    ${orderInfo?`<div class="visitorder"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="移動造訪位置" title="移動到指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
     <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button></div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
@@ -1337,33 +1422,45 @@ function renderDayVisitList(el,date){
   if(!seq.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
   const tripId=specificTripId(), labels=new Map(sequenceLabels().map(x=>[occurrenceKey(x.o),x.label]));
   let html=`<div class="daysep">${tripId?`D${tripDayNoByDate(date,tripId,seq)} · `:""}${esc(date)}</div>`;
-  html+=seq.map((o,i)=>o.fixed?stayAnchorCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date):visitCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date,true)).join("");
+  const reorderable=reorderableDayOccurrences(date);
+  html+=seq.map((o,i)=>{
+    const position=reorderable.findIndex(x=>x.p.id===o.p.id&&x.visitIndex===o.visitIndex)+1;
+    return o.fixed?stayAnchorCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date):visitCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date,position&&shouldShowReorderControls(reorderable.length)?{position,total:reorderable.length}:null);
+  }).join("");
   el.innerHTML=html; wireVisitCards(el);
 }
 function wireVisitCards(el){
   el.querySelectorAll('[data-pid][data-vidx]').forEach(c=>c.onclick=ev=>{
-    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vup]")||ev.target.closest("[data-vdown]")) return;
+    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vmove]")||ev.target.closest("[data-vposition]")) return;
+    focusMapOnPlace(places[c.dataset.pid]);
     openEditor(c.dataset.pid,null,{focusVisitIndex:+c.dataset.vidx});
   });
   el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteVisitOccurrence(b.dataset.vdel);});
-  el.querySelectorAll("[data-vup]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vup,b.dataset.date,-1);});
-  el.querySelectorAll("[data-vdown]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vdown,b.dataset.date,1);});
+  el.querySelectorAll("[data-vmove]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vkey,b.dataset.date,b.dataset.vmove);});
+  el.querySelectorAll("[data-vposition]").forEach(s=>s.onchange=ev=>{ev.stopPropagation();if(s.value) moveVisitOccurrence(s.dataset.vposition,s.dataset.date,s.value);s.value="";});
 }
-async function moveVisitOccurrence(key,date,dir){
+async function moveVisitOccurrence(key,date,action){
   const [pid,idxRaw]=key.split(":"), idx=+idxRaw;
-  const regular=getDayOccurrences(date).filter(o=>!o.fixed);
-  const i=regular.findIndex(o=>o.p.id===pid && o.visitIndex===idx), j=i+dir;
-  if(i<0 || j<0 || j>=regular.length) return;
-  [regular[i],regular[j]]=[regular[j],regular[i]];
+  const scope=visitReorderScope(); if(!scope) return;
+  const regular=fullDayOrdinaryOccurrences(date);
+  const movable=o=>visitMatchesReorderScope({
+    tripId:o.v.tripId,
+    participants:visitWhoUids(o.p,o.v)
+  },scope);
+  const candidates=regular.filter(movable);
+  const i=candidates.findIndex(o=>o.p.id===pid && o.visitIndex===idx);
+  const j=resolveVisitMoveTarget(action,i,candidates.length);
+  if(i<0 || j<0 || i===j) return;
+  const reordered=reorderWithinSlots(regular,movable,i,j);
   const byPlace=new Map();
-  regular.forEach((o,pos)=>{
+  reordered.forEach((o,pos)=>{
     const p=o.p;
     if(!byPlace.has(p.id)) byPlace.set(p.id,placeVisits(p).map(v=>({...v})));
     const vv=byPlace.get(p.id); if(vv[o.visitIndex]) vv[o.visitIndex].order=pos+1;
   });
   [...byPlace.entries()].forEach(([id,vv])=>{ if(places[id]) places[id].visits=vv; });
-  await Promise.all([...byPlace.entries()].map(([id,vv])=>updateDoc(placeDoc(id),{visits:vv,...visitLegacyFields(vv,places[id])})));
   renderList(); renderMarkers();
+  await Promise.all([...byPlace.entries()].map(([id,vv])=>updateDoc(placeDoc(id),{visits:vv,...visitLegacyFields(vv,places[id])})));
 }
 
 function visitLegacyFields(vv,p=null){
@@ -1504,12 +1601,23 @@ function addDays(date,n){
   if(!date) return ""; const d=new Date(date+"T00:00:00"); d.setDate(d.getDate()+n);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
+const placeEditorWriteQueues=new Map();
+function persistPlaceEditorData(id,data){
+  if(places[id]) Object.assign(places[id],data);
+  const previous=placeEditorWriteQueues.get(id)||Promise.resolve();
+  const write=previous.then(()=>updateDoc(placeDoc(id),data));
+  const settled=write.catch(()=>{});
+  placeEditorWriteQueues.set(id,settled);
+  settled.finally(()=>{ if(placeEditorWriteQueues.get(id)===settled) placeEditorWriteQueues.delete(id); });
+  return write;
+}
 function openEditor(id, seed, opts={}){
   const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], ...seed };
-  let docId = id || null, creating = false;
+  const shared=placeSharedFields(p);
+  let docId = id || null, persistQueue=Promise.resolve();
   let wishlistCats = new Set((p.categories||[]).slice(0,1));
   let status = p.status || "visited";
-  let level = p.level || "旅遊";
+  let level = shared.level;
   const pu = partnerUid();
   let whoSel = id ? whoModeOf(p) : (pu ? "both" : "me");
   const filterTrip = specificTripId();
@@ -1571,9 +1679,9 @@ function openEditor(id, seed, opts={}){
         <div class="seg lvlseg" id="f_level">${LEVEL_ORDER.map(l=>`<button data-l="${l}" class="${level===l?'on':''}" style="${level===l?`background:${levelColors[l]};color:#fff`:''}">${l}</button>`).join("")}</div>
       </div>
       <div class="field" style="margin-bottom:8px"><label>共用評價</label>
-        <div class="row" style="align-items:center;gap:10px"><input type="range" id="f_rating" min="0" max="5" step="0.5" value="${p.rating||0}" style="flex:1"><span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${p.rating?("★ "+p.rating):"未評分"}</span></div>
+        <div class="row" style="align-items:center;gap:10px"><input type="range" id="f_rating" min="0" max="5" step="0.5" value="${shared.rating}" style="flex:1"><span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${shared.rating?("★ "+shared.rating):"未評分"}</span></div>
       </div>
-      <textarea id="f_review" placeholder="這個地點的共用評語…" style="width:100%;min-height:62px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff;resize:vertical">${esc(p.review||"")}</textarea>
+      <textarea id="f_review" placeholder="這個地點的共用評語…" style="width:100%;min-height:62px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff;resize:vertical">${esc(shared.review)}</textarea>
     </div>
 
     <div class="row"><button class="btn" id="f_done">完成</button>${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除地點</button>`:``}</div>
@@ -1600,12 +1708,18 @@ function openEditor(id, seed, opts={}){
       rating:rv>0?rv:null, review:document.getElementById("f_review").value.trim()
     };
   }
-  async function persist(){
+  function persist(){
     const data=collect();
-    if(!docId){
-      if(!data.name||creating) return; creating=true; data.createdBy=user.uid; data.createdAt=serverTimestamp();
-      const ref=await addDoc(placesCol(),data); docId=ref.id; creating=false;
-    }else await updateDoc(placeDoc(docId),data);
+    if(docId) return persistPlaceEditorData(docId,data);
+    const queued=persistQueue.then(async()=>{
+      if(!docId){
+        if(!data.name) return;
+        data.createdBy=user.uid; data.createdAt=serverTimestamp();
+        const ref=await addDoc(placesCol(),data); docId=ref.id;
+      }else await persistPlaceEditorData(docId,data);
+    });
+    persistQueue=queued.catch(()=>{});
+    return queued;
   }
   function catOptions(selected){
     return `<option value="">未分類</option>`+spaceCats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("")+`<option value="__new__">＋新增分類…</option>`;
