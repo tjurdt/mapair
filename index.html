@@ -77,6 +77,9 @@
   .ordcol{display:flex;flex-direction:column;gap:1px}
   .ordbtn{border:none;background:transparent;color:#b0a89c;font-size:10px;cursor:pointer;padding:0 3px;line-height:1.1}
   .ordbtn:hover{color:var(--ink)}
+  .ordbtn:disabled{opacity:.3;cursor:default}
+  .visitorder{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+  .ordselect{width:52px;height:28px;padding:2px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink-soft);font-size:10px}
   .daysep{font-family:"Fraunces",serif;font-size:13px;font-weight:600;color:var(--ink-soft);margin:12px 2px 6px;border-bottom:1px solid var(--line);padding-bottom:3px}
   .daynum{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:#efe9df;color:var(--ink-soft);font-size:11px;display:flex;align-items:center;justify-content:center}
   .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
@@ -143,11 +146,11 @@
   .chip{font-size:12px;padding:3px 9px;border-radius:999px;background:#f0ebe3;color:var(--ink-soft)}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
   .empty{color:var(--ink-soft);text-align:center;padding:40px 20px;font-size:14px;line-height:1.7}
-  .layoutctl{position:fixed;right:10px;bottom:62px;z-index:850}
-  .layoutfab{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.96);box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
-  .layoutmenu{display:none;position:absolute;right:0;bottom:40px;min-width:116px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
-  .layoutmenu.open{display:grid;gap:4px}
-  .layoutmenu button{height:32px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:12px;text-align:left;padding:0 9px}
+  .layoutctl{display:flex;align-items:center;gap:5px;flex:0 0 auto;padding:5px 10px 0}
+  .layoutfab{height:28px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:11px;color:var(--ink)}
+  .layoutmenu{display:none;flex:1;min-width:0;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+  .layoutmenu.open{display:grid}
+  .layoutmenu button{height:28px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:11px;text-align:center;padding:0 4px;white-space:nowrap}
   .layoutmenu button.off{color:var(--ink-soft);background:#faf8f4}
   .wrap.filter-hidden #filterbar{display:none}
   .wrap.list-hidden .search,.wrap.list-hidden .list{display:none!important}
