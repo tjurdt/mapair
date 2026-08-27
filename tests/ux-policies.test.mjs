@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { resolveRuntimeConfig } from "../src/config.js";
+import { resolveProximityMaskMode } from "../src/proximity-geometry.js";
 import {
+  MAP_SURFACE_Z_INDEX,
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
@@ -9,7 +11,9 @@ import {
   reorderWithinSlots,
   resolveVisitMoveTarget,
   shouldAutoFitViewport,
+  shouldShowRegionBlackout,
   shouldShowReorderControls,
+  transitionMapSurfaceState,
   visitMatchesReorderScope
 } from "../src/ux-policies.js";
 
@@ -95,5 +99,42 @@ assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1f
 assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
 assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:1fr;grid-template-rows:minmax\(0,1fr\) auto\}/,"mobile compact state expands the map vertically");
+
+const combinedSurface = { adminLevel:"town", proximityEnabled:true };
+assert.deepEqual(
+  transitionMapSurfaceState(combinedSurface,{type:"admin",level:"village"}),
+  {adminLevel:"village",proximityEnabled:true},
+  "switching town to village preserves proximity"
+);
+assert.deepEqual(
+  transitionMapSurfaceState(combinedSurface,{type:"proximity"}),
+  {adminLevel:"town",proximityEnabled:false},
+  "toggling proximity does not alter the administrative level"
+);
+assert.deepEqual(
+  transitionMapSurfaceState({adminLevel:"town",proximityEnabled:false},{type:"proximity"}),
+  {adminLevel:"town",proximityEnabled:true},
+  "administrative and proximity state are independent"
+);
+assert.deepEqual(
+  transitionMapSurfaceState(combinedSurface,{type:"admin",level:"town"}),
+  {adminLevel:"off",proximityEnabled:true},
+  "clicking the active administrative level returns only that dimension to off"
+);
+assert.equal(
+  shouldShowRegionBlackout({adminLevel:combinedSurface.adminLevel,regionCount:2,proximityEnabled:combinedSurface.proximityEnabled}),
+  true,
+  "selected-region blackout remains active with proximity"
+);
+assert.equal(
+  resolveProximityMaskMode([{key:"townCode",code:"6300500"}],false).type,
+  "regions",
+  "a selected-region mask constrains proximity even when the Taiwan preference is off"
+);
+assert.ok(
+  MAP_SURFACE_Z_INDEX.adminContext > MAP_SURFACE_Z_INDEX.proximity
+    && MAP_SURFACE_Z_INDEX.proximity > MAP_SURFACE_Z_INDEX.adminFill,
+  "blackout and boundaries remain above proximity, which remains above administrative fill"
+);
 
 console.log("ux-policies assertions passed");

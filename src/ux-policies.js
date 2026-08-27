@@ -78,3 +78,30 @@ export function layoutViewState({ map = false, filter = false, list = false } = 
     compactSidebar: !mapHidden && contentHidden && !menuOpen
   };
 }
+
+const ADMIN_LEVELS = new Set(["off", "county", "town", "village"]);
+export const MAP_SURFACE_Z_INDEX = Object.freeze({
+  adminFill:0,
+  proximity:1,
+  adminContext:3
+});
+
+export function transitionMapSurfaceState(
+  { adminLevel = "off", proximityEnabled = false } = {},
+  { type = "", level = "off" } = {}
+) {
+  const currentAdmin = ADMIN_LEVELS.has(adminLevel) ? adminLevel : "off";
+  if (type === "proximity") {
+    return { adminLevel:currentAdmin, proximityEnabled:!proximityEnabled };
+  }
+  if (type === "admin") {
+    const requested = ADMIN_LEVELS.has(level) ? level : "off";
+    const nextAdmin = requested !== "off" && requested === currentAdmin ? "off" : requested;
+    return { adminLevel:nextAdmin, proximityEnabled:!!proximityEnabled };
+  }
+  return { adminLevel:currentAdmin, proximityEnabled:!!proximityEnabled };
+}
+
+export function shouldShowRegionBlackout({ adminLevel = "off", regionCount = 0 } = {}) {
+  return ADMIN_LEVELS.has(adminLevel) && adminLevel !== "off" && Number(regionCount) > 0;
+}
