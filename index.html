@@ -239,7 +239,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
          onSnapshot, query, orderBy, arrayUnion, serverTimestamp, connectFirestoreEmulator }
@@ -292,6 +292,44 @@ function resolveRuntimeMode(){
 }
 function isLocalTest(){ return runtimeMode === "local"; }
 function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
+const LOCAL_TEST_IDENTITIES = Object.freeze({
+  a: Object.freeze({ uid:"test-user-a", email:"test-user-a@example.invalid", name:"測試使用者甲" }),
+  b: Object.freeze({ uid:"test-user-b", email:"test-user-b@example.invalid", name:"測試使用者乙" })
+});
+function encodeLocalTestTokenPart(value){
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+function createLocalTestCustomToken(identityKey){
+  if (!isLocalTest() || activeFirebaseConfig?.projectId !== "demo-mapair-local"){
+    throw new Error("Local test identities are unavailable outside LOCAL TEST mode.");
+  }
+  const identity = LOCAL_TEST_IDENTITIES[identityKey];
+  if (!identity) throw new Error("Unknown local test identity.");
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg:"none", typ:"JWT" };
+  const issuer = "firebase-adminsdk-local@demo-mapair-local.iam.gserviceaccount.com";
+  const payload = {
+    aud:"https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
+    iss:issuer,
+    sub:issuer,
+    uid:identity.uid,
+    claims:{ email:identity.email, name:identity.name },
+    iat:now,
+    exp:now + 3600
+  };
+  return `${encodeLocalTestTokenPart(header)}.${encodeLocalTestTokenPart(payload)}.`;
+}
+async function signInAsLocalTestIdentity(identityKey){
+  const expectedUid = LOCAL_TEST_IDENTITIES[identityKey]?.uid;
+  const credential = await signInWithCustomToken(auth, createLocalTestCustomToken(identityKey));
+  if (credential.user.uid !== expectedUid){
+    await signOut(auth);
+    throw new Error(`Auth Emulator returned unexpected UID: ${credential.user.uid}`);
+  }
+}
 function showRuntimeFatal(message, showLocalBadge=false){
   window.__fatal(message);
   if (showLocalBadge || isLocalTest()){
@@ -693,6 +731,20 @@ function renderGate(){
     <p>一起記錄去過哪、在那邊做了什麼、彼此的感想,<br>再規劃下一趟。</p>
     <button class="btn" id="login" style="margin-top:16px;padding:12px 22px">用 Google 登入</button>
   </div></div>`;
+  if (isLocalTest()){
+    const providerLogin = document.getElementById("login");
+    providerLogin.textContent = "Google 登入（模擬器）";
+    providerLogin.classList.add("ghost");
+    providerLogin.insertAdjacentHTML("beforebegin", `
+      <div style="display:grid;gap:10px;margin-top:16px">
+        <button class="btn" id="login-test-a" style="padding:12px 22px">測試使用者甲</button>
+        <button class="btn" id="login-test-b" style="padding:12px 22px">測試使用者乙</button>
+      </div>`);
+    document.getElementById("login-test-a").onclick = () =>
+      signInAsLocalTestIdentity("a").catch(e=>failLocal("test-user-a sign-in", e));
+    document.getElementById("login-test-b").onclick = () =>
+      signInAsLocalTestIdentity("b").catch(e=>failLocal("test-user-b sign-in", e));
+  }
   document.getElementById("login").onclick = () =>
     signInWithPopup(auth, new GoogleAuthProvider()).catch(e=>isLocalTest() ? failLocal("Auth sign-in", e) : alert(e.message));
 }
