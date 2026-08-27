@@ -6,6 +6,7 @@ firestore-debug.log*
 # Local dependencies and test output
 node_modules/
 coverage/
+dist/
 
 # Local environment files
 .env
