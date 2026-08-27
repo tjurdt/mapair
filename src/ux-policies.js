@@ -1,13 +1,18 @@
 export function isVisitReorderAvailable({
-  who = "all",
   categoryCount = 0,
   regionCount = 0,
   textSearch = "",
   tripId = "all",
   hasSpecificTrip = false
 } = {}) {
-  if (who !== "all" || categoryCount > 0 || regionCount > 0 || String(textSearch).trim()) return false;
+  if (categoryCount > 0 || regionCount > 0 || String(textSearch).trim()) return false;
   return tripId === "all" || hasSpecificTrip;
+}
+
+export function visitMatchesReorderScope({ tripId = "", participants = [] } = {}, { tripId: scopeTripId = "", participantId = "" } = {}) {
+  if (scopeTripId && tripId !== scopeTripId) return false;
+  if (participantId && !participants.includes(participantId)) return false;
+  return true;
 }
 
 export function ordinaryOccurrences(occurrences) {
@@ -42,6 +47,10 @@ export function resolveVisitMoveTarget(action, currentIndex, count) {
   return Number.isInteger(position) ? Math.max(0, Math.min(count - 1, position - 1)) : currentIndex;
 }
 
+export function shouldShowReorderControls(movableCount) {
+  return Number(movableCount) > 1;
+}
+
 export function shouldAutoFitViewport({ tripId = "all", regionCount = 0 } = {}) {
   return !(tripId !== "all" && tripId !== "daily" && regionCount > 0);
 }
@@ -52,5 +61,20 @@ export function placeSharedFields(place = {}) {
     level: place.level || "旅遊",
     rating: Number.isFinite(rating) && rating > 0 ? rating : 0,
     review: place.review || ""
+  };
+}
+
+export function layoutViewState({ map = false, filter = false, list = false } = {}, menuOpen = false) {
+  const mapHidden = !!map;
+  const filterHidden = !!filter;
+  const listHidden = !!list;
+  const contentHidden = filterHidden && listHidden;
+  return {
+    mapHidden,
+    filterHidden,
+    listHidden,
+    contentHidden,
+    menuOpen: !!menuOpen,
+    compactSidebar: !mapHidden && contentHidden && !menuOpen
   };
 }

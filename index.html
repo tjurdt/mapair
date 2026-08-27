@@ -79,7 +79,7 @@
   .ordbtn:hover{color:var(--ink)}
   .ordbtn:disabled{opacity:.3;cursor:default}
   .visitorder{display:flex;align-items:center;gap:2px;flex:0 0 auto}
-  .ordselect{width:52px;height:28px;padding:2px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink-soft);font-size:10px}
+  .ordselect{width:46px;height:28px;padding:1px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink-soft);font-size:10px}
   .daysep{font-family:"Fraunces",serif;font-size:13px;font-weight:600;color:var(--ink-soft);margin:12px 2px 6px;border-bottom:1px solid var(--line);padding-bottom:3px}
   .daynum{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:#efe9df;color:var(--ink-soft);font-size:11px;display:flex;align-items:center;justify-content:center}
   .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
@@ -152,6 +152,11 @@
   .layoutmenu.open{display:grid}
   .layoutmenu button{height:28px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:11px;text-align:center;padding:0 4px;white-space:nowrap}
   .layoutmenu button.off{color:var(--ink-soft);background:#faf8f4}
+  .wrap.map-hidden{grid-template-columns:0 minmax(0,1fr)}
+  .wrap.map-hidden .mapcol{width:0;overflow:hidden}
+  .wrap.content-hidden .tabs{display:none}
+  .wrap.layout-compact{grid-template-columns:minmax(0,1fr) 58px}
+  .wrap.layout-compact .layoutctl{padding:5px}
   .wrap.filter-hidden #filterbar{display:none}
   .wrap.list-hidden .search,.wrap.list-hidden .list{display:none!important}
 
@@ -198,9 +203,11 @@
   @media(max-width:760px){
     .wrap{grid-template-columns:1fr;grid-template-rows:34vh minmax(0,1fr);height:calc(100vh - 58px)}
     .side{border-left:none;border-top:1px solid var(--line)}
-    .wrap.map-hidden{grid-template-rows:0 minmax(0,1fr)}
-    .wrap.map-hidden .mapcol{height:0;overflow:hidden}
+    .wrap.map-hidden{grid-template-columns:1fr;grid-template-rows:0 minmax(0,1fr)}
+    .wrap.map-hidden .mapcol{width:auto;height:0;overflow:hidden}
+    .wrap.filter-hidden:not(.list-hidden):not(.map-hidden){grid-template-rows:42vh minmax(0,1fr)}
     .wrap.list-hidden:not(.map-hidden){grid-template-rows:minmax(0,1fr) auto}
+    .wrap.layout-compact{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
     .wrap.list-hidden .side{min-height:0}
     #maptop{left:10px;right:10px;gap:5px}
     #mapctl button{padding:0 5px;font-size:11px}

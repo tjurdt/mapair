@@ -7,11 +7,14 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
 import { resolveRuntimeConfig } from "./config.js";
 import {
   isVisitReorderAvailable,
+  layoutViewState,
   ordinaryOccurrences,
   placeSharedFields,
   reorderWithinSlots,
   resolveVisitMoveTarget,
-  shouldAutoFitViewport
+  shouldShowReorderControls,
+  shouldAutoFitViewport,
+  visitMatchesReorderScope
 } from "./ux-policies.js";
 
 /* ============================================================
@@ -155,6 +158,7 @@ let members = {};   // uid -> 顯示名稱(兩人)
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
+let layoutDismissController = null;
 let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
 let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
@@ -437,7 +441,6 @@ function sequenceLabels(){
 function visitReorderScope(){
   const tripId=specificTripId();
   const available=isVisitReorderAvailable({
-    who:filter.who,
     categoryCount:filter.cats.size,
     regionCount:filter.regions.length,
     textSearch:"",
@@ -445,7 +448,10 @@ function visitReorderScope(){
     hasSpecificTrip:!!tripId
   });
   if(!available) return null;
-  return tripId ? {type:"trip",tripId} : {type:"day"};
+  return {
+    tripId,
+    participantId:filter.who==="all"?"":filter.who
+  };
 }
 
 function fullDayOrdinaryOccurrences(date){
@@ -462,7 +468,10 @@ function fullDayOrdinaryOccurrences(date){
 function reorderableDayOccurrences(date,scope=visitReorderScope()){
   if(!scope) return [];
   const full=fullDayOrdinaryOccurrences(date);
-  return scope.type==="trip" ? full.filter(o=>o.v.tripId===scope.tripId) : full;
+  return full.filter(o=>visitMatchesReorderScope({
+    tripId:o.v.tripId,
+    participants:visitWhoUids(o.p,o.v)
+  },scope));
 }
 
 function boot(){
@@ -581,28 +590,49 @@ async function renderApp(){
 
   // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
   const wrapEl = document.querySelector(".wrap");
+  const layoutCtl = document.getElementById("layoutCtl");
   const layoutMenu = document.getElementById("layoutMenu");
   const layoutBtn = document.getElementById("layoutBtn");
-  const closeLayoutMenu = () => { layoutMenu.classList.remove("open"); layoutBtn.setAttribute("aria-expanded","false"); };
+  const resizeVisibleMap = () => {
+    if(map&&!layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"),50);
+  };
   const applyLayoutState = () => {
-    wrapEl.classList.toggle("map-hidden", layoutState.map);
-    wrapEl.classList.toggle("filter-hidden", layoutState.filter);
-    wrapEl.classList.toggle("list-hidden", layoutState.list);
+    const view=layoutViewState(layoutState,layoutMenu.classList.contains("open"));
+    wrapEl.classList.toggle("map-hidden",view.mapHidden);
+    wrapEl.classList.toggle("filter-hidden",view.filterHidden);
+    wrapEl.classList.toggle("list-hidden",view.listHidden);
+    wrapEl.classList.toggle("content-hidden",view.contentHidden);
+    wrapEl.classList.toggle("layout-menu-open",view.menuOpen);
+    wrapEl.classList.toggle("layout-compact",view.compactSidebar);
     [["toggleMap","map","地圖"],["toggleFilter","filter","篩選"],["toggleList","list","清單"]].forEach(([id,key,label])=>{
       const b=document.getElementById(id); if(!b) return;
       b.textContent = (layoutState[key] ? "○ " : "✓ ") + label;
       b.classList.toggle("off", layoutState[key]);
     });
-    if (map && !layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"), 50);
+    resizeVisibleMap();
+  };
+  const setLayoutMenuOpen = open => {
+    layoutMenu.classList.toggle("open",open);
+    layoutBtn.setAttribute("aria-expanded",String(open));
+    applyLayoutState();
   };
   layoutBtn.onclick = e => {
     e.stopPropagation();
-    const open=layoutMenu.classList.toggle("open");
-    e.currentTarget.setAttribute("aria-expanded",String(open));
+    setLayoutMenuOpen(!layoutMenu.classList.contains("open"));
   };
-  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); closeLayoutMenu(); };
-  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); closeLayoutMenu(); };
-  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); closeLayoutMenu(); };
+  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); };
+  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); };
+  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); };
+  layoutDismissController?.abort();
+  layoutDismissController=new AbortController();
+  document.addEventListener("click",e=>{
+    if(layoutMenu.classList.contains("open")&&!layoutCtl.contains(e.target)) setLayoutMenuOpen(false);
+  },{signal:layoutDismissController.signal});
+  document.addEventListener("keydown",e=>{
+    if(e.key==="Escape"&&layoutMenu.classList.contains("open")){
+      setLayoutMenuOpen(false); layoutBtn.focus();
+    }
+  },{signal:layoutDismissController.signal});
   applyLayoutState();
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
@@ -1331,7 +1361,7 @@ function renderList(){
     const label=labels?.get(occurrenceKey(o))||String(dayIdx);
     const reorderable=reorderScope && visitKind(o.v)==="visit" ? reorderableDayOccurrences(d,reorderScope) : [];
     const position=reorderable.findIndex(x=>x.p.id===o.p.id&&x.visitIndex===o.visitIndex)+1;
-    html+=o.fixed ? stayAnchorCardHTML(o,label,d) : visitCardHTML(o,label,d,position?{position,total:reorderable.length}:null);
+    html+=o.fixed ? stayAnchorCardHTML(o,label,d) : visitCardHTML(o,label,d,position&&shouldShowReorderControls(reorderable.length)?{position,total:reorderable.length}:null);
   });
   el.innerHTML=html; wireVisitCards(el);
   renderFilterChips();
@@ -1395,7 +1425,7 @@ function renderDayVisitList(el,date){
   const reorderable=reorderableDayOccurrences(date);
   html+=seq.map((o,i)=>{
     const position=reorderable.findIndex(x=>x.p.id===o.p.id&&x.visitIndex===o.visitIndex)+1;
-    return o.fixed?stayAnchorCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date):visitCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date,position?{position,total:reorderable.length}:null);
+    return o.fixed?stayAnchorCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date):visitCardHTML(o,labels.get(occurrenceKey(o))||String(i+1),date,position&&shouldShowReorderControls(reorderable.length)?{position,total:reorderable.length}:null);
   }).join("");
   el.innerHTML=html; wireVisitCards(el);
 }
@@ -1413,7 +1443,10 @@ async function moveVisitOccurrence(key,date,action){
   const [pid,idxRaw]=key.split(":"), idx=+idxRaw;
   const scope=visitReorderScope(); if(!scope) return;
   const regular=fullDayOrdinaryOccurrences(date);
-  const movable=o=>scope.type==="trip" ? o.v.tripId===scope.tripId : true;
+  const movable=o=>visitMatchesReorderScope({
+    tripId:o.v.tripId,
+    participants:visitWhoUids(o.p,o.v)
+  },scope);
   const candidates=regular.filter(movable);
   const i=candidates.findIndex(o=>o.p.id===pid && o.visitIndex===idx);
   const j=resolveVisitMoveTarget(action,i,candidates.length);

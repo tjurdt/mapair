@@ -3,11 +3,14 @@ import fs from "node:fs";
 import { resolveRuntimeConfig } from "../src/config.js";
 import {
   isVisitReorderAvailable,
+  layoutViewState,
   ordinaryOccurrences,
   placeSharedFields,
   reorderWithinSlots,
   resolveVisitMoveTarget,
-  shouldAutoFitViewport
+  shouldAutoFitViewport,
+  shouldShowReorderControls,
+  visitMatchesReorderScope
 } from "../src/ux-policies.js";
 
 const available = overrides => isVisitReorderAvailable({ tripId:"all", ...overrides });
@@ -15,7 +18,10 @@ assert.equal(available({}), true, "no-filter ordering is available");
 assert.equal(available({ from:"2024-04-01", to:"2024-04-30" }), true, "date-only ordering is available");
 assert.equal(available({ tripId:"trip-a", hasSpecificTrip:true }), true, "Trip-only ordering is available");
 assert.equal(available({ tripId:"trip-a", hasSpecificTrip:true, from:"2024-04-01" }), true, "Trip + date ordering is available");
-assert.equal(available({ who:"test-user-a" }), false, "participant filtering disables ordering");
+assert.equal(available({ who:"test-user-a" }), true, "participant-only ordering is available");
+assert.equal(available({ who:"test-user-a", from:"2024-04-01" }), true, "participant + date ordering is available");
+assert.equal(available({ who:"test-user-a", tripId:"trip-a", hasSpecificTrip:true }), true, "participant + Trip ordering is available");
+assert.equal(available({ who:"test-user-a", tripId:"trip-a", hasSpecificTrip:true, from:"2024-04-01" }), true, "participant + Trip + date ordering is available");
 assert.equal(available({ categoryCount:1 }), false, "category filtering disables ordering");
 assert.equal(available({ regionCount:1 }), false, "region filtering disables ordering");
 assert.equal(available({ textSearch:"station" }), false, "text search disables ordering");
@@ -32,11 +38,33 @@ const slotted = reorderWithinSlots([tripA1,nonTrip,tripA2], x=>x.v.tripId==="tri
 assert.deepEqual(slotted.map(x=>x.id), ["a2","x","a1"], "Trip visits exchange only their full-day slots");
 assert.equal(slotted[1], nonTrip, "hidden non-Trip visit stays in place");
 
+const participantA1 = { id:"participant-a1", v:{kind:"visit",tripId:"",who:["a"]} };
+const participantX = { id:"participant-x", v:{kind:"visit",tripId:"",who:["b"]} };
+const participantA2 = { id:"participant-a2", v:{kind:"visit",tripId:"",who:["a","b"]} };
+const participantScope = { participantId:"a", tripId:"" };
+const participantMovable = item => visitMatchesReorderScope({tripId:item.v.tripId,participants:item.v.who},participantScope);
+const participantSlotted = reorderWithinSlots([participantA1,participantX,participantA2],participantMovable,1,0);
+assert.deepEqual(participantSlotted.map(x=>x.id), ["participant-a2","participant-x","participant-a1"], "participant Visits exchange only participant slots");
+assert.equal(participantSlotted[1], participantX, "hidden participant Visit stays in place");
+assert.equal(visitMatchesReorderScope({participants:["a","b"]},{participantId:"a"}), true, "a both-participant Visit matches participant A");
+assert.equal(visitMatchesReorderScope({participants:["a","b"]},{participantId:"b"}), true, "a both-participant Visit matches participant B");
+
+const combinedA1 = { id:"combined-a1", v:{tripId:"trip-a",who:["a"]} };
+const wrongTrip = { id:"wrong-trip", v:{tripId:"trip-b",who:["a"]} };
+const wrongParticipant = { id:"wrong-participant", v:{tripId:"trip-a",who:["b"]} };
+const combinedA2 = { id:"combined-a2", v:{tripId:"trip-a",who:["a","b"]} };
+const combinedScope = { participantId:"a", tripId:"trip-a" };
+const combinedMovable = item => visitMatchesReorderScope({tripId:item.v.tripId,participants:item.v.who},combinedScope);
+const combinedSlotted = reorderWithinSlots([combinedA1,wrongTrip,wrongParticipant,combinedA2],combinedMovable,1,0);
+assert.deepEqual(combinedSlotted.map(x=>x.id), ["combined-a2","wrong-trip","wrong-participant","combined-a1"], "participant + Trip uses the intersection while preserving hidden slots");
+
 assert.equal(resolveVisitMoveTarget("first", 2, 4), 0);
 assert.equal(resolveVisitMoveTarget("last", 1, 4), 3);
 assert.equal(resolveVisitMoveTarget("2", 3, 4), 1);
 assert.equal(resolveVisitMoveTarget("up", 0, 4), 0);
 assert.equal(resolveVisitMoveTarget("down", 3, 4), 3);
+assert.equal(shouldShowReorderControls(1), false, "one movable Visit has no reorder controls");
+assert.equal(shouldShowReorderControls(2), true, "two movable Visits have reorder controls");
 
 assert.equal(shouldAutoFitViewport({ tripId:"trip-a", regionCount:0 }), true);
 assert.equal(shouldAutoFitViewport({ tripId:"trip-a", regionCount:1 }), false);
@@ -55,5 +83,17 @@ const localConfig=resolveRuntimeConfig("127.0.0.1", "?firebaseEnv=local");
 assert.equal(localConfig.firebase.projectId, "demo-mapair-local");
 assert.equal(localConfig.emulators.auth.url, "http://127.0.0.1:9099");
 assert.equal(localConfig.emulators.firestore.port, 8080);
+
+assert.deepEqual(layoutViewState({map:true,filter:false,list:false},false), {
+  mapHidden:true,filterHidden:false,listHidden:false,contentHidden:false,menuOpen:false,compactSidebar:false
+}, "desktop map-hidden state gives the side all available width");
+assert.equal(layoutViewState({map:false,filter:true,list:true},false).compactSidebar, true, "closed content-only sidebar is compact");
+assert.equal(layoutViewState({map:false,filter:true,list:true},true).compactSidebar, false, "opening the layout menu temporarily expands the sidebar");
+assert.equal(layoutViewState({map:false,filter:true,list:true},false).contentHidden, true, "both content areas hide tabs and empty side content");
+const indexHtml=fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
+assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
+assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
+assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:1fr;grid-template-rows:minmax\(0,1fr\) auto\}/,"mobile compact state expands the map vertically");
 
 console.log("ux-policies assertions passed");
