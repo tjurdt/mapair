@@ -1,0 +1,407 @@
+{
+  "fixtureVersion": 1,
+  "spaceId": "test-space-baseline",
+  "meta": {
+    "config": {
+      "categories": [
+        "測試交通",
+        "測試散步",
+        "測試餐飲",
+        "測試住宿",
+        "測試舊分類",
+        "測試願望"
+      ],
+      "members": {
+        "test-user-a": "測試使用者甲",
+        "test-user-b": "測試使用者乙"
+      },
+      "nicknames": {
+        "test-user-a": "測試甲",
+        "test-user-b": "測試乙"
+      },
+      "catColors": {
+        "測試交通": "#3f7d78",
+        "測試散步": "#6b8fb2",
+        "測試餐飲": "#d98b3f",
+        "測試住宿": "#b25b6b",
+        "測試舊分類": "#7a7a7a",
+        "測試願望": "#8f6bb2"
+      },
+      "levelColors": {
+        "居住": "#7b2d3a",
+        "住宿": "#b25b6b",
+        "旅遊": "#d98b3f",
+        "接地": "#6f9c94",
+        "經過": "#c3d0cb"
+      }
+    }
+  },
+  "trips": [
+    {
+      "id": "trip-test-multiday",
+      "data": {
+        "name": "測試多日旅行",
+        "emoji": "🧭",
+        "startDate": "2024-04-10",
+        "endDate": "2024-04-12",
+        "color": "#3f7d78",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-02T00:00:00.000Z"
+        }
+      }
+    }
+  ],
+  "places": [
+    {
+      "id": "place-test-station",
+      "data": {
+        "name": "測試車站",
+        "lat": 25.0501,
+        "lng": 121.5501,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "接地",
+        "rating": 4.5,
+        "review": "測試共用評論：每次造訪都應看到同一段文字。",
+        "visits": [
+          {
+            "id": "visit-test-station-daily",
+            "kind": "visit",
+            "date": "2024-03-01",
+            "endDate": "",
+            "tripId": "",
+            "category": "測試散步",
+            "who": [
+              "test-user-a"
+            ],
+            "order": 1
+          },
+          {
+            "id": "visit-test-station-trip",
+            "kind": "visit",
+            "date": "2024-04-11",
+            "endDate": "",
+            "tripId": "trip-test-multiday",
+            "category": "測試交通",
+            "who": [
+              "test-user-a",
+              "test-user-b"
+            ],
+            "order": 1
+          }
+        ],
+        "visitedOn": "2024-04-11",
+        "tripId": "trip-test-multiday",
+        "categories": [
+          "測試交通"
+        ],
+        "who": [
+          "test-user-a",
+          "test-user-b"
+        ],
+        "whoMode": "both",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-03T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-park",
+      "data": {
+        "name": "測試公園",
+        "lat": 25.0502,
+        "lng": 121.5502,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "旅遊",
+        "rating": null,
+        "review": "",
+        "visits": [
+          {
+            "id": "visit-test-park-trip-day1",
+            "kind": "visit",
+            "date": "2024-04-10",
+            "endDate": "",
+            "tripId": "trip-test-multiday",
+            "category": "測試散步",
+            "who": [
+              "test-user-b"
+            ],
+            "order": 1
+          },
+          {
+            "id": "visit-test-park-trip-day2",
+            "kind": "visit",
+            "date": "2024-04-11",
+            "endDate": "",
+            "tripId": "trip-test-multiday",
+            "category": "測試散步",
+            "who": [
+              "test-user-b"
+            ],
+            "order": 2
+          }
+        ],
+        "visitedOn": "2024-04-11",
+        "tripId": "trip-test-multiday",
+        "categories": [
+          "測試散步"
+        ],
+        "who": [
+          "test-user-b"
+        ],
+        "whoMode": "partner",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-04T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-cafe",
+      "data": {
+        "name": "測試咖啡店",
+        "lat": 25.0503,
+        "lng": 121.5503,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "旅遊",
+        "rating": 3.5,
+        "review": "測試單次造訪評論。",
+        "visits": [
+          {
+            "id": "visit-test-cafe-trip-day2",
+            "kind": "visit",
+            "date": "2024-04-11",
+            "endDate": "",
+            "tripId": "trip-test-multiday",
+            "category": "測試餐飲",
+            "who": [
+              "test-user-a"
+            ],
+            "order": 3
+          }
+        ],
+        "visitedOn": "2024-04-11",
+        "tripId": "trip-test-multiday",
+        "categories": [
+          "測試餐飲"
+        ],
+        "who": [
+          "test-user-a"
+        ],
+        "whoMode": "me",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-05T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-hotel",
+      "data": {
+        "name": "測試旅館",
+        "lat": 25.0504,
+        "lng": 121.5504,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "住宿",
+        "rating": 4,
+        "review": "測試住宿評論。",
+        "visits": [
+          {
+            "id": "visit-test-hotel-stay",
+            "kind": "stay",
+            "date": "2024-04-10",
+            "endDate": "2024-04-12",
+            "tripId": "trip-test-multiday",
+            "category": "測試住宿",
+            "who": [
+              "test-user-a",
+              "test-user-b"
+            ]
+          }
+        ],
+        "visitedOn": "2024-04-10",
+        "tripId": "trip-test-multiday",
+        "categories": [
+          "測試住宿"
+        ],
+        "who": [
+          "test-user-a",
+          "test-user-b"
+        ],
+        "whoMode": "both",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-06T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-wishlist",
+      "data": {
+        "name": "測試願望塔",
+        "lat": 25.0505,
+        "lng": 121.5505,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "wishlist",
+        "level": "經過",
+        "rating": null,
+        "review": "測試願望清單文字。",
+        "visits": [],
+        "visitedOn": "",
+        "tripId": "",
+        "categories": [
+          "測試願望"
+        ],
+        "who": [
+          "test-user-a",
+          "test-user-b"
+        ],
+        "whoMode": "both",
+        "ord": 10,
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-07T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-legacy-no-created-at",
+      "data": {
+        "name": "測試舊資料點",
+        "lat": 25.0506,
+        "lng": 121.5506,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "經過",
+        "rating": 2.5,
+        "review": "測試舊格式評論。",
+        "visits": [],
+        "visitedOn": "2023-12-15",
+        "tripId": "",
+        "categories": [
+          "測試舊分類"
+        ],
+        "who": [
+          "test-user-b"
+        ],
+        "whoMode": "partner",
+        "createdBy": "test-user-a",
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    },
+    {
+      "id": "place-test-dangling-trip",
+      "data": {
+        "name": "測試斷鏈碼頭",
+        "lat": 25.0507,
+        "lng": 121.5507,
+        "source": "map",
+        "extId": null,
+        "admin": {
+          "country": "台灣",
+          "county": "臺北市",
+          "city": "松山區"
+        },
+        "status": "visited",
+        "level": "接地",
+        "rating": null,
+        "review": "測試不存在旅行參照。",
+        "visits": [
+          {
+            "id": "visit-test-dangling-trip",
+            "kind": "visit",
+            "date": "2024-05-20",
+            "endDate": "",
+            "tripId": "trip-test-missing",
+            "category": "測試交通",
+            "who": [
+              "test-user-b"
+            ],
+            "order": 1
+          }
+        ],
+        "visitedOn": "2024-05-20",
+        "tripId": "trip-test-missing",
+        "categories": [
+          "測試交通"
+        ],
+        "who": [
+          "test-user-b"
+        ],
+        "whoMode": "partner",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-08T00:00:00.000Z"
+        },
+        "countyCode": "63000",
+        "townCode": "63000010",
+        "villCode": "63000010018"
+      }
+    }
+  ]
+}
