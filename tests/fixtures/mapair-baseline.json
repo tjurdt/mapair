@@ -58,8 +58,8 @@
       "id": "place-test-station",
       "data": {
         "name": "測試車站",
-        "lat": 25.0501,
-        "lng": 121.5501,
+        "lat": 25.049626,
+        "lng": 121.570413,
         "source": "map",
         "extId": null,
         "admin": {
@@ -122,14 +122,14 @@
       "id": "place-test-park",
       "data": {
         "name": "測試公園",
-        "lat": 25.0502,
-        "lng": 121.5502,
+        "lat": 25.112001,
+        "lng": 121.46707,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
           "county": "臺北市",
-          "city": "松山區"
+          "city": "北投區"
         },
         "status": "visited",
         "level": "旅遊",
@@ -176,22 +176,22 @@
           "iso": "2024-01-04T00:00:00.000Z"
         },
         "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "townCode": "63000120",
+        "villCode": "63000120038"
       }
     },
     {
       "id": "place-test-cafe",
       "data": {
         "name": "測試咖啡店",
-        "lat": 25.0503,
-        "lng": 121.5503,
+        "lat": 24.172362,
+        "lng": 120.661344,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
-          "county": "臺北市",
-          "city": "松山區"
+          "county": "臺中市",
+          "city": "西屯區"
         },
         "status": "visited",
         "level": "旅遊",
@@ -225,23 +225,23 @@
           "__type": "firestore-timestamp",
           "iso": "2024-01-05T00:00:00.000Z"
         },
-        "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "countyCode": "66000",
+        "townCode": "66000060",
+        "villCode": "66000060014"
       }
     },
     {
       "id": "place-test-hotel",
       "data": {
         "name": "測試旅館",
-        "lat": 25.0504,
-        "lng": 121.5504,
+        "lat": 24.245344,
+        "lng": 121.32675,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
-          "county": "臺北市",
-          "city": "松山區"
+          "county": "臺中市",
+          "city": "和平區"
         },
         "status": "visited",
         "level": "住宿",
@@ -276,23 +276,23 @@
           "__type": "firestore-timestamp",
           "iso": "2024-01-06T00:00:00.000Z"
         },
-        "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "countyCode": "66000",
+        "townCode": "66000290",
+        "villCode": "66000290008"
       }
     },
     {
       "id": "place-test-wishlist",
       "data": {
         "name": "測試願望塔",
-        "lat": 25.0505,
-        "lng": 121.5505,
+        "lat": 22.681743,
+        "lng": 120.289586,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
-          "county": "臺北市",
-          "city": "松山區"
+          "county": "高雄市",
+          "city": "左營區"
         },
         "status": "wishlist",
         "level": "經過",
@@ -315,23 +315,23 @@
           "__type": "firestore-timestamp",
           "iso": "2024-01-07T00:00:00.000Z"
         },
-        "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "countyCode": "64000",
+        "townCode": "64000030",
+        "villCode": "64000030025"
       }
     },
     {
       "id": "place-test-legacy-no-created-at",
       "data": {
         "name": "測試舊資料點",
-        "lat": 25.0506,
-        "lng": 121.5506,
+        "lat": 24.053794,
+        "lng": 120.442854,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
-          "county": "臺北市",
-          "city": "松山區"
+          "county": "彰化縣",
+          "city": "鹿港鎮"
         },
         "status": "visited",
         "level": "經過",
@@ -348,23 +348,23 @@
         ],
         "whoMode": "partner",
         "createdBy": "test-user-a",
-        "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "countyCode": "10007",
+        "townCode": "10007020",
+        "villCode": "10007020031"
       }
     },
     {
       "id": "place-test-dangling-trip",
       "data": {
         "name": "測試斷鏈碼頭",
-        "lat": 25.0507,
-        "lng": 121.5507,
+        "lat": 24.675494,
+        "lng": 121.773634,
         "source": "map",
         "extId": null,
         "admin": {
           "country": "台灣",
-          "county": "臺北市",
-          "city": "松山區"
+          "county": "宜蘭縣",
+          "city": "羅東鎮"
         },
         "status": "visited",
         "level": "接地",
@@ -398,9 +398,9 @@
           "__type": "firestore-timestamp",
           "iso": "2024-01-08T00:00:00.000Z"
         },
-        "countyCode": "63000",
-        "townCode": "63000010",
-        "villCode": "63000010018"
+        "countyCode": "10002",
+        "townCode": "10002020",
+        "villCode": "10002020004"
       }
     }
   ]
