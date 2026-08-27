@@ -21,6 +21,8 @@
 
   header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--ink);color:#fff}
   header .title{font-size:20px;font-weight:600;font-family:"Fraunces",serif}
+  .localtest-badge{display:inline-flex;align-items:center;border:2px solid #fff;border-radius:999px;background:#b23b3b;color:#fff;padding:3px 8px;font-size:11px;font-weight:700;letter-spacing:.08em;white-space:nowrap}
+  .gate .localtest-badge{margin-bottom:12px;border-color:#b23b3b}
   header .spacer{flex:1}
   header .who{font-size:13px;opacity:.85}
   .btn{border:none;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500;background:var(--us);color:#fff}
@@ -237,10 +239,10 @@
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
-         onSnapshot, query, orderBy, arrayUnion, serverTimestamp }
+         onSnapshot, query, orderBy, arrayUnion, serverTimestamp, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 
 /* ============================================================
@@ -264,6 +266,49 @@ const CONFIG = {
 };
 
 /* 分類無預設,使用者自行新增,存在共享的 meta/config,兩人共用 */
+const LOCAL_TEST_CONFIG = {
+  firebase: {
+    apiKey: "fake-local-api-key",
+    authDomain: "demo-mapair-local.localhost",
+    projectId: "demo-mapair-local",
+    storageBucket: "demo-mapair-local.localhost",
+    messagingSenderId: "000000000000",
+    appId: "1:000000000000:web:localtest"
+  },
+  spaceId: "test-space-baseline"
+};
+let runtimeMode = null, activeFirebaseConfig = null, activeSpaceId = null, localFailure = false;
+
+function resolveRuntimeMode(){
+  const localHost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  const values = new URLSearchParams(location.search).getAll("firebaseEnv");
+  if (values.length){
+    if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
+    if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
+    return "local";
+  }
+  if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
+  return "production";
+}
+function isLocalTest(){ return runtimeMode === "local"; }
+function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
+function showRuntimeFatal(message, showLocalBadge=false){
+  window.__fatal(message);
+  if (showLocalBadge || isLocalTest()){
+    const panel = document.querySelector("#app > div");
+    if (panel) panel.insertAdjacentHTML("afterbegin", `<div style="margin-bottom:12px"><span class="localtest-badge">LOCAL TEST</span></div>`);
+  }
+}
+function failLocal(area, error){
+  if (!isLocalTest()) return;
+  localFailure = true;
+  showRuntimeFatal(`LOCAL TEST ${area} failed. No production fallback was attempted.\n${error?.message || error}`, true);
+}
+function handleFirestoreError(area, error){
+  if (isLocalTest()) failLocal(`Firestore ${area}`, error);
+  else console.error(`Firestore ${area} listener failed:`, error);
+}
+
 let spaceCats = [];
 
 /* 造訪深度:由淺到深(index 越大越深),染色時每個行政區取「最深」 */
@@ -624,25 +669,32 @@ function sequenceLabels(){
 
 function boot(){
   document.getElementById("app").innerHTML =
-    `<div class="center"><div class="gate"><p style="color:var(--ink-soft)">連線中…</p></div></div>`;
+    `<div class="center"><div class="gate">${localBadge()}<p style="color:var(--ink-soft)">連線中…</p></div></div>`;
   try {
-    const app = initializeApp(CONFIG.firebase);
+    const app = initializeApp(activeFirebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    if (isLocalTest()){
+      try {
+        connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings:true });
+        connectFirestoreEmulator(db, "127.0.0.1", 8080);
+      } catch(e){ failLocal("emulator connection setup", e); return; }
+    }
     onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); },
-      err => window.__fatal("Firebase Auth 錯誤:" + err.message));
-  } catch(e){ window.__fatal("Firebase 初始化失敗:" + e.message); }
+      err => isLocalTest() ? failLocal("Auth", err) : window.__fatal("Firebase Auth 錯誤:" + err.message));
+  } catch(e){ isLocalTest() ? failLocal("Firebase initialization", e) : window.__fatal("Firebase 初始化失敗:" + e.message); }
 }
 
 function renderGate(){
   document.getElementById("app").innerHTML = `
   <div class="center"><div class="gate">
+    ${localBadge()}
     <h1>我們去過的地方</h1>
     <p>一起記錄去過哪、在那邊做了什麼、彼此的感想,<br>再規劃下一趟。</p>
     <button class="btn" id="login" style="margin-top:16px;padding:12px 22px">用 Google 登入</button>
   </div></div>`;
   document.getElementById("login").onclick = () =>
-    signInWithPopup(auth, new GoogleAuthProvider()).catch(e=>alert(e.message));
+    signInWithPopup(auth, new GoogleAuthProvider()).catch(e=>isLocalTest() ? failLocal("Auth sign-in", e) : alert(e.message));
 }
 
 /* ============================================================
@@ -652,6 +704,7 @@ async function renderApp(){
   document.getElementById("app").innerHTML = `
     <header>
       <span class="title">我們去過的地方</span>
+      ${localBadge()}
       <span class="spacer"></span>
       <span class="who">${user.displayName||user.email}</span>
       <button class="btn ghost mini" id="logout">登出</button>
@@ -763,7 +816,8 @@ async function renderApp(){
   };
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
-  setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true }).catch(()=>{});
+  setDoc(metaDoc(), { members: { [user.uid]: me() } }, { merge:true })
+    .catch(e => isLocalTest() ? failLocal("initial member write", e) : undefined);
 
   document.getElementById("fl_more").onclick = e => {
     const p = document.getElementById("filterPanel");
@@ -1013,19 +1067,22 @@ async function initMap(){
 
 /* ---------- Firestore 即時同步 ---------- */
 function subscribe(){
-  const base = ["spaces", CONFIG.spaceId];
+  const base = ["spaces", activeSpaceId];
   onSnapshot(query(collection(db, ...base, "places"), orderBy("createdAt","desc")), snap => {
+    if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     if (choroLevel !== "off") setChoro(choroLevel);
-  });
+  }, error => handleFirestoreError("places", error));
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
+    if (localFailure) return;
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     refreshFilterUI();
     if (choroLevel !== "off") setChoro(choroLevel);
-  });
+  }, error => handleFirestoreError("trips", error));
   onSnapshot(metaDoc(), s => {
+    if (localFailure) return;
     const d = s.data() || {};
     spaceCats = d.categories || [];
     members   = d.members || {};
@@ -1035,13 +1092,13 @@ function subscribe(){
     refreshFilterUI();
     renderList(); renderMarkers(); renderMarkerLegend();
     if (choroLevel !== "off") setChoro(choroLevel);
-  });
+  }, error => handleFirestoreError("meta/config", error));
 }
-const metaDoc   = () => doc(db, "spaces", CONFIG.spaceId, "meta", "config");
-const placesCol = () => collection(db, "spaces", CONFIG.spaceId, "places");
-const placeDoc  = id => doc(db, "spaces", CONFIG.spaceId, "places", id);
-const tripsCol  = () => collection(db, "spaces", CONFIG.spaceId, "trips");
-const tripDoc   = id => doc(db, "spaces", CONFIG.spaceId, "trips", id);
+const metaDoc   = () => doc(db, "spaces", activeSpaceId, "meta", "config");
+const placesCol = () => collection(db, "spaces", activeSpaceId, "places");
+const placeDoc  = id => doc(db, "spaces", activeSpaceId, "places", id);
+const tripsCol  = () => collection(db, "spaces", activeSpaceId, "trips");
+const tripDoc   = id => doc(db, "spaces", activeSpaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
 function whoColor(p){
@@ -2002,8 +2059,15 @@ function me(){ return user.displayName || user.email || "我"; }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 /* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
-if (!CONFIG.firebase.projectId || !CONFIG.google.apiKey) renderSetup();
-else boot();
+try {
+  runtimeMode = resolveRuntimeMode();
+  activeFirebaseConfig = isLocalTest() ? LOCAL_TEST_CONFIG.firebase : CONFIG.firebase;
+  activeSpaceId = isLocalTest() ? LOCAL_TEST_CONFIG.spaceId : CONFIG.spaceId;
+  if (!activeFirebaseConfig.projectId || !CONFIG.google.apiKey) renderSetup();
+  else boot();
+} catch(e){
+  showRuntimeFatal(`Firebase environment safety check failed.\n${e.message}`, true);
+}
 </script>
 </body>
 </html>
