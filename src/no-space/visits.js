@@ -1,4 +1,4 @@
-import { averageSubmittedRating } from "./contributions.js";
+import { averageSubmittedRating, participantContributions } from "./contributions.js";
 import { personalOrderPositions } from "./day-order.js";
 
 export function knownParticipantUserIds(currentUserId, visits=[], trips=[]){
@@ -20,11 +20,11 @@ export function projectNoSpaceRuntime({
   const grouped = {};
   for (const visit of visits){
     const objective = placesById[visit.placeId] || {};
-    const contributions = contributionsByVisitId[visit.id] || {};
+    const contributions = participantContributions(contributionsByVisitId[visit.id],visit.participantUserIds);
     if (!grouped[visit.placeId]){
       grouped[visit.placeId] = {
         id:visit.placeId,
-        name:objective.name || visit.placeName || "Unknown place",
+        name:objective.name || "Unknown place",
         ...objective,
         visits:[],
         _noSpace:true

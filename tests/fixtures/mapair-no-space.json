@@ -24,6 +24,7 @@
     { "path": "visits/visit-test-no-space-shared-abc/contributions/test-user-a", "data": { "rating": 4.5, "memory": "A 記得窗邊的晚餐。", "level": "深入", "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-04T00:00:00.000Z" } } },
     { "path": "visits/visit-test-no-space-shared-abc/contributions/test-user-b", "data": { "rating": 3.5, "memory": "B 覺得甜點最好吃。", "level": "旅遊", "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-04T00:00:00.000Z" } } },
     { "path": "visits/visit-test-no-space-shared-abc/contributions/test-user-c", "data": { "rating": null, "memory": "C 只留下回憶，尚未評分。", "level": "路過", "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-04T00:00:00.000Z" } } },
+    { "path": "visits/visit-test-no-space-shared-abc/contributions/test-user-d", "data": { "rating": 5, "memory": "已不在目前參與者名單中的舊內容。", "level": "深入", "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-04T00:00:00.000Z" } } },
 
     { "path": "users/test-user-a/dayOrders/2026-08-02", "data": { "visitIds": ["visit-test-no-space-shared-abc", "visit-test-no-space-shared-ab", "visit-test-no-space-same-day-a"], "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-05T00:00:00.000Z" } } },
     { "path": "users/test-user-b/dayOrders/2026-08-02", "data": { "visitIds": ["visit-test-no-space-shared-ab", "visit-test-no-space-shared-abc"], "updatedAt": { "__type": "firestore-timestamp", "iso": "2026-02-05T00:00:00.000Z" } } }

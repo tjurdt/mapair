@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   averageSubmittedRating,
+  participantContributions,
   replaceOwnContribution
 } from "../src/no-space/contributions.js";
 import {
@@ -26,9 +27,10 @@ import {
   placeObjectiveFields,
   visitSharedFields
 } from "../src/no-space/schema.js";
-import { applyTripDefaultsToNewVisit, updateTripDefaults } from "../src/no-space/trips.js";
+import { applyTripDefaultsToNewVisit, tripReferenceState, updateTripDefaults } from "../src/no-space/trips.js";
+import { externalPlaceDocumentId, selectExactExternalPlace } from "../src/no-space/places.js";
 import { knownParticipantUserIds, projectNoSpaceRuntime } from "../src/no-space/visits.js";
-import { noSpacePaths } from "../src/no-space/repository.js";
+import { createNoSpaceRepository, noSpacePaths } from "../src/no-space/repository.js";
 
 const A = "test-user-a", B = "test-user-b", C = "test-user-c";
 const shared = { id:"visit-shared", date:"2026-08-02", participantUserIds:[A,B], createdBy:A };
@@ -57,6 +59,12 @@ const afterA = replaceOwnContribution(initialContributions, A, { rating:5, memor
 assert.deepEqual(afterA[B], initialContributions[B]);
 assert.deepEqual(afterA[C], initialContributions[C]);
 assert.notStrictEqual(afterA, initialContributions);
+const currentParticipantOnly=participantContributions({
+  [A]:{rating:4.5,memory:"A"},[B]:{rating:3.5,memory:"B"},[C]:{rating:5,memory:"C dormant"}
+},[A,B]);
+assert.deepEqual(Object.keys(currentParticipantOnly),[A,B]);
+assert.equal(averageSubmittedRating(Object.values(currentParticipantOnly)),4);
+assert.equal(Object.hasOwn(currentParticipantOnly,C),false,"removed participant memory must not be exposed");
 
 /* D. personal day order */
 const visits = [
@@ -94,6 +102,9 @@ const historical = { ...created, id:"historical" };
 const changedTrip = updateTripDefaults(trip, [A,B], A);
 assert.deepEqual(changedTrip.participantUserIds, [A,B]);
 assert.deepEqual(historical.participantUserIds, [A,B,C], "Trip default changes cannot rewrite existing Visits");
+assert.deepEqual(tripReferenceState("",{"trip-1":trip}),{kind:"daily",trip:null});
+assert.equal(tripReferenceState("trip-1",{"trip-1":trip}).kind,"active");
+assert.deepEqual(tripReferenceState("deleted-trip",{"trip-1":trip}),{kind:"missing",trip:null});
 
 /* F. No clock-time contract + objective Place audit */
 const visitShape = visitSharedFields({
@@ -101,6 +112,9 @@ const visitShape = visitSharedFields({
   tripId:null, kind:"visit", createdBy:A
 });
 assert.deepEqual(findForbiddenClockFields(visitShape), []);
+assert.throws(()=>visitSharedFields({...visitShape,placeId:""}),/placeId must be a non-empty/);
+assert.throws(()=>visitSharedFields({...visitShape,placeId:"   "}),/placeId must be a non-empty/);
+assert.throws(()=>visitSharedFields({...visitShape,placeId:"places/other"}),/not a valid Firestore document ID/);
 assert.throws(() => assertNoClockFields({ startTime:"14:30" }), /forbidden clock-time/);
 assert.throws(() => visitSharedFields({ ...visitShape, time:"14:30" }), /forbidden clock-time/);
 const objective = placeObjectiveFields({ name:"Cafe", lat:25, lng:121, rating:5, review:"subjective", level:"deep", visits:[visitShape] });
@@ -118,13 +132,102 @@ const projected = projectNoSpaceRuntime({
     { ...shared, id:"visit-repeat", placeId:"place-1", date:"2026-08-04", category:"Dinner" }
   ],
   placesById:{ "place-1":{ name:"Same place", lat:25, lng:121 } },
-  contributionsByVisitId:{ "visit-repeat":{ [A]:{rating:4.5,level:"deep"}, [B]:{rating:3.5} } },
+  contributionsByVisitId:{ "visit-repeat":{ [A]:{rating:4.5,level:"deep"}, [B]:{rating:3.5}, [C]:{rating:5,memory:"dormant"} } },
   dayOrdersByDate:{}
 });
 assert.equal(Object.keys(projected).length, 1);
 assert.equal(projected["place-1"].visits.length, 2);
 assert.equal(projected["place-1"].visits[1]._averageRating, 4);
+assert.equal(Object.hasOwn(projected["place-1"].visits[1]._contributions,C),false);
 assert.deepEqual(knownParticipantUserIds(A, [shared], [trip]), [A,B,C]);
+
+/* Exact external Place identity is deterministic and does not enumerate Places. */
+const googlePlace={source:"google",extId:"ChIJ/example",name:"Example"};
+assert.equal(externalPlaceDocumentId(googlePlace),externalPlaceDocumentId({...googlePlace,name:"Renamed input"}));
+assert.match(externalPlaceDocumentId(googlePlace),/^ext-[a-f0-9]+-[a-f0-9]+$/);
+assert.equal(externalPlaceDocumentId({source:"map",extId:null}),null,"custom points keep independent auto IDs");
+assert.equal(selectExactExternalPlace([
+  {id:"z",source:"google",extId:"other"},
+  {id:"b",source:"google",extId:googlePlace.extId},
+  {id:"a",source:"google",extId:googlePlace.extId}
+],googlePlace).id,"a","pre-existing exact matches are reused deterministically");
+{
+  const db={}; let addedVisit=null,transactionCalls=0;
+  const repository=createNoSpaceRepository({db,uid:A,firestore:{
+    collection:(base,...segments)=>({path:segments.join("/")}),
+    doc:(base,...segments)=>segments.length?{path:segments.join("/"),id:segments.at(-1)}:{path:`${base.path}/auto`,id:"auto"},
+    query:(...parts)=>({type:"query",parts}),where:(...parts)=>({type:"where",parts}),limit:value=>({type:"limit",value}),
+    getDocs:async()=>({docs:[{id:"existing-global-place",data:()=>googlePlace}]}),
+    addDoc:async(collectionRef,data)=>{addedVisit={collectionRef,data};return{id:"visit-created"};},
+    runTransaction:async()=>{transactionCalls++;},serverTimestamp:()=>({stamp:true}),
+    writeBatch(){},deleteDoc(){},onSnapshot(){},setDoc(){},updateDoc(){}
+  }});
+  const created=await repository.createPlaceAndVisit({...googlePlace,lat:25,lng:121},{
+    placeId:"",date:"2026-08-07",category:"Cafe",participantUserIds:[A],tripId:null,kind:"visit",endDate:""
+  });
+  assert.equal(created.placeId,"existing-global-place");
+  assert.equal(addedVisit.data.placeId,"existing-global-place");
+  assert.equal(transactionCalls,0,"an exact pre-existing Place must be reused without creating another Place");
+}
+{
+  const db={}; const transactionSets=[];
+  const repository=createNoSpaceRepository({db,uid:A,firestore:{
+    collection:(base,...segments)=>({path:segments.join("/")}),
+    doc:(base,...segments)=>segments.length?{path:segments.join("/"),id:segments.at(-1)}:{path:`${base.path}/visit-auto`,id:"visit-auto"},
+    query:(...parts)=>({type:"query",parts}),where:(...parts)=>({type:"where",parts}),limit:value=>({type:"limit",value}),
+    getDocs:async()=>({docs:[]}),addDoc(){},serverTimestamp:()=>({stamp:true}),writeBatch(){},deleteDoc(){},onSnapshot(){},setDoc(){},updateDoc(){},
+    runTransaction:async(dbArg,callback)=>callback({
+      get:async()=>({exists:()=>false}),
+      set:(reference,data)=>transactionSets.push({reference,data})
+    })
+  }});
+  const created=await repository.createPlaceAndVisit({...googlePlace,lat:25,lng:121},{
+    placeId:"",date:"2026-08-07",category:"Cafe",participantUserIds:[A],tripId:null,kind:"visit",endDate:""
+  });
+  assert.equal(created.placeId,externalPlaceDocumentId(googlePlace));
+  assert.deepEqual(transactionSets.map(item=>item.reference.path),[
+    `places/${externalPlaceDocumentId(googlePlace)}`,
+    "visits/visit-auto"
+  ]);
+}
+
+/* Creator deletion atomically queues every contribution and then the Visit. */
+{
+  const deletes=[]; let commits=0, contributionReads=0;
+  let contributionDocs=[
+    {ref:{path:"visits/visit-delete/contributions/a"}},
+    {ref:{path:"visits/visit-delete/contributions/b"}}
+  ];
+  const db={};
+  const repository=createNoSpaceRepository({db,uid:A,firestore:{
+    addDoc(){}, deleteDoc(){}, limit:value=>({type:"limit",value}), onSnapshot(){}, query:(...parts)=>({type:"query",parts}),
+    runTransaction(){}, serverTimestamp:()=>({stamp:true}), setDoc(){}, updateDoc(){}, where:(...parts)=>({type:"where",parts}),
+    collection:(base,...segments)=>({path:segments.join("/")}),
+    doc:(base,...segments)=>({path:segments.join("/"),id:segments.at(-1)}),
+    getDocs:async target=>{
+      contributionReads++;
+      assert.equal(target.path,"visits/visit-delete/contributions");
+      return {docs:contributionDocs};
+    },
+    writeBatch:()=>({
+      delete:reference=>deletes.push(reference.path), set(){},
+      commit:async()=>{commits++;}
+    })
+  }});
+  await repository.deleteVisit("visit-delete",{createdBy:A});
+  assert.equal(contributionReads,1);
+  assert.deepEqual(deletes,[
+    "visits/visit-delete/contributions/a",
+    "visits/visit-delete/contributions/b",
+    "visits/visit-delete"
+  ]);
+  assert.equal(commits,1);
+  await assert.rejects(()=>repository.deleteVisit("visit-delete",{createdBy:B}),/only the Visit creator/i);
+  contributionDocs=Array.from({length:500},(_,index)=>({ref:{path:`visits/visit-delete/contributions/${index}`}}));
+  await assert.rejects(()=>repository.deleteVisit("visit-delete",{createdBy:A}),/more than 499 contributions/i);
+  assert.equal(commits,1,"an oversized cascade must stop before committing a partial deletion");
+  assert.throws(()=>repository.setContribution("visit-delete",{rating:4},{participantUserIds:[B]}),/current Visit participant/i);
+}
 
 /* Centralized paths never point back into spaces/{spaceId}. */
 for (const path of [
@@ -134,8 +237,11 @@ for (const path of [
 
 /* UI contract: the No-Space editor must not render a clock-time input. */
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
+const repositorySource=await readFile(new URL("../src/no-space/repository.js",import.meta.url),"utf8");
 assert.equal(/type=["']time["']/.test(mainSource), false);
 assert.match(mainSource, /isNoSpace\(\) \? "我的足跡" : "我們去過的地方"/);
+assert.match(mainSource,/if \(filter\.tripId === "daily"\) return !v\.tripId/,"dangling Trip references are not mislabeled as Daily");
+assert.match(mainSource,/已刪除旅程/,"dangling Trip references need an explicit label");
 for (const [start,end] of [
   ["function openNoSpaceVisitEditor", "function openEditor"],
   ["function subscribeNoSpace", "function syncNoSpaceReferenceGroup"],
@@ -149,5 +255,16 @@ for (const [start,end] of [
 const fixture=JSON.parse(await readFile(new URL("./fixtures/mapair-no-space.json",import.meta.url),"utf8"));
 assert.deepEqual(findForbiddenClockFields(fixture),[]);
 assert.equal(fixture.documents.some(document=>document.path.startsWith("spaces/")),false);
+const editorBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceVisitEditor"),mainSource.indexOf("function openEditor",mainSource.indexOf("function openNoSpaceVisitEditor")+1));
+assert.match(editorBlock,/const allowNewPlace=creating&&!selectedPlaceId/);
+assert.match(editorBlock,/if\(rawVisit&&!selectedPlaceId\)/);
+assert.doesNotMatch(editorBlock,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");
+assert.doesNotMatch(editorBlock,/placeName/,"Visit writes must not create a competing Place-name override");
+assert.doesNotMatch(repositorySource,/\bupdatePlace\(/,"Phase A exposes no general global Place mutation method");
+assert.match(repositorySource,/where\("extId","==",identity\.extId\)/,"external Place reuse must use exact extId lookup");
+assert.match(repositorySource,/runTransaction\(db/,'external Place creation must converge transactionally');
+assert.match(repositorySource,/contributionSnapshot\.docs\.forEach\(item=>batch\.delete\(item\.ref\)\)/);
+const deleteTripBlock=repositorySource.slice(repositorySource.indexOf("deleteTrip("),repositorySource.indexOf("updateOwnProfile",repositorySource.indexOf("deleteTrip(")));
+assert.doesNotMatch(deleteTripBlock,/updateVisit|deleteVisit/,"Trip deletion retains historical Visits");
 
 console.log("no-space assertions passed");

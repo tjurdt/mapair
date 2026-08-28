@@ -24,7 +24,7 @@ A Visit is a first-class shared experience document. A Place is objective geogra
 
 Shared Visit facts are:
 
-- Place reference and optional display override;
+- Place reference;
 - date;
 - activity/category;
 - participants;
@@ -66,7 +66,11 @@ The client queries top-level `visits` and `trips` with `participantUserIds array
 
 ### Place resolution
 
-The Visit query yields Place IDs. The client attaches one document listener per referenced `places/{placeId}` instead of enumerating every global Place. Multiple visible Visits to the same Place are projected into one geographic marker while remaining separate occurrences in filtering and history. Administrative cache writes update only objective Place cache fields.
+Every Visit is schema-validated to contain a non-empty, path-safe `placeId`. The Visit query yields Place IDs, and the client attaches one document listener per referenced `places/{placeId}` instead of enumerating every global Place. Multiple visible Visits to the same Place are projected into one geographic marker while remaining separate occurrences in filtering and history.
+
+Before creating an external/Google Place, the repository performs an exact `extId` lookup and reuses a provider-matching result. If none exists, the provider and complete external ID produce one deterministic, path-safe Place document ID; a transaction creates that Place only if absent while creating the new Visit. Concurrent first records therefore converge on one objective identity. Custom map points without external IDs retain independent auto-generated Place IDs.
+
+Normal Visit editing may change `Visit.placeId` to another known Place but never updates the selected global Place's name or coordinates. Only initial Place creation defines that objective identity; administrative cache writes remain the sole normal Place updates.
 
 ### Participant directory
 
@@ -74,7 +78,9 @@ The client derives known UIDs from the authenticated User plus participants on v
 
 ## Contributions and ratings
 
-Each User writes only `visits/{visitId}/contributions/{theirUid}`. Editing one contribution cannot replace another participant's document. Other contributions are shown read-only to Visit participants. The average is computed at read time over submitted numeric ratings only; missing ratings are excluded and no average is stored.
+Each current participant writes only `visits/{visitId}/contributions/{theirUid}`. Editing one contribution cannot replace another participant's document. Before projection, display, or averaging, contribution documents are intersected with the Visit's current `participantUserIds`. A dormant contribution from a removed participant may remain temporarily, but its memory is hidden and its rating is excluded. Other current-participant contributions are shown read-only. The average is computed at read time over submitted numeric ratings only; missing ratings are excluded and no average is stored.
+
+Creator-only hard deletion first reads the Visit's contribution documents, then deletes every contribution and the Visit parent in one atomic batch. Phase A stops with a clear error before deleting anything if the batch would exceed Firestore's 500-operation limit. Stale day-order references may remain because normalization already ignores them.
 
 The preserved rating range is 0.5–5 in 0.5 increments. An absent/null rating means “not rated.”
 
@@ -95,6 +101,8 @@ Stay anchors remain fixed derived occurrences; ordinary Visits use the personal 
 ## Trip defaults
 
 `trips/{tripId}.participantUserIds` defines defaults for future Visits created in that Trip. The array is copied into a new Visit and remains editable there. Updating Trip defaults never rewrites an existing Visit. Phase A prevents the current User from removing themselves from a Trip because explicit Exit semantics are deferred.
+
+Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tripId` remains as a dangling historical reference, is excluded from the Daily filter, and renders as “已刪除旅程” instead of being mislabeled as Daily life. This is the deterministic Phase A referential-integrity policy; detaching/backfilling history is deferred.
 
 ## Legacy Place-field decisions
 
@@ -119,4 +127,3 @@ Every listener, editor, Google search, geography callback, and write captures th
 ## Deferred work
 
 Phase A intentionally excludes Friends, People/contact records, global User search, secret mentions, Exit Visit/Trip, Lock/fork, Saved Filters, Wishlist/Saved Places, photos, production rules, and production migration.
-

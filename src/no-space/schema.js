@@ -13,6 +13,15 @@ function nonEmptyString(value){
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
+export function assertDocumentId(value,field="documentId"){
+  const id=nonEmptyString(value);
+  if(!id) throw new Error(`${field} must be a non-empty Firestore document ID.`);
+  if(id.includes("/")||id==="."||id===".."||new TextEncoder().encode(id).length>1500){
+    throw new Error(`${field} is not a valid Firestore document ID.`);
+  }
+  return id;
+}
+
 export function assertDateOnly(value, field="date"){
   if (!NO_SPACE_DATE_PATTERN.test(value || "")){
     throw new Error(`${field} must use YYYY-MM-DD with no clock time.`);
@@ -46,6 +55,7 @@ export function normalizeParticipantUserIds(value){
 
 export function visitSharedFields(input={}){
   assertNoClockFields(input, "Visit");
+  const placeId=assertDocumentId(input.placeId,"placeId");
   const date = assertDateOnly(input.date);
   const kind = input.kind === "stay" ? "stay" : "visit";
   const endDate = kind === "stay" ? assertDateOnly(input.endDate, "endDate") : "";
@@ -53,8 +63,7 @@ export function visitSharedFields(input={}){
   const participantUserIds = normalizeParticipantUserIds(input.participantUserIds);
   if (!participantUserIds.length) throw new Error("A Visit must have at least one participant.");
   return {
-    placeId:nonEmptyString(input.placeId),
-    ...(nonEmptyString(input.placeName) ? { placeName:nonEmptyString(input.placeName) } : {}),
+    placeId,
     date,
     category:nonEmptyString(input.category),
     participantUserIds,
@@ -101,4 +110,3 @@ export function placeObjectiveFields(input={}){
     ...(nonEmptyString(input.villCode) ? { villCode:nonEmptyString(input.villCode) } : {})
   };
 }
-

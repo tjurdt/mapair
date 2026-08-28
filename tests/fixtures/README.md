@@ -97,4 +97,4 @@ See `MULTI_USER_EXPECTED_RESULTS.md` for the multi-user relationships and expect
 
 ## No-Space fixture purpose
 
-`mapair-no-space.json` contains Users A/B/C, repeated Visits to one objective Place, solo/shared/three-person Visits, multiple Visits on one date, one A/B/C Trip, a Trip Visit that intentionally has only A/B, independent A/B/C contributions with C unrated, and different A/B personal ordering for the same shared Visit. It contains no embedded Visit array, Wishlist/status truth, subjective global Place fields, or clock-time fields.
+`mapair-no-space.json` contains Users A/B/C, repeated Visits to one objective external Place, solo/shared/three-person Visits, multiple Visits on one date, one A/B/C Trip, a Trip Visit that intentionally has only A/B, independent A/B/C contributions with C unrated, one dormant nonparticipant contribution that must be hidden/excluded, and different A/B personal ordering for the same shared Visit. It contains no embedded Visit array, Wishlist/status truth, subjective global Place fields, or clock-time fields.

@@ -24,7 +24,11 @@ export function averageSubmittedRating(contributions=[]){
   return ratings.reduce((sum, value) => sum + value, 0) / ratings.length;
 }
 
+export function participantContributions(contributionsByUid={}, participantUserIds=[]){
+  const allowed=new Set(Array.isArray(participantUserIds)?participantUserIds:[]);
+  return Object.fromEntries(Object.entries(contributionsByUid||{}).filter(([uid])=>allowed.has(uid)));
+}
+
 export function replaceOwnContribution(contributionsByUid, uid, next){
   return { ...(contributionsByUid || {}), [uid]:contributionFields(next) };
 }
-

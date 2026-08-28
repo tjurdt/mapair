@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc,
-         getDoc, onSnapshot, query, where, orderBy, arrayUnion, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
+         getDoc, getDocs, onSnapshot, query, where, orderBy, arrayUnion, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
 import {
@@ -73,10 +73,10 @@ import {
   writeProximityPreferences
 } from "./proximity-geometry.js";
 import { createNoSpaceRepository } from "./no-space/repository.js";
-import { averageSubmittedRating } from "./no-space/contributions.js";
+import { averageSubmittedRating, participantContributions } from "./no-space/contributions.js";
 import { normalizeDayOrder, reorderDayVisitIds } from "./no-space/day-order.js";
 import { canDeleteTrip, canDeleteVisit, retainCurrentParticipant } from "./no-space/policies.js";
-import { visitParticipantsFromTrip } from "./no-space/trips.js";
+import { tripReferenceState, visitParticipantsFromTrip } from "./no-space/trips.js";
 import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visits.js";
 
 /* ============================================================
@@ -1302,7 +1302,7 @@ function subscribeNoSpace(){
   noSpaceRepository = createNoSpaceRepository({
     db,
     uid,
-    firestore:{ addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch }
+    firestore:{ addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch }
   });
 
   // No-Space has no Membership foundation. Participation is the shared editing
@@ -2831,13 +2831,13 @@ function renderList(){
 function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
   const whoTxt=visitWhoText(p,v);
-  const t=v.tripId?trips[v.tripId]:null, stay=visitKind(v)==="stay", nights=stayNights(v);
+  const tripRef=tripReferenceState(v.tripId,trips),t=tripRef.trip,stay=visitKind(v)==="stay",nights=stayNights(v);
   const personalRating=isNoSpace()?v?._contributions?.[user?.uid]?.rating:p.rating;
   const tags=[
     stay?`<span class="ptag" style="background:#e6efe9">住宿 ${nights}晚 · ${esc(v.date)} → ${esc(stayCheckout(v)||v.date)}</span>`:"",
     cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
-    t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:`<span class="ptag" style="background:#f2f0eb">日常</span>`,
+    t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:tripRef.kind==="missing"?`<span class="ptag" style="background:#f2f0eb">已刪除旅程</span>`:`<span class="ptag" style="background:#f2f0eb">日常</span>`,
     personalRating?`<span class="ptag" style="background:#f3e7d3">★${personalRating}</span>`:""
   ].filter(Boolean).join("");
   const key=`${p.id}:${o.visitIndex}`;
@@ -2851,9 +2851,9 @@ function stayAnchorCardHTML(o,label,date){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):levelColors["住宿"];
   const nights=stayNights(v), n=o.stayAnchor==="morning"?Math.max(1,dayDiff(v.date,date)):Math.max(1,dayDiff(v.date,date)+1);
   const edge=o.stayAnchor==="morning"?`住宿後出發 · 第 ${Math.min(n,nights)}/${nights} 晚後`:`夜宿 · 第 ${Math.min(n,nights)}/${nights} 晚`;
-  const t=v.tripId?trips[v.tripId]:null;
+  const tripRef=tripReferenceState(v.tripId,trips),t=tripRef.trip;
   return `<div class="card compact stayanchor" data-stay-anchor="1" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}10"><div style="display:flex;align-items:center;gap:8px">
-    <span style="font-size:15px">🏨</span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags"><span class="stayedge">${edge}</span><span class="ptag" style="background:#efe9df">${esc(visitWhoText(p,v))}</span>${t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:""}</div></div>
+    <span style="font-size:15px">🏨</span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags"><span class="stayedge">${edge}</span><span class="ptag" style="background:#efe9df">${esc(visitWhoText(p,v))}</span>${t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:tripRef.kind==="missing"?`<span class="ptag" style="background:#f2f0eb">已刪除旅程</span>`:""}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
   </div></div>`;
 }
@@ -2876,7 +2876,10 @@ function wireVisitCards(el){
     focusMapOnPlace(places[c.dataset.pid]);
     openEditor(c.dataset.pid,null,{focusVisitIndex:+c.dataset.vidx});
   });
-  el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteVisitOccurrence(b.dataset.vdel);});
+  el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{
+    ev.stopPropagation();
+    deleteVisitOccurrence(b.dataset.vdel).catch(error=>alert(`無法完整刪除造訪：${error.message}`));
+  });
   el.querySelectorAll("[data-vmove]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vkey,b.dataset.date,b.dataset.vmove);});
   el.querySelectorAll("[data-vposition]").forEach(s=>s.onchange=ev=>{ev.stopPropagation();if(s.value) moveVisitOccurrence(s.dataset.vposition,s.dataset.date,s.value);s.value="";});
 }
@@ -3132,31 +3135,40 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const initialPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId] || runtimePlace:seed || {};
   const initialTripId=rawVisit?.tripId || specificTripId() || "";
   if (creating && initialTripId && trips[initialTripId]) selected=visitParticipantsFromTrip(trips[initialTripId],editorUid);
-  const contributions=rawVisit?noSpaceState.contributions[rawVisit.id] || {}:{};
-  const mine=contributions[editorUid] || {};
-  const others=Object.entries(contributions).filter(([uid])=>uid!==editorUid);
-  const average=averageSubmittedRating(Object.values(contributions));
+  const allContributions=rawVisit?noSpaceState.contributions[rawVisit.id]||{}:{};
+  const scopedContributions=()=>participantContributions(allContributions,selected);
+  const mine=scopedContributions()[editorUid]||{};
   const live=()=>noSpaceSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
+  const allowNewPlace=creating&&!selectedPlaceId;
   const memberList=orderedActiveMembers();
-  const placeOptions=Object.values(noSpaceState.places).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(place=>
+  const selectablePlaces={...noSpaceState.places};
+  if(selectedPlaceId&&!selectablePlaces[selectedPlaceId]) selectablePlaces[selectedPlaceId]={id:selectedPlaceId,name:runtimePlace?.name||"Unknown place"};
+  const placeOptions=Object.values(selectablePlaces).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(place=>
     `<option value="${esc(place.id)}" ${place.id===selectedPlaceId?'selected':''}>${esc(place.name||"未命名地點")}</option>`
   ).join("");
   const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(trip=>
     `<option value="${esc(trip.id)}" ${trip.id===initialTripId?'selected':''}>${esc((trip.emoji?trip.emoji+" ":"")+(trip.name||""))}</option>`
   ).join("");
-  const contributionRows=others.length?others.map(([uid,value])=>`
-    <div class="card compact" style="margin-bottom:8px">
-      <div class="cname">${esc(participantName(uid))}${value.rating?` · ★ ${value.rating}`:" · 尚未評分"}</div>
-      <div class="admin">${esc(value.memory||"尚未留下回憶")}</div>
-    </div>`).join(""):`<div class="admin">其他參與者尚未留下評分或回憶。</div>`;
+  const contributionRows=()=>{
+    const others=Object.entries(scopedContributions()).filter(([uid])=>uid!==editorUid);
+    return others.length?others.map(([uid,value])=>`
+      <div class="card compact" style="margin-bottom:8px">
+        <div class="cname">${esc(participantName(uid))}${value.rating?` · ★ ${value.rating}`:" · 尚未評分"}</div>
+        <div class="admin">${esc(value.memory||"尚未留下回憶")}</div>
+      </div>`).join(""):`<div class="admin">其他參與者尚未留下評分或回憶。</div>`;
+  };
+  const averageText=()=>{
+    const average=averageSubmittedRating(Object.values(scopedContributions()));
+    return `參與者平均：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
+  };
 
   modal(`
     <h2 style="margin-bottom:3px">${creating?"新增造訪":"編輯造訪"}</h2>
     <div class="admin" style="margin-bottom:12px">日期加上你自己的當日順序；不使用時鐘時間。</div>
     <div class="editor-section">
       <div class="editor-section-head"><div><div class="editor-section-title">共同記錄</div><div class="editor-section-note">參與這次經驗的人都能調整這些事實。</div></div></div>
-      <div class="field"><label>地點</label><select id="ns_place"><option value="__new__" ${selectedPlaceId?'':'selected'}>新增地點</option>${placeOptions}</select></div>
-      <div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱"></div>
+      <div class="field"><label>地點</label><select id="ns_place">${allowNewPlace?`<option value="__new__" selected>新增地點</option>`:""}${placeOptions}</select></div>
+      <div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱" ${selectedPlaceId?'readonly':''}></div>
       <div class="row">
         <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
         <div class="field" style="flex:1"><label>活動</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
@@ -3173,9 +3185,9 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       <div class="field"><label>我的足跡深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===(mine.level||"旅遊")?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
       <div class="field"><label>我的評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
       <div class="field"><label>我的回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="記下你自己的回憶">${esc(mine.memory||"")}</textarea></div>
-      <div class="admin">參與者平均：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）</div>
+      <div class="admin" id="ns_average">${averageText()}</div>
     </div>
-    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">其他參與者的內容</div></div>${contributionRows}</div>`:""}
+    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">其他參與者的內容</div></div><div id="ns_other_contributions">${contributionRows()}</div></div>`:""}
     <div class="row"><button class="btn" id="ns_save">完成</button>${rawVisit&&canDeleteVisit(editorUid,rawVisit)?`<button class="danger" id="ns_delete">刪除這次造訪</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
@@ -3184,14 +3196,21 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   refreshStay();
   g("ns_kind").onchange=refreshStay;
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
+  const refreshContributionVisibility=()=>{
+    g("ns_average").textContent=averageText();
+    if(g("ns_other_contributions")) g("ns_other_contributions").innerHTML=contributionRows();
+  };
   g("ns_place").onchange=()=>{
     selectedPlaceId=g("ns_place").value==="__new__"?"":g("ns_place").value;
+    g("ns_place_name").readOnly=!!selectedPlaceId;
     if(selectedPlaceId) g("ns_place_name").value=noSpaceState.places[selectedPlaceId]?.name||"";
+    else g("ns_place_name").value=seed?.name||"";
   };
   g("ns_trip").onchange=()=>{
     if(!creating||!g("ns_trip").value||!trips[g("ns_trip").value]) return;
     selected=visitParticipantsFromTrip(trips[g("ns_trip").value],editorUid);
     g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>chip.classList.toggle("on",selected.includes(chip.dataset.uid)));
+    refreshContributionVisibility();
   };
   g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>{
     const toggle=()=>{
@@ -3200,6 +3219,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       selected=selected.includes(uid)?selected.filter(item=>item!==uid):[...selected,uid];
       selected=retainCurrentParticipant(selected,editorUid);
       chip.classList.toggle("on",selected.includes(uid));
+      refreshContributionVisibility();
     };
     chip.onclick=toggle;
     chip.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); toggle(); } };
@@ -3207,12 +3227,12 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   g("ns_save").onclick=async()=>{
     if(!live()) return;
     const name=g("ns_place_name").value.trim(), date=g("ns_date").value;
-    if(!name||!date){ alert("請填寫地點名稱與日期。"); return; }
+    if(!date||(!selectedPlaceId&&!name)){ alert("請填寫地點名稱與日期。"); return; }
+    if(rawVisit&&!selectedPlaceId){ alert("既有造訪必須選擇一個已存在的地點。"); return; }
     const kind=g("ns_kind").value;
     const targetPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId]:seed||initialPlace;
     const shared={
       placeId:selectedPlaceId,
-      placeName:name,
       date,
       category:g("ns_category").value.trim(),
       participantUserIds:retainCurrentParticipant(selected,editorUid),
@@ -3229,16 +3249,15 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     let savedVisitId=rawVisit?.id||"";
     try{
       if(rawVisit){
-        if(selectedPlaceId===rawVisit.placeId&&targetPlace) await repo.updatePlace(selectedPlaceId,{...targetPlace,name});
         await repo.updateVisit(rawVisit.id,shared);
       }else if(selectedPlaceId){
         const ref=await repo.createVisit(shared); savedVisitId=ref.id;
       }else{
         const created=await repo.createPlaceAndVisit({...(targetPlace||{}),name},shared);
-        savedVisitId=created.visitId;
+        savedVisitId=created.visitId; shared.placeId=created.placeId;
       }
       if(!live()) return;
-      await repo.setContribution(savedVisitId,personal);
+      await repo.setContribution(savedVisitId,personal,shared);
       if(creating){
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
         const order=normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]);
@@ -3250,8 +3269,10 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const deleteButton=g("ns_delete");
   if(deleteButton) deleteButton.onclick=async()=>{
     if(!live()||!canDeleteVisit(editorUid,rawVisit)) return;
-    await repo.deleteVisit(rawVisit.id,rawVisit);
-    if(live()) closeModal();
+    try{
+      await repo.deleteVisit(rawVisit.id,rawVisit);
+      if(live()) closeModal();
+    }catch(error){if(live())alert(`無法完整刪除造訪：${error.message}`);}
   };
 }
 
@@ -3610,7 +3631,7 @@ function renderTrips(el){
     if (!currentSpaceFoundationReady()) return;
     if (isNoSpace()){
       const trip=noSpaceState.trips[b.dataset.del];
-      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id,trip);
+      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id,trip).catch(error=>alert(`無法刪除旅程：${error.message}`));
     } else deleteDoc(tripDoc(b.dataset.del));
   });
 }
@@ -3662,7 +3683,11 @@ function openNoSpaceTripEditor(id,onDone){
     }catch(error){if(live())alert(`無法儲存旅程：${error.message}`);}
   };
   const del=g("nst_delete");
-  if(del) del.onclick=async()=>{if(live()&&canDeleteTrip(uid,trip)){await repo.deleteTrip(trip.id,trip);if(live())closeModal();}};
+  if(del) del.onclick=async()=>{
+    if(!live()||!canDeleteTrip(uid,trip)) return;
+    try{await repo.deleteTrip(trip.id,trip);if(live())closeModal();}
+    catch(error){if(live())alert(`無法刪除旅程：${error.message}`);}
+  };
 }
 
 function editTrip(id, onDone){

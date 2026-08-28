@@ -401,7 +401,11 @@ export function validateNoSpaceFixture(fixture){
   assertFixture(trips.length>=1,"No-Space fixture requires a Trip.");
   assertFixture(visits.every(document=>Array.isArray(document.data.participantUserIds)&&document.data.participantUserIds.length),"Every No-Space Visit needs participants.");
   assertFixture(visits.every(document=>typeof document.data.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(document.data.date)),"Every No-Space Visit needs a date-only value.");
+  const placeIds=new Set(places.map(document=>validateDocumentPath(document.path)[1]));
+  assertFixture(visits.every(document=>typeof document.data.placeId==="string"&&document.data.placeId&&!document.data.placeId.includes("/")&&placeIds.has(document.data.placeId)),"Every No-Space Visit must reference one fixture Place by a valid non-empty placeId.");
   assertFixture(places.every(document=>!["rating","review","level","visits","status"].some(key=>Object.hasOwn(document.data,key))),"No-Space Places must contain objective geography only.");
+  const externalIdentities=places.filter(document=>document.data.extId).map(document=>`${document.data.source||"external"}:${document.data.extId}`);
+  assertFixture(new Set(externalIdentities).size===externalIdentities.length,"No-Space fixture must not duplicate an exact external Place identity.");
   const repeatedCounts=new Map();
   visits.forEach(document=>repeatedCounts.set(document.data.placeId,(repeatedCounts.get(document.data.placeId)||0)+1));
   assertFixture([...repeatedCounts.values()].some(count=>count>=2),"No-Space fixture requires repeated Visits to one Place.");
@@ -411,10 +415,15 @@ export function validateNoSpaceFixture(fixture){
   const trip=trips[0];
   assertArrayEqual(trip.data.participantUserIds,["test-user-a","test-user-b","test-user-c"],"No-Space Trip defaults changed");
   assertFixture(visits.some(document=>document.data.tripId===validateDocumentPath(trip.path)[1]&&isDeepStrictEqual(document.data.participantUserIds,["test-user-a","test-user-b"])),"Trip Visit overriding defaults to A+B is missing.");
-  const contributionRatings=contributions.map(document=>document.data.rating).filter(value=>typeof value==="number");
-  assertArrayEqual(contributionRatings,[4.5,3.5],"Submitted No-Space ratings changed");
+  const visitsById=new Map(visits.map(document=>[validateDocumentPath(document.path)[1],document.data]));
+  const contributionRatings=contributions.filter(document=>{
+    const segments=validateDocumentPath(document.path);
+    return visitsById.get(segments[1])?.participantUserIds.includes(segments[3]);
+  }).map(document=>document.data.rating).filter(value=>typeof value==="number");
+  assertArrayEqual(contributionRatings,[4.5,3.5],"Current-participant No-Space ratings changed");
   assertFixture(contributions.some(document=>document.data.rating===null),"Missing-rating contribution is required.");
   assertFixture(contributionRatings.reduce((sum,value)=>sum+value,0)/contributionRatings.length===4,"No-Space fixture rating average must be 4.");
+  assertFixture(contributions.some(document=>validateDocumentPath(document.path)[3]==="test-user-d"&&document.data.rating===5),"Dormant nonparticipant contribution coverage is missing.");
   const orderMap=new Map(dayOrders.map(document=>[validateDocumentPath(document.path)[1],document.data.visitIds]));
   const sharedId="visit-test-no-space-shared-abc";
   assertFixture(orderMap.get("test-user-a")?.indexOf(sharedId)!==orderMap.get("test-user-b")?.indexOf(sharedId),"A and B must store different positions for the same Visit.");
