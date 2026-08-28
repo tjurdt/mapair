@@ -61,6 +61,17 @@ function resolveMultiSpace(search){
   return true;
 }
 
+// Strict LOCAL-only Phase A gate for the top-level Visit architecture. The
+// exact flag is required and it is deliberately incompatible with multiSpace.
+function resolveNoSpace(search){
+  const values = new URLSearchParams(search).getAll("noSpace");
+  if (!values.length) return false;
+  if (values.length !== 1 || values[0] !== "1"){
+    throw new Error('noSpace must be exactly "1". Startup stopped.');
+  }
+  return true;
+}
+
 export function resolveRuntimeConfig(hostname = location.hostname, search = location.search){
   const localHost = hostname === "localhost" || hostname === "127.0.0.1";
   const values = new URLSearchParams(search).getAll("firebaseEnv");
@@ -68,13 +79,19 @@ export function resolveRuntimeConfig(hostname = location.hostname, search = loca
     if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
     if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
     const testSpace = localTestSpaceToken(search);
+    const multiSpace = resolveMultiSpace(search);
+    const noSpace = resolveNoSpace(search);
+    if (multiSpace && noSpace){
+      throw new Error("multiSpace=1 and noSpace=1 cannot be enabled together. Startup stopped.");
+    }
     return {
       mode: "local",
       ...LOCAL_TEST_CONFIG,
       spaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : LOCAL_TEST_CONFIG.spaceId,
       explicitTestSpace: testSpace,
       explicitTestSpaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : null,
-      multiSpace: resolveMultiSpace(search)
+      multiSpace,
+      noSpace
     };
   }
   if (new URLSearchParams(search).getAll("testSpace").length){
@@ -82,6 +99,9 @@ export function resolveRuntimeConfig(hostname = location.hostname, search = loca
   }
   if (new URLSearchParams(search).getAll("multiSpace").length){
     throw new Error("multiSpace is only available in LOCAL TEST mode. Startup stopped.");
+  }
+  if (new URLSearchParams(search).getAll("noSpace").length){
+    throw new Error("noSpace is only available in LOCAL TEST mode. Startup stopped.");
   }
   if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
   return { mode: "production", ...PRODUCTION_CONFIG };

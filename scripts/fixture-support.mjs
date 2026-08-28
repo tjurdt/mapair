@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BASELINE_FIXTURE_URL = new URL("../tests/fixtures/mapair-baseline.json", import.meta.url);
 export const MULTI_USER_FIXTURE_URL = new URL("../tests/fixtures/mapair-multi-user.json", import.meta.url);
+export const NO_SPACE_FIXTURE_URL = new URL("../tests/fixtures/mapair-no-space.json", import.meta.url);
 export const BASELINE_SPACE_ID = "test-space-baseline";
 export const GROUP_SPACE_ID = "test-space-group";
 export const TEST_USER_IDS = ["test-user-a", "test-user-b", "test-user-c", "test-user-d"];
@@ -357,11 +358,85 @@ export function validateMultiUserFixture(fixture, baseline){
   };
 }
 
+function noSpaceDocumentsUnder(documents, collection, depth){
+  return documents.filter(document => {
+    const segments=validateDocumentPath(document.path);
+    return segments[0]===collection && segments.length===depth;
+  });
+}
+
+export function validateNoSpaceFixture(fixture){
+  assertFixture(isObject(fixture), "No-Space fixture root must be an object.");
+  assertFixture(fixture.fixtureVersion===1, "No-Space fixtureVersion must be 1.");
+  assertFixture(fixture.fixtureName==="no-space", "No-Space fixtureName must be no-space.");
+  validateDocumentList(fixture.documents,"No-Space fixture documents");
+  const allowedTop=new Set(["users","places","visits","trips"]);
+  const forbiddenClockKeys=new Set(["time","startTime","endTime","arrivalTime"]);
+  const walk=(value,path)=>{
+    if(Array.isArray(value)){value.forEach((item,index)=>walk(item,`${path}[${index}]`));return;}
+    if(!isObject(value)) return;
+    for(const [key,child] of Object.entries(value)){
+      assertFixture(!forbiddenClockKeys.has(key),`No-Space fixture contains forbidden clock field ${path}.${key}.`);
+      walk(child,`${path}.${key}`);
+    }
+  };
+  for(const document of fixture.documents){
+    const segments=validateDocumentPath(document.path);
+    assertFixture(allowedTop.has(segments[0]),`Unexpected No-Space top-level collection: ${segments[0]}.`);
+    assertFixture(segments[0]!=="spaces",`No-Space fixture must not contain Space paths: ${document.path}.`);
+    const validNested=(segments[0]==="visits"&&segments.length===4&&segments[2]==="contributions")||
+      (segments[0]==="users"&&segments.length===4&&segments[2]==="dayOrders");
+    assertFixture(segments.length===2||validNested,`Unexpected No-Space fixture path: ${document.path}.`);
+    walk(document.data,document.path);
+  }
+  const users=noSpaceDocumentsUnder(fixture.documents,"users",2);
+  const places=noSpaceDocumentsUnder(fixture.documents,"places",2);
+  const visits=noSpaceDocumentsUnder(fixture.documents,"visits",2);
+  const trips=noSpaceDocumentsUnder(fixture.documents,"trips",2);
+  const contributions=fixture.documents.filter(document=>validateDocumentPath(document.path)[2]==="contributions");
+  const dayOrders=fixture.documents.filter(document=>validateDocumentPath(document.path)[2]==="dayOrders");
+  assertArrayEqual(sorted(users.map(document=>validateDocumentPath(document.path)[1])),["test-user-a","test-user-b","test-user-c"],"No-Space fixture Users changed");
+  assertFixture(places.length>=3,"No-Space fixture requires at least three Places.");
+  assertFixture(visits.length>=7,"No-Space fixture requires at least seven Visits.");
+  assertFixture(trips.length>=1,"No-Space fixture requires a Trip.");
+  assertFixture(visits.every(document=>Array.isArray(document.data.participantUserIds)&&document.data.participantUserIds.length),"Every No-Space Visit needs participants.");
+  assertFixture(visits.every(document=>typeof document.data.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(document.data.date)),"Every No-Space Visit needs a date-only value.");
+  const placeIds=new Set(places.map(document=>validateDocumentPath(document.path)[1]));
+  assertFixture(visits.every(document=>typeof document.data.placeId==="string"&&document.data.placeId&&!document.data.placeId.includes("/")&&placeIds.has(document.data.placeId)),"Every No-Space Visit must reference one fixture Place by a valid non-empty placeId.");
+  assertFixture(places.every(document=>!["rating","review","level","visits","status"].some(key=>Object.hasOwn(document.data,key))),"No-Space Places must contain objective geography only.");
+  const externalIdentities=places.filter(document=>document.data.extId).map(document=>`${document.data.source||"external"}:${document.data.extId}`);
+  assertFixture(new Set(externalIdentities).size===externalIdentities.length,"No-Space fixture must not duplicate an exact external Place identity.");
+  const repeatedCounts=new Map();
+  visits.forEach(document=>repeatedCounts.set(document.data.placeId,(repeatedCounts.get(document.data.placeId)||0)+1));
+  assertFixture([...repeatedCounts.values()].some(count=>count>=2),"No-Space fixture requires repeated Visits to one Place.");
+  assertFixture(visits.some(document=>document.data.participantUserIds.length===1&&document.data.participantUserIds[0]==="test-user-a"),"Solo A Visit is missing.");
+  assertFixture(visits.some(document=>isDeepStrictEqual(document.data.participantUserIds,["test-user-a","test-user-b"])),"Shared A+B Visit is missing.");
+  assertFixture(visits.some(document=>isDeepStrictEqual(document.data.participantUserIds,["test-user-a","test-user-b","test-user-c"])),"Shared A+B+C Visit is missing.");
+  const trip=trips[0];
+  assertArrayEqual(trip.data.participantUserIds,["test-user-a","test-user-b","test-user-c"],"No-Space Trip defaults changed");
+  assertFixture(visits.some(document=>document.data.tripId===validateDocumentPath(trip.path)[1]&&isDeepStrictEqual(document.data.participantUserIds,["test-user-a","test-user-b"])),"Trip Visit overriding defaults to A+B is missing.");
+  const visitsById=new Map(visits.map(document=>[validateDocumentPath(document.path)[1],document.data]));
+  const contributionRatings=contributions.filter(document=>{
+    const segments=validateDocumentPath(document.path);
+    return visitsById.get(segments[1])?.participantUserIds.includes(segments[3]);
+  }).map(document=>document.data.rating).filter(value=>typeof value==="number");
+  assertArrayEqual(contributionRatings,[4.5,3.5],"Current-participant No-Space ratings changed");
+  assertFixture(contributions.some(document=>document.data.rating===null),"Missing-rating contribution is required.");
+  assertFixture(contributionRatings.reduce((sum,value)=>sum+value,0)/contributionRatings.length===4,"No-Space fixture rating average must be 4.");
+  assertFixture(contributions.some(document=>validateDocumentPath(document.path)[3]==="test-user-d"&&document.data.rating===5),"Dormant nonparticipant contribution coverage is missing.");
+  const orderMap=new Map(dayOrders.map(document=>[validateDocumentPath(document.path)[1],document.data.visitIds]));
+  const sharedId="visit-test-no-space-shared-abc";
+  assertFixture(orderMap.get("test-user-a")?.indexOf(sharedId)!==orderMap.get("test-user-b")?.indexOf(sharedId),"A and B must store different positions for the same Visit.");
+  return { documents:fixture.documents, counts:{users:users.length,places:places.length,visits:visits.length,trips:trips.length,contributions:contributions.length,dayOrders:dayOrders.length} };
+}
+
 export async function loadAndValidateFixtures(){
-  const [baseline, multiUser] = await Promise.all([
+  const [baseline, multiUser, noSpace] = await Promise.all([
     readJsonFixture(BASELINE_FIXTURE_URL, "baseline fixture"),
-    readJsonFixture(MULTI_USER_FIXTURE_URL, "multi-user fixture")
+    readJsonFixture(MULTI_USER_FIXTURE_URL, "multi-user fixture"),
+    readJsonFixture(NO_SPACE_FIXTURE_URL, "No-Space fixture")
   ]);
   const validation = validateMultiUserFixture(multiUser, baseline);
-  return { baseline, multiUser, ...validation };
+  const noSpaceValidation=validateNoSpaceFixture(noSpace);
+  return { baseline, multiUser, noSpace, ...validation, noSpaceDocuments:noSpaceValidation.documents, noSpaceCounts:noSpaceValidation.counts };
 }

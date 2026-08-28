@@ -1,6 +1,6 @@
 # Mapair test fixtures
 
-A fixture is a small, fixed set of input data used to put a test environment into a known state. `mapair-baseline.json` and `mapair-multi-user.json` are completely invented Mapair datasets for the local Firestore Emulator. They contain no production export, real user identity, credential, Firebase configuration, or production-derived user content.
+A fixture is a small, fixed set of input data used to put a test environment into a known state. `mapair-baseline.json`, `mapair-multi-user.json`, and `mapair-no-space.json` are completely invented Mapair datasets for the local Firestore Emulator. They contain no production export, real user identity, credential, Firebase configuration, or production-derived user content.
 
 Never seed these fixtures into production. The seed script is hard-coded to the Firestore Emulator at `http://127.0.0.1:8080` and the demo project `demo-mapair-local`; it has no production fallback. These files seed Firestore documents only. They do not create Firebase Authentication users, and Auth Emulator login buttons for Users C and D are outside Phase 0.
 
@@ -24,13 +24,19 @@ Load the baseline first and then apply the additive multi-user overlay with:
 node scripts/seed-emulator.mjs --fixture multi-user
 ```
 
+Load only the top-level No-Space Phase A model with:
+
+```sh
+node scripts/seed-emulator.mjs --fixture no-space
+```
+
 Clear the Emulator without loading fixtures with:
 
 ```sh
 node scripts/seed-emulator.mjs --reset-only
 ```
 
-Validate both JSON fixtures without running Firebase or the Emulator with:
+Validate all JSON fixtures without running Firebase or the Emulator with:
 
 ```sh
 node scripts/validate-fixtures.mjs
@@ -51,6 +57,8 @@ The multi-user fixture is an additive document overlay:
 - `extends` is `mapair-baseline`, requiring the seed script to load the unchanged baseline first.
 - Each `documents[]` entry contains a validated Firestore document `path` and its `data` body.
 - Paths are deterministic, must identify documents, may not contain empty/traversal/URL-like segments, and must be unique across the combined fixture universe.
+
+The No-Space fixture is a standalone top-level document set. It contains only `users`, `places`, first-class `visits`, `trips`, Visit `contributions`, and User `dayOrders`; validation rejects every `spaces/...` path and the clock fields `time`, `startTime`, `endTime`, and `arrivalTime`.
 
 JSON cannot contain native Firestore `Timestamp` values. Every fixture timestamp is encoded as:
 
@@ -86,3 +94,7 @@ Several records intentionally cover more than one baseline case to keep the fixt
 The overlay also adds empty Personal Spaces for A, B, and C; a Shared Space with active A/B/C and removed D; N-person Trip defaults; five Visit participant compatibility cases; accepted, pending, and blocked Friendships; and pending direct, pending share-link, expired, revoked, and accepted invitations. Invitation documents contain preview snapshots only. The exact invite-to-Membership linkage remains a Phase 5 security decision and is deliberately not represented as a fixture contract.
 
 See `MULTI_USER_EXPECTED_RESULTS.md` for the multi-user relationships and expected assertions. The existing `EXPECTED_RESULTS.md` remains dedicated to the original baseline.
+
+## No-Space fixture purpose
+
+`mapair-no-space.json` contains Users A/B/C, repeated Visits to one objective external Place, solo/shared/three-person Visits, multiple Visits on one date, one A/B/C Trip, a Trip Visit that intentionally has only A/B, independent A/B/C contributions with C unrated, one dormant nonparticipant contribution that must be hidden/excluded, and different A/B personal ordering for the same shared Visit. It contains no embedded Visit array, Wishlist/status truth, subjective global Place fields, or clock-time fields.

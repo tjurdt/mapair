@@ -13,12 +13,14 @@ import {
   BASELINE_FIXTURE_URL,
   BASELINE_SPACE_ID,
   MULTI_USER_FIXTURE_URL,
+  NO_SPACE_FIXTURE_URL,
   assertFixture as assert,
   readJsonFixture,
   validateBaselineFixture,
   validateDocumentList,
   validateDocumentPath,
-  validateMultiUserFixture
+  validateMultiUserFixture,
+  validateNoSpaceFixture
 } from "./fixture-support.mjs";
 
 const EMULATOR_ORIGIN = "http://127.0.0.1:8080";
@@ -41,12 +43,12 @@ function parseArguments(argv){
   if (argv.length === 0) return { fixtureName:"baseline", resetOnly:false };
   if (argv.length === 1 && argv[0] === "--reset-only") return { fixtureName:"baseline", resetOnly:true };
   if (argv.length === 2 && argv[0] === "--fixture"){
-    assert(["baseline", "multi-user"].includes(argv[1]), `Unknown fixture name: ${argv[1]}`);
+    assert(["baseline", "multi-user", "no-space"].includes(argv[1]), `Unknown fixture name: ${argv[1]}`);
     return { fixtureName:argv[1], resetOnly:false };
   }
-  const unknown = argv.find(argument => !["--fixture", "--reset-only", "baseline", "multi-user"].includes(argument));
+  const unknown = argv.find(argument => !["--fixture", "--reset-only", "baseline", "multi-user", "no-space"].includes(argument));
   if (unknown) throw new Error(`Unknown argument: ${unknown}`);
-  throw new Error("Usage: node scripts/seed-emulator.mjs [--reset-only | --fixture baseline | --fixture multi-user]");
+  throw new Error("Usage: node scripts/seed-emulator.mjs [--reset-only | --fixture baseline | --fixture multi-user | --fixture no-space]");
 }
 
 async function validateFirebaseReference(){
@@ -228,6 +230,11 @@ async function verifyBaselineSeed(fixture, documents){
 }
 
 async function loadSelection(fixtureName){
+  if (fixtureName === "no-space"){
+    const noSpace=await readJsonFixture(NO_SPACE_FIXTURE_URL,"No-Space fixture");
+    const validation=validateNoSpaceFixture(noSpace);
+    return { fixture:noSpace, baseline:null, baselineRecords:[], additiveRecords:[], allRecords:validation.documents, noSpaceCounts:validation.counts };
+  }
   const baseline = await readJsonFixture(BASELINE_FIXTURE_URL, "baseline fixture");
   const baselineRecords = validateBaselineFixture(baseline);
   if (fixtureName === "baseline") return { baseline, baselineRecords, additiveRecords:[], allRecords:baselineRecords };
@@ -246,7 +253,7 @@ async function main(){
   assertStaticSafety();
   const { fixtureName, resetOnly } = parseArguments(process.argv.slice(2));
   await validateFirebaseReference();
-  const { baseline, baselineRecords, additiveRecords, allRecords } = await loadSelection(resetOnly ? "multi-user" : fixtureName);
+  const { baseline, baselineRecords, additiveRecords, allRecords, noSpaceCounts } = await loadSelection(resetOnly ? "multi-user" : fixtureName);
 
   await verifyReachable();
   await clearDatabase();
@@ -260,6 +267,15 @@ async function main(){
 
   await writeDocuments(baselineRecords);
   if (fixtureName === "multi-user") await writeDocuments(additiveRecords);
+
+  if (fixtureName === "no-space"){
+    await writeDocuments(allRecords);
+    await verifyDocuments(allRecords);
+    console.log(`Firestore Emulator No-Space seed complete: ${allRecords.length} verified documents.`);
+    console.log(`Fixture: no-space | Users: ${noSpaceCounts.users} | Places: ${noSpaceCounts.places} | Visits: ${noSpaceCounts.visits} | Trips: ${noSpaceCounts.trips}`);
+    console.log(`Host: ${EMULATOR_ORIGIN} | Project: ${PROJECT_ID} | Top-level Visit architecture only`);
+    return;
+  }
 
   const baselineCounts = await verifyBaselineSeed(baseline, baselineRecords);
   if (fixtureName === "multi-user") await verifyDocuments(additiveRecords);
