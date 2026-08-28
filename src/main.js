@@ -21,6 +21,7 @@ import {
   personalSpaceId,
   personalSpaceResolution,
   readActiveSpacePreference,
+  resolveSpaceMembershipPath,
   spaceDisplayName,
   spaceTypeLabel,
   validateActiveSpacePreference,
@@ -205,13 +206,16 @@ const phase3 = {
   active: false,
   started: false,
   discoveryUnsub: null,
-  discoveryGen: 0,
+  discoveryGen: 0,        // bumped when a new discovery listener is attached / torn down
+  discoveryReq: 0,        // bumped per snapshot; only the newest request may apply (§1)
+  discoveryUid: "",       // the authenticated UID the discovery listener belongs to
   discoveredSpaces: [],
   initialSelectionPending: false,
   provisioningInFlight: false,
   personalSpaceId: "",
   switcherOpen: false
 };
+let searchReqSeq = 0;     // Google autocomplete request sequence (§5)
 function isMultiSpace(){ return isLocalTest() && runtimeConfig?.multiSpace === true; }
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], tripLine = null, sessionToken = null;
@@ -404,6 +408,14 @@ function placeVisits(p){
   if (p.visitedOn) return [normalizedVisit(p,{ date:p.visitedOn, tripId:p.tripId||"", category:(p.categories||[])[0]||"" },0)];
   return [];
 }
+// A Place exists in the active product ONLY because it has actual Visit
+// history — modern embedded `visits`, or a legacy `visitedOn` date. The old
+// `status` field (incl. dormant `status:"wishlist"` documents with no Visits) is
+// never consulted for this. Such dormant records are ignored everywhere in the
+// normal product; a separately approved migration may clean them up later.
+function hasVisitHistory(p){
+  return !!p && ((Array.isArray(p.visits) && p.visits.length > 0) || !!p.visitedOn);
+}
 function visitCategory(p,v){ return v?.category || (p.categories||[])[0] || ""; }
 function visitWhoUids(p,v){ return resolveVisitParticipants(v, p, legacyParticipantContext()).participantIds; }
 function visitWhoText(p,v){ return participantSummaryText(visitWhoUids(p,v)); }
@@ -465,18 +477,13 @@ function visitPassFilter(p,v){
   return placeStaticFilter(p) && visitMatchesWho(p,v) && visitMatchesTrip(v) && visitMatchesCategory(p,v) && visitIntersects(v,filter.from,filter.to);
 }
 function passFilter(p){
+  // Only Places with real Visit history exist in the active product; dormant
+  // legacy wishlist-only records are invisible everywhere.
+  if (!hasVisitHistory(p)) return false;
   if (!placeStaticFilter(p)) return false;
-  if (p.status === "visited"){
-    const vv=placeVisits(p);
-    const hasVisitConstraint=filter.who!=="all" || filter.tripId!=="all" || !!filter.from || !!filter.to || !!filter.cats.size;
-    return !hasVisitConstraint || vv.some(v=>visitPassFilter(p,v));
-  }
-  if (filter.who !== "all" && !whoUids(p).includes(filter.who)) return false;
-  if (filter.cats.size && !(p.categories||[]).some(c=>filter.cats.has(c))) return false;
-  const tr=placeTrips(p);
-  if (filter.tripId === "daily" && tr.length) return false;
-  if (filter.tripId !== "all" && filter.tripId !== "daily" && !tr.includes(filter.tripId)) return false;
-  return true;
+  const vv=placeVisits(p);
+  const hasVisitConstraint=filter.who!=="all" || filter.tripId!=="all" || !!filter.from || !!filter.to || !!filter.cats.size;
+  return !hasVisitConstraint || vv.some(v=>visitPassFilter(p,v));
 }
 function occurrenceDate(o){ return o?.seqDate || o?.v?.date || ""; }
 function occurrenceKey(o){ return `${o?.p?.id||""}:${o?.visitIndex??""}:${occurrenceDate(o)}:${o?.stayAnchor||""}`; }
@@ -495,7 +502,7 @@ function getDayOccurrences(date){
   if(!date) return [];
   const out=[];
   Object.values(places).forEach(p=>{
-    if(p.status!=="visited" || !placeStaticFilter(p)) return;
+    if(!hasVisitHistory(p) || !placeStaticFilter(p)) return;
     placeVisits(p).forEach((v,visitIndex)=>{
       if(!visitMatchesWho(p,v) || !visitMatchesTrip(v) || !visitMatchesCategory(p,v)) return;
       if(visitKind(v)!=="stay"){
@@ -517,7 +524,7 @@ function getDayOccurrences(date){
 function getFilteredVisitOccurrences(){
   const out=[];
   Object.values(places).forEach(p=>{
-    if(p.status!=="visited" || !placeStaticFilter(p)) return;
+    if(!hasVisitHistory(p) || !placeStaticFilter(p)) return;
     placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push({p,v,visitIndex,seqDate:v.date,stayAnchor:"",fixed:false}); });
   });
   return out.sort(sortOccurrences);
@@ -593,7 +600,7 @@ function visitReorderScope(){
 function fullDayOrdinaryOccurrences(date){
   const out=[];
   Object.values(places).forEach(p=>{
-    if(p.status!=="visited") return;
+    if(!hasVisitHistory(p)) return;
     placeVisits(p).forEach((v,visitIndex)=>{
       if(visitKind(v)==="visit" && v.date===date) out.push({p,v,visitIndex,seqDate:date,stayAnchor:"",fixed:false});
     });
@@ -624,8 +631,13 @@ function boot(){
       } catch(e){ failLocal("emulator connection setup", e); return; }
     }
     onAuthStateChanged(auth, u => {
-      // Sign-out or a change of authenticated User tears down BOTH the
-      // current-Space listeners and the Phase 3 Space-discovery listener (§8).
+      // Sign-out or a change of authenticated User: invalidate the Space session
+      // FIRST so any queued callback from the previous User/Space becomes inert
+      // (§4), then tear down BOTH the current-Space listeners and the Phase 3
+      // Space-discovery listener (§8).
+      spaceSession = nextSpaceSession(spaceSession, "");
+      spaceSwitchInFlight = false;
+      searchReqSeq++;
       teardownPhase3();
       unsubscribeCurrentSpaceListeners();
       user = u;
@@ -722,7 +734,6 @@ async function renderApp(){
         </div>
         <div class="tabs">
           <button class="tab" data-t="visited">去過</button>
-          <button class="tab" data-t="wishlist">想去</button>
           <button class="tab" data-t="trips">行程</button>
         </div>
         <div id="filterbar">
@@ -910,7 +921,7 @@ function openSettings(){
   const settingsSpaceId = currentSpaceId;
   const settingsSession = spaceSession;
   const settingsLive = () => isCurrentSpaceSession(settingsSession, spaceSession);
-  const markerOpts = [["status","是否去過"],["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"],["dateFirst","造訪日期（最早一次）"],["dateLast","造訪日期（最後一次）"]];
+  const markerOpts = [["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"],["dateFirst","造訪日期（最早一次）"],["dateLast","造訪日期（最後一次）"]];
   const metricOpts = [["level","造訪深度"],["count","地標數"],["first","初次造訪"],["last","最後造訪"]];
   const sw = (val,attrs) => `<input type="color" ${attrs} value="${val}" style="width:40px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px">`;
   const colorItem = (label,val,attrs) => `<div class="colitem"><span>${esc(label)}</span>${sw(val,attrs)}</div>`;
@@ -1007,8 +1018,7 @@ let filterFitTimer=null;
 function fitMapToCurrentFilter(){
   if(!map || layoutState.map || tab==="trips") return;
   if(!shouldAutoFitViewport({tripId:filter.tripId,regionCount:filter.regions.length})) return;
-  const status=tab==="wishlist"?"wishlist":"visited";
-  const pts=Object.values(places).filter(p=>p.status===status && passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  const pts=Object.values(places).filter(p=>passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
   const uniq=[]; const seen=new Set();
   pts.forEach(p=>{ const k=`${p.lat.toFixed(6)},${p.lng.toFixed(6)}`; if(!seen.has(k)){seen.add(k);uniq.push(p);} });
@@ -1085,7 +1095,7 @@ function renderFilterChips(){
   updateProximityMaskControl();
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
-  const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
+  const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
   if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from){
     html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
@@ -1154,19 +1164,23 @@ function subscribe(){
   resetSpaceFoundationReads();
   const session = spaceSession;              // captured for stale-snapshot protection
 
+  // A queued error from a listener whose Space session is no longer current
+  // (e.g. Space A error arriving after an A→B switch) must not fail B's session (§4).
+  const guardedError = handler => error => { if (isStaleSpaceCallback(session)) return; handler(error); };
+
   currentSpaceUnsubscribes.set("space", onSnapshot(spaceDoc(), snapshot => {
     if (isStaleSpaceCallback(session)) return;
     spaceFoundationReads.spaceReady = true;
     spaceFoundationReads.spaceDocument = snapshot.exists() ? snapshot.data() : null;
     reconcileSpaceMembershipFoundation();
-  }, error => handleOptionalFoundationReadError("Space root", "space", error)));
+  }, guardedError(error => handleOptionalFoundationReadError("Space root", "space", error))));
 
   currentSpaceUnsubscribes.set("members", onSnapshot(membersCol(), snapshot => {
     if (isStaleSpaceCallback(session)) return;
     spaceFoundationReads.membersReady = true;
     spaceFoundationReads.formalMemberships = snapshot.docs.map(member => ({ ...member.data(), id:member.id }));
     reconcileSpaceMembershipFoundation();
-  }, error => handleOptionalFoundationReadError("Memberships", "members", error)));
+  }, guardedError(error => handleOptionalFoundationReadError("Memberships", "members", error))));
 
   currentSpaceUnsubscribes.set("places", onSnapshot(query(placesCol(), orderBy("createdAt","desc")), snap => {
     if (isStaleSpaceCallback(session)) return;
@@ -1176,14 +1190,14 @@ function subscribe(){
     refreshFilterUI();
     renderList(); renderMarkers();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("places", error)));
+  }, guardedError(error => handleFirestoreError("places", error))));
   currentSpaceUnsubscribes.set("trips", onSnapshot(query(tripsCol(), orderBy("createdAt","desc")), snap => {
     if (isStaleSpaceCallback(session)) return;
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     refreshFilterUI();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("trips", error)));
+  }, guardedError(error => handleFirestoreError("trips", error))));
   currentSpaceUnsubscribes.set("meta", onSnapshot(metaDoc(), s => {
     if (isStaleSpaceCallback(session)) return;
     const d = s.data() || {};
@@ -1197,7 +1211,7 @@ function subscribe(){
     refreshFilterUI();
     renderList(); renderMarkers(); renderMarkerLegend();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("meta/config", error)));
+  }, guardedError(error => handleFirestoreError("meta/config", error))));
 
   // Record the authenticated User in this Space's legacy meta (participant
   // filter self entry + two-person `whoMode` compatibility). Targets the Space
@@ -1381,6 +1395,8 @@ function teardownPhase3(){
   if (phase3.discoveryUnsub){ try { phase3.discoveryUnsub(); } catch(e){} }
   phase3.discoveryUnsub = null;
   phase3.discoveryGen++;
+  phase3.discoveryReq++;
+  phase3.discoveryUid = "";
   phase3.discoveredSpaces = [];
   phase3.started = false;
   phase3.initialSelectionPending = false;
@@ -1404,41 +1420,74 @@ function startSpaceDiscovery(){
   const uid = user?.uid || "";
   if (!uid) return;
   phase3.discoveryGen++;
+  phase3.discoveryUid = uid;
   const gen = phase3.discoveryGen;
   try {
     const q = query(collectionGroup(db, "members"), where("userId", "==", uid), where("status", "==", "active"));
     phase3.discoveryUnsub = onSnapshot(q,
-      snap => { handleDiscoverySnapshot(gen, snap).catch(err => { phase3Diag("discovery-callback", err?.message || String(err)); }); },
-      err => failLocal("Space discovery", err)
+      snap => {
+        // Each snapshot gets a monotonically increasing request version; only the
+        // newest may apply its async result (§1).
+        const req = ++phase3.discoveryReq;
+        handleDiscoverySnapshot(gen, req, uid, snap).catch(err => { phase3Diag("discovery-callback", err?.message || String(err)); });
+      },
+      err => {
+        // Ignore a queued error from a superseded / torn-down discovery listener (§4).
+        if (localFailure || gen !== phase3.discoveryGen || uid !== (user?.uid || "")) return;
+        failLocal("Space discovery", err);
+      }
     );
   } catch(err){
     failLocal("Space discovery setup", err);
   }
 }
 
-async function handleDiscoverySnapshot(gen, snapshot){
-  if (localFailure || gen !== phase3.discoveryGen) return;
-  const uid = user?.uid || "";
-  const rows = snapshot.docs.map(d => {
-    const spaceRef = d.ref.parent && d.ref.parent.parent;
-    return { id:d.id, spaceId: spaceRef ? spaceRef.id : "", ...d.data() };
+// `gen` = discovery listener generation; `req` = per-snapshot request version;
+// `snapUid` = the UID the listener belongs to. A result applies only if all three
+// are still current after the awaits (§1, §2, §4).
+async function handleDiscoverySnapshot(gen, req, snapUid, snapshot){
+  const stillCurrent = () => !localFailure && gen === phase3.discoveryGen && req === phase3.discoveryReq && snapUid === (user?.uid || "") && snapUid === phase3.discoveryUid;
+  if (!stillCurrent()) return;
+
+  const rows = snapshot.docs.map(d => ({ path: d.ref.path, id: d.id, ...d.data() }));
+
+  // §3 — trust a Membership only when its document path is exactly
+  // spaces/{spaceId}/members/{uid}; never map another "members" collection's
+  // grandparent ID into spaces/{id}.
+  const mine = [];
+  const rejected = [];
+  for (const row of rows){
+    const parsed = resolveSpaceMembershipPath(row.path, snapUid);
+    const validRow = parsed.valid
+      && row.id === snapUid && row.userId === snapUid
+      && row.status === "active" && ["owner", "member"].includes(row.role);
+    if (validRow) mine.push({ ...row, spaceId: parsed.spaceId });
+    else rejected.push({ path: row.path, reason: parsed.valid ? "membership-fields" : parsed.reason, role: row.role, status: row.status });
+  }
+  if (rejected.length) phase3Diag("discovery-rejected-rows", rejected);
+
+  // §2 — a Firestore READ FAILURE is not evidence that a Space root is missing.
+  // Distinguish read error (fail closed) from a successful "does not exist" read.
+  const settled = await Promise.allSettled(mine.map(m => getDoc(spaceDocFor(m.spaceId))));
+  if (!stillCurrent()) return;   // a newer request / listener / User superseded this one
+
+  const readFailures = settled
+    .map((s, i) => ({ s, spaceId: mine[i].spaceId }))
+    .filter(({ s }) => s.status === "rejected");
+  if (readFailures.length){
+    phase3Diag("discovery-root-read-failed", readFailures.map(({ spaceId, s }) => ({ spaceId, error: s.reason?.message || String(s.reason) })));
+    failLocal("Space discovery", new Error(`${readFailures.length} Space root read(s) failed; refusing to update discovery or provision a Personal Space while root reads are uncertain.`));
+    return;
+  }
+
+  phase3.discoveredSpaces = mine.map((m, i) => {
+    const snap = settled[i].value;
+    return normalizeDiscoveredSpace({
+      spaceId: m.spaceId,
+      membership: m,
+      spaceDoc: snap.exists() ? snap.data() : null
+    });
   });
-  // The query must only ever return the authenticated User's own active
-  // Memberships; anything else is a data / rules problem — exclude + diagnose.
-  const mine = rows.filter(m => m.id === uid && m.userId === uid && m.status === "active" && ["owner","member"].includes(m.role));
-  const rejected = rows.filter(m => !mine.includes(m));
-  if (rejected.length) phase3Diag("discovery-rejected-rows", rejected.map(r => ({ space:r.spaceId, id:r.id, userId:r.userId, role:r.role, status:r.status })));
-
-  const roots = await Promise.all(mine.map(m => m.spaceId
-    ? getDoc(spaceDocFor(m.spaceId)).catch(() => null)
-    : Promise.resolve(null)));
-  if (localFailure || gen !== phase3.discoveryGen) return;   // a newer discovery superseded this one
-
-  phase3.discoveredSpaces = mine.map((m, i) => normalizeDiscoveredSpace({
-    spaceId: m.spaceId,
-    membership: m,
-    spaceDoc: (roots[i] && roots[i].exists()) ? roots[i].data() : null
-  }));
   const diags = discoveryDiagnostics(phase3.discoveredSpaces);
   if (diags.length) phase3Diag("discovered-space-issues", diags);
   onDiscoveryUpdate();
@@ -1475,17 +1524,26 @@ function resolveInitialSpaceSelection(){
     phase3Diag("personal-space", { action:"provision", spaceId: resolution.spaceId });
     ensurePersonalSpace(uid).then(async pid => {
       phase3.personalSpaceId = pid;
-      // Authoritatively confirm the freshly-provisioned Space so selection does
-      // not hinge on discovery-listener timing.
+      if (uid !== (user?.uid || "")) { phase3.provisioningInFlight = false; return; }   // auth changed
+      // Authoritatively confirm the freshly-provisioned Space with a read that
+      // fails closed rather than being interpreted as "missing".
+      let spaceSnap, memberSnap;
       try {
-        const [spaceSnap, memberSnap] = await Promise.all([getDoc(spaceDocFor(pid)), getDoc(memberDocFor(pid, uid))]);
-        const entry = normalizeDiscoveredSpace({
-          spaceId: pid,
-          membership: memberSnap.exists() ? { id: uid, ...memberSnap.data() } : null,
-          spaceDoc: spaceSnap.exists() ? spaceSnap.data() : null
-        });
-        if (entry.valid) phase3.discoveredSpaces = [...phase3.discoveredSpaces.filter(s => s.id !== pid), entry];
-      } catch(e){ phase3Diag("personal-space-confirm", e?.message || String(e)); }
+        [spaceSnap, memberSnap] = await Promise.all([getDoc(spaceDocFor(pid)), getDoc(memberDocFor(pid, uid))]);
+      } catch(e){
+        phase3.provisioningInFlight = false;
+        phase3.initialSelectionPending = false;
+        failLocal("Personal Space confirmation", e);
+        return;
+      }
+      if (uid !== (user?.uid || "")) { phase3.provisioningInFlight = false; return; }
+      const entry = normalizeDiscoveredSpace({
+        spaceId: pid,
+        membership: memberSnap.exists() ? { path: `spaces/${pid}/members/${uid}`, id: uid, ...memberSnap.data() } : null,
+        spaceDoc: spaceSnap.exists() ? spaceSnap.data() : null
+      });
+      if (entry.valid) phase3.discoveredSpaces = [...phase3.discoveredSpaces.filter(s => s.id !== pid), entry];
+      else phase3Diag("personal-space-invalid-after-provision", entry.issues);
       phase3.provisioningInFlight = false;
       onDiscoveryUpdate();   // re-run selection with the confirmed Personal Space
     }).catch(err => {
@@ -1653,6 +1711,7 @@ function switchActiveSpace(spaceId, opts = {}){
   cancelAddMode();
   clearSearchSuggestions();
   clearTimeout(searchTimer);
+  searchReqSeq++;   // invalidate any in-flight Google autocomplete request (§5)
   clearTimeout(filterFitTimer); filterFitTimer = null;
 
   // 2) drop the old Space's live listeners and mint a new session token so any
@@ -1693,7 +1752,7 @@ function clearSpaceScopedState(){
   lastMembershipRenderSignature = "";
   lastLocalMembershipDiagnostic = "";
   loggedParticipantWarnings.clear();
-  listItems = []; dayVisitItems = [];
+  dayVisitItems = [];
   markers.forEach(m => { try { m.map = null; } catch(e){} }); markers = [];
   if (tripLine){ try { tripLine.setMap(null); } catch(e){} tripLine = null; }
   removeAdministrativeLayer();
@@ -1704,7 +1763,11 @@ function clearSpaceScopedState(){
   selectedRegionMaskCache = { identity:"", maskIndex:null };
   proximityGeometryCache.clear();
   proximitySeedCount = 0;
-  placeEditorWriteQueues.clear();
+  // NOTE: `placeEditorWriteQueues` is intentionally NOT cleared here (§6).
+  // Clearing the Map would forget still-running Promise chains without
+  // cancelling them; a returned-to Space must keep serializing behind any
+  // unresolved write for the same `${spaceId}:${placeId}` key. Each entry
+  // removes itself via its own `.finally`. New editors are session-invalidated.
 }
 
 function resetFiltersForSpaceSwitch(){
@@ -1898,7 +1961,7 @@ function markerColor(p){
   else if (markerMode === "who") return whoColor(p);
   else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
   else if (markerMode === "rating" && p.rating) return ratingColor(p.rating);
-  return p.status === "wishlist" ? getCSS("--wish") : getCSS("--visited");
+  return getCSS("--visited");
 }
 function markerColorForVisit(p,v){
   if (markerMode === "cat"){
@@ -1914,7 +1977,7 @@ function markerColorForOccurrence(o){
 }
 function effectiveMarkerColor(p){
   let color=markerColor(p);
-  if(p.status!=="visited") return color;
+  if(!hasVisitHistory(p)) return color;
   if(markerMode==="dateFirst" || markerMode==="dateLast"){
     const occurrence=representativeDateOccurrence(p,markerMode);
     return occurrence ? dateOccurrenceColor(occurrence) : color;
@@ -1972,7 +2035,7 @@ function dateMarkerLegendBody(){
 }
 function markerLegendBody(){
   if (!showPins && !proximityEnabled) return "";
-  const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
+  const titles = { cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
   const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
   let order="";
   if(orderMode){
@@ -1987,8 +2050,7 @@ function markerLegendBody(){
       `<div style="display:flex;justify-content:space-between;width:92px;font-size:11px"><span>1</span><span>5</span></div></div>`;
   }
   let rows=[];
-  if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
-  else if (markerMode === "who"){
+  if (markerMode === "who"){
     const uids=[...orderedActiveMemberIds(), ...referencedHistoricalIds];
     rows = uids.map(uid=>[participantColor(uid), participantName(uid)]);
     if (uids.length>=2) rows.push([PARTICIPANT_GROUP_COLOR,"多人同行"]);
@@ -2057,8 +2119,8 @@ function pip(lat, lng, features, codeProp){
   }
   return null;
 }
-// 造訪深度:沒設 level 的「去過」地點,預設當作「旅遊」;想去(wishlist)不算足跡
-function effLevel(p){ return p.level || (p.status === "visited" ? "旅遊" : ""); }
+// 造訪深度:沒設 level 的地點預設當作「旅遊」。
+function effLevel(p){ return p.level || "旅遊"; }
 
 // 確保每個地點都有該級的行政區代碼(算一次就寫回 Firestore 快取)。快取寫回
 // 綁定啟動時的 Space;若期間切換 Space 就停止寫入 (§17)。
@@ -2111,7 +2173,6 @@ function regionPlaces(codeOf){
   const m = {};
   for (const p of Object.values(places)){
     if (!passFilter(p)) continue;
-    if (p.status !== "visited") continue;
     const code = codeOf(p); if (!code) continue;
     (m[code] = m[code] || []).push(p);
   }
@@ -2472,27 +2533,14 @@ function toggleMapSurface(control){
 /* ============================================================
    4) 清單
    ============================================================ */
-let listItems = [], dayVisitItems = [];
+let dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
+  if (tab !== "visited" && tab !== "trips") tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
   const el = document.getElementById("list");
   if (tab === "trips"){ renderTrips(el); return; }
-
-  if(tab==="wishlist"){
-    listItems=Object.values(places).filter(p=>p.status==="wishlist"&&passFilter(p)).sort((a,b)=>effOrd(a)-effOrd(b));
-    if(!listItems.length){ el.innerHTML=`<div class="empty">沒有符合的地點。</div>`; renderFilterChips(); return; }
-    el.innerHTML=listItems.map(p=>cardHTML(p)).join("");
-    listItems.forEach(p=>document.getElementById("c_"+p.id).onclick=ev=>{
-      if(ev.target.closest("[data-del]")||ev.target.closest(".ordbtn")) return;
-      focusMapOnPlace(p); openEditor(p.id);
-    });
-    el.querySelectorAll("[data-del]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();deleteDoc(placeDoc(b.dataset.del));});
-    el.querySelectorAll("[data-up]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();movePlace(b.dataset.up,-1);});
-    el.querySelectorAll("[data-down]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();movePlace(b.dataset.down,1);});
-    renderFilterChips(); return;
-  }
 
   const reorderScope=visitReorderScope();
   const oneDay=singleDayDate();
@@ -2510,8 +2558,10 @@ function renderList(){
   }
   dayVisitItems=occ;
   if(!occ.length){
-    const filterActive = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
-    const emptySpace = !filterActive && !Object.values(places).some(p=>p.status==="visited");
+    // A Space with no actual Visit history at all is simply empty — regardless
+    // of the default month filter, and regardless of dormant legacy wishlist
+    // documents (§8, §21).
+    const emptySpace = !Object.values(places).some(hasVisitHistory);
     el.innerHTML=`<div class="empty">${emptySpace?"這張地圖還沒有造訪紀錄。用上方搜尋或地圖上的「＋」開始記錄。":"沒有符合的造訪紀錄。"}</div>`;
     renderFilterChips(); return;
   }
@@ -2530,27 +2580,6 @@ function renderList(){
   renderFilterChips();
 }
 
-function movePlace(id, dir){
-  const i = listItems.findIndex(p => p.id === id); const j = i + dir;
-  if (j < 0 || j >= listItems.length) return;
-  const a = listItems[i], b = listItems[j];
-  updateDoc(placeDoc(a.id), { ord: effOrd(b) });
-  updateDoc(placeDoc(b.id), { ord: effOrd(a) });
-}
-function cardHTML(p){
-  const cat=(p.categories||[])[0], col=cat?catColor(cat):"#9aa5ad";
-  const whoTxt=participantSummaryText(whoUids(p));
-  const tags=[
-    cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
-    `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
-    p.rating?`<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>`:"",
-    `<span class="ptag" style="background:#e6efe9">想去</span>`
-  ].filter(Boolean).join("");
-  return `<div class="card compact" id="c_${p.id}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
-    <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
-    <div class="ordcol"><button class="ordbtn" data-up="${p.id}">▲</button><button class="ordbtn" data-down="${p.id}">▼</button></div>
-    <button class="delx" data-del="${p.id}" title="刪除地點">✕</button></div></div>`;
-}
 function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
   const whoTxt=visitWhoText(p,v);
@@ -2658,7 +2687,9 @@ async function deleteVisitOccurrence(key){
   vv.splice(idx,1);
   if(opSpaceId!==currentSpaceId) return;
   if(!vv.length){
-    await updateDoc(placeDocFor(opSpaceId,pid),{visits:[],status:"wishlist",visitedOn:"",tripId:""});
+    // Deleting the last remaining Visit removes the whole Place — a Place only
+    // exists because it has Visit history (§15).
+    await deleteDoc(placeDocFor(opSpaceId,pid));
   }else{
     await updateDoc(placeDocFor(opSpaceId,pid),{visits:vv,status:"visited",...visitLegacyFields(vv,p)});
   }
@@ -2684,11 +2715,13 @@ function findExistingPlace(seed){
   return null;
 }
 function openSeed(seed){
+  // Explicitly searching/selecting a Place records a Visit. An existing Place —
+  // including a legacy wishlist-only document detected by extId/name/location —
+  // is reused and gains its first real Visit through this explicit action
+  // (§17, §22). A brand-new Place is created with a Visit.
   const existing=findExistingPlace(seed);
-  if(existing){
-    if(tab==="visited") openEditor(existing.id,null,{addVisit:true});
-    else openEditor(existing.id);
-  }else openEditor(null,seed);
+  if(existing) openEditor(existing.id,null,{addVisit:true});
+  else openEditor(null,seed);
 }
 function wireSearch(){
   const input = document.getElementById("search");
@@ -2698,20 +2731,26 @@ function wireSearch(){
     const q = input.value.trim();
     if (q.length < 2){ box.style.display="none"; return; }
     searchTimer = setTimeout(async () => {
+      // Capture the Space session AND a request generation BEFORE the request
+      // begins (§5). A Space switch or a newer keystroke invalidates both.
+      const reqSession = spaceSession;
+      const reqSeq = ++searchReqSeq;
+      const reqCurrent = () => reqSeq === searchReqSeq && isCurrentSpaceSession(reqSession, spaceSession);
       let rs = [];
       try { rs = await searchPlace(q); } catch(e){ console.warn(e); }
+      if (!reqCurrent()){ box.style.display = "none"; return; }
       box.innerHTML = rs.map((r,i)=>`<div data-i="${i}">${esc(r.name)}</div>`).join("") || `<div>找不到</div>`;
       box.style.display = "block";
       box.querySelectorAll("div[data-i]").forEach(d => d.onclick = async () => {
         const r = rs[+d.dataset.i]; box.style.display="none"; input.value="";
-        const searchSession = spaceSession;
+        if (!reqCurrent()) return;   // suggestions belonged to a superseded request
         try {
           const place = r.prediction.toPlace();
           await place.fetchFields({ fields:["displayName","location","formattedAddress"] });
           sessionToken = null;                       // 選定後結束 session(計費最佳化)
           const lat = place.location.lat(), lng = place.location.lng();
           const admin = await reverseGeocode(lat, lng);
-          if (!isCurrentSpaceSession(searchSession, spaceSession)) return;   // switched Space mid-search (§18)
+          if (!reqCurrent()) return;   // switched Space mid-selection (§5)
           openSeed({ name:place.displayName||r.name, lat, lng, admin, source:"google", extId:r.prediction.placeId });
         } catch(e){ alert("取得地點失敗:"+e.message); }
       });
@@ -2806,7 +2845,7 @@ function persistPlaceEditorData(spaceId,id,data){
   return write;
 }
 function openEditor(id, seed, opts={}){
-  const p = id ? places[id] : { status: tab==="wishlist"?"wishlist":"visited", categories:[], ...seed };
+  const p = id ? places[id] : { categories:[], ...seed };
   const shared=placeSharedFields(p);
   // The editor is bound to the Space that was active when it opened. Every write
   // it makes targets `editorSpaceId`, and it stops acting once a Space switch
@@ -2815,9 +2854,8 @@ function openEditor(id, seed, opts={}){
   const editorSession = spaceSession;
   const editorLive = () => isCurrentSpaceSession(editorSession, spaceSession);
   let docId = id || null, persistQueue=Promise.resolve();
-  let wishlistCats = new Set((p.categories||[]).slice(0,1));
-  let status = p.status || "visited";
   let level = shared.level;
+  let deleted = false;   // set once the Place has been deleted (last Visit removed / 刪除地點)
   // Legacy whoMode anchor: a NEW Place is genuinely created by the current
   // User; an EXISTING Place uses only its explicit stored `createdBy` and never
   // substitutes the viewer, so an old Place resolves/serializes the same for
@@ -2862,26 +2900,23 @@ function openEditor(id, seed, opts={}){
   };
   let visits = placeVisits(p).map(loadWorkingVisit);
   let focusIndex = Number.isFinite(Number(opts.focusVisitIndex)) ? Number(opts.focusVisitIndex) : -1;
-  if (!id && status==="visited" && !visits.length){
-    const presetCat=filter.cats.size===1?[...filter.cats][0]:"";
-    visits.push(newWorkingVisit({id:newVisitId(),kind:"visit",date:defaultDate,endDate:"",tripId:filterTrip||"",category:presetCat}, defaultParticipants())); focusIndex=0;
-  }
-  if (id && opts.addVisit){
-    status="visited";
-    const prev=latestVisit(p), cat=prev?visitCategory(p,prev):((p.categories||[])[0]||"");
+  // A Place exists in the active product only because it has Visit history:
+  //  - a brand-new Place, or a legacy record reached through explicit search/add
+  //    (`opts.addVisit`), gets its first Visit here using the Phase 2 defaults;
+  //  - an existing recorded Place with no Visits (should not occur in normal
+  //    views) is defensively given one so it never stays as an empty document.
+  if (opts.addVisit || !id || !visits.length){
+    const prev=id?latestVisit(p):null;
+    const cat=prev ? visitCategory(p,prev) : (filter.cats.size===1?[...filter.cats][0]:((p.categories||[])[0]||""));
     const prevSeed=prev?visitWhoUids(p,prev):[];
     const k=level==="住宿"?"stay":"visit";
-    visits.push(newWorkingVisit({id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat}, prevSeed.length?prevSeed:defaultParticipants()));
+    visits.push(newWorkingVisit(
+      {id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat},
+      prevSeed.length?prevSeed:defaultParticipants()
+    ));
     focusIndex=visits.length-1;
   }
-  // Wishlist Place-level participants (CONTRACT §1C: `who` + legacy `whoMode`).
-  // Historical participants here are also one-way removable (§1).
-  let wishlistParticipants = orderParticipantSelection(
-    id ? resolvePlaceCompatParticipants(p, partCtx) : defaultParticipants(),
-    activeIds
-  );
 
-  const visitedHasHistory = () => visits.some(v=>v.date);
   // Arbitrary-Member participant picker. Active Members are toggle chips.
   // Historical (removed / unknown) participants already on the record render as
   // a chip with an explicit "×": they are preserved until removed, the removal
@@ -2926,23 +2961,9 @@ function openEditor(id, seed, opts={}){
     <div class="editor-section">
       <div class="editor-section-head"><div class="editor-section-title">地點</div></div>
       <input id="f_name" value="${esc(p.name||"")}" placeholder="名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff">
-      <div class="seg" id="f_status" style="margin-top:8px">
-        <button data-s="visited" class="${status==='visited'?'on-v':''}">去過了</button>
-        <button data-s="wishlist" class="${status==='wishlist'?'on-w':''}" ${id&&visitedHasHistory()?'disabled title="已有造訪紀錄；請先刪除造訪紀錄"':''}>想去</button>
-      </div>
     </div>
 
-    <div class="editor-section" id="f_wishlistSection" style="${status==='wishlist'?'':'display:none'}">
-      <div class="editor-section-head"><div class="editor-section-title">想去設定</div></div>
-      <div class="field" style="margin-bottom:8px"><label>想去這裡做什麼</label>
-        <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${wishlistCats.has(c)?'on':''}" data-c="${esc(c)}" style="${wishlistCats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
-      </div>
-      <div class="field" id="f_wishwho" style="margin-bottom:0"><label>預計誰去</label>
-        ${participantPickHTML(wishlistParticipants, {id:"f_who"})}
-      </div>
-    </div>
-
-    <div class="editor-section" id="f_visitwrap" style="${status==='wishlist'?'display:none':''}">
+    <div class="editor-section" id="f_visitwrap">
       <div class="editor-section-head">
         <div><div class="editor-section-title">造訪紀錄</div><div class="editor-section-note">每次造訪各自記日期、目的、旅程與同行者；評價仍共用</div></div>
         <button class="btn grey mini" id="v_add" type="button">＋新增</button>
@@ -2964,7 +2985,7 @@ function openEditor(id, seed, opts={}){
     <div class="row"><button class="btn" id="f_done">完成</button>${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除地點</button>`:``}</div>
   `);
 
-  const nameEl=document.getElementById("f_name"), visitWrap=document.getElementById("f_visitwrap"), wishSection=document.getElementById("f_wishlistSection");
+  const nameEl=document.getElementById("f_name"), visitWrap=document.getElementById("f_visitwrap");
   function collect(){
     const clean=visits.filter(v=>v.date).map(v=>{
       const kind=v.kind==="stay"?"stay":"visit";
@@ -2986,24 +3007,26 @@ function openEditor(id, seed, opts={}){
       return out;
     });
     const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-    const summaryWho=status==="visited"
-      ? (latest ? resolveVisitParticipants(latest, p, partCtx).participantIds : defaultParticipants())
-      : [...wishlistParticipants];
+    const summaryWho=latest ? resolveVisitParticipants(latest, p, partCtx).participantIds : defaultParticipants();
     const rv=parseFloat(document.getElementById("f_rating").value);
     const latestCat=latest?.category||"";
+    // A recorded Place is always a Visit-bearing document. `status:"visited"` is
+    // kept only as a mixed-client compatibility mirror (§18); it carries no
+    // domain meaning any more.
     return {
       name:nameEl.value.trim(),lat:p.lat,lng:p.lng,source:p.source||"google",extId:p.extId||null,admin:p.admin||{},
-      status, categories:status==="visited"?(latestCat?[latestCat]:[]):[...wishlistCats], level, whoMode:deriveLegacyWhoMode(summaryWho, partCtx), who:summaryWho,
-      visits:status==="visited"?clean:[], visitedOn:status==="visited"?(latest?.date||""):"", tripId:status==="visited"?(latest?.tripId||""):"",
+      status:"visited", categories:latestCat?[latestCat]:[], level, whoMode:deriveLegacyWhoMode(summaryWho, partCtx), who:summaryWho,
+      visits:clean, visitedOn:latest?.date||"", tripId:latest?.tripId||"",
       rating:rv>0?rv:null, review:document.getElementById("f_review").value.trim()
     };
   }
   function persist(){
-    if(!editorLive()) return Promise.resolve();   // a Space switch invalidated this editor
+    if(!editorLive() || deleted) return Promise.resolve();   // switch invalidated the editor, or the Place is gone
     const data=collect();
+    if(!data.visits.length) return Promise.resolve();   // never autosave an empty Place (§15)
     if(docId) return persistPlaceEditorData(editorSpaceId,docId,data);
     const queued=persistQueue.then(async()=>{
-      if(!editorLive()) return;
+      if(!editorLive() || deleted) return;
       if(!docId){
         if(!data.name) return;
         data.createdBy=user.uid; data.createdAt=serverTimestamp();
@@ -3012,6 +3035,12 @@ function openEditor(id, seed, opts={}){
     });
     persistQueue=queued.catch(()=>{});
     return queued;
+  }
+  async function deletePlaceAndClose(){
+    deleted = true;
+    try { if (editorLive() && docId) await deleteDoc(placeDocFor(editorSpaceId, docId)); }
+    catch(e){ /* snapshot will reconcile */ }
+    closeModal();
   }
   function catOptions(selected){
     return `<option value="">未分類</option>`+spaceCats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("")+`<option value="__new__">＋新增分類…</option>`;
@@ -3078,10 +3107,10 @@ function openEditor(id, seed, opts={}){
         visits[i].endDate=end.value&&end.value>visits[i].date?end.value:addDays(visits[i].date,1); focusIndex=i; renderVisits(); persist();
       };
       row.querySelector(".v_del").onclick=()=>{
-        visits.splice(i,1); focusIndex=Math.min(i,visits.length-1); if(!visits.length) status="wishlist";
-        visitWrap.style.display=status==="wishlist"?"none":"block"; wishSection.style.display=status==="wishlist"?"block":"none";
-        document.querySelectorAll("#f_status button").forEach(x=>{ x.className=""; x.disabled=false; });
-        const sb=document.querySelector(`#f_status button[data-s="${status}"]`); if(sb) sb.className=status==="visited"?"on-v":"on-w";
+        // Deleting the last Visit deletes the whole Place and closes the editor
+        // (§15). Otherwise the Place keeps its remaining Visits.
+        if(visits.length<=1){ deletePlaceAndClose(); return; }
+        visits.splice(i,1); focusIndex=Math.min(i,visits.length-1);
         renderVisits(); persist();
       };
     });
@@ -3095,66 +3124,28 @@ function openEditor(id, seed, opts={}){
       {id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:prev?.category||latestVisitCategory(p)||""},
       seedParticipants.length?seedParticipants:defaultParticipants()
     ));
-    status="visited"; focusIndex=visits.length-1; visitWrap.style.display="block"; wishSection.style.display="none"; renderVisits(); persist();
+    focusIndex=visits.length-1; renderVisits(); persist();
   }
 
   renderVisits();
   document.getElementById("v_add").onclick=addVisit;
 
-  document.querySelectorAll("#f_status button").forEach(b=>b.onclick=()=>{
-    if(b.disabled) return; status=b.dataset.s;
-    document.querySelectorAll("#f_status button").forEach(x=>x.className=""); b.className=status==="visited"?"on-v":"on-w";
-    visitWrap.style.display=status==="wishlist"?"none":"block"; wishSection.style.display=status==="wishlist"?"block":"none";
-    if(status==="visited"&&!visits.length){
-      const d=defaultDateForNewVisit(),k=level==="住宿"?"stay":"visit";
-      const seed=sanitizeParticipantsForNewSelection(wishlistParticipants, activeIds);
-      visits.push(newWorkingVisit(
-        {id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:[...wishlistCats][0]||""},
-        seed.length?seed:defaultParticipants()
-      )); focusIndex=0; renderVisits();
-    }
-    persist();
-  });
-  document.querySelectorAll("#f_cats .chip[data-c]").forEach(c=>c.onclick=()=>{
-    const k=c.dataset.c,already=wishlistCats.has(k); wishlistCats=new Set(already?[]:[k]);
-    document.querySelectorAll("#f_cats .chip[data-c]").forEach(x=>{ const on=wishlistCats.has(x.dataset.c); x.classList.toggle("on",on); if(on){const col=catColor(x.dataset.c);x.style.background=col;x.style.color=textOn(col);x.style.borderColor=col;}else{x.style.background="";x.style.color="";x.style.borderColor="";} }); persist();
-  });
-  document.getElementById("f_addcat").onclick=()=>{
-    const name=(prompt("新增分類(例:溫泉、看展、爬山)")||"").trim(); if(!name)return;
-    if(!spaceCats.includes(name)){spaceCats.push(name); if(editorLive()) setDoc(metaDocFor(editorSpaceId),{categories:arrayUnion(name)},{merge:true});}
-    wishlistCats=new Set([name]);
-    const wrap=document.getElementById("f_cats");
-    wrap.querySelectorAll(".chip[data-c]").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";x.style.borderColor="";});
-    const chip=document.createElement("span"),col=catColor(name); chip.className="chip on";chip.dataset.c=name;chip.textContent=name;chip.style.background=col;chip.style.color=textOn(col);chip.style.borderColor=col;
-    chip.onclick=()=>{wishlistCats=new Set([name]);persist();}; document.getElementById("f_addcat").before(chip); persist();
-  };
   document.querySelectorAll("#f_level button").forEach(b=>b.onclick=()=>{
     level=b.dataset.l;
     document.querySelectorAll("#f_level button").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";}); b.classList.add("on");b.style.background=levelColors[level];b.style.color="#fff";
-    if(level==="住宿" && status==="visited"){
+    if(level==="住宿"){
       if(!visits.length){ const d=defaultDateForNewVisit(); visits.push(newWorkingVisit({id:newVisitId(),kind:"stay",date:d,endDate:addDays(d,1),tripId:filterTrip||"",category:""}, defaultParticipants())); focusIndex=0; }
       const i=focusIndex>=0?focusIndex:visits.length-1;
       if(visits[i]){ visits[i].kind="stay"; visits[i].endDate=(visits[i].endDate&&visits[i].endDate>visits[i].date)?visits[i].endDate:addDays(visits[i].date||defaultDateForNewVisit(),1); if(!visits[i].category&&spaceCats.includes("住宿"))visits[i].category="住宿"; focusIndex=i; renderVisits(); }
     }
     persist();
   });
-  function renderWishlistParticipants(){
-    const host=document.getElementById("f_who");
-    if(!host) return;
-    host.outerHTML=participantPickHTML(wishlistParticipants, {id:"f_who"});
-    wireParticipantPick(
-      document.getElementById("f_who"),
-      ()=>wishlistParticipants,
-      next=>{ wishlistParticipants=next; renderWishlistParticipants(); persist(); }
-    );
-  }
-  renderWishlistParticipants();
   nameEl.addEventListener("change",persist); nameEl.addEventListener("blur",persist);
   const rEl=document.getElementById("f_rating"),rVal=document.getElementById("f_ratingval");
   rEl.oninput=()=>{const v=parseFloat(rEl.value);rVal.textContent=v>0?("★ "+v):"未評分";}; rEl.addEventListener("change",persist);
   document.getElementById("f_review").addEventListener("blur",persist);
   document.getElementById("f_done").onclick=async()=>{await persist();closeModal();};
-  const fdel=document.getElementById("f_del"); if(fdel)fdel.onclick=async()=>{ if(editorLive()) await deleteDoc(placeDocFor(editorSpaceId,docId||id)); closeModal();};
+  const fdel=document.getElementById("f_del"); if(fdel)fdel.onclick=deletePlaceAndClose;
   if(!id&&collect().name) persist();
 }
 

@@ -256,4 +256,163 @@ assert.match(mainSource, /function sanitizeParticipantFilter\(\)\{[\s\S]*?filter
 assert.match(mainSource, /function refreshFilterUI\(\)\{[\s\S]*?sanitizeParticipantFilter\(\)/,
   "refreshFilterUI must drop an out-of-candidate participant filter before rendering the select");
 
+/* ============================================================
+   Phase 3 Revised 2 — discovery ordering, root-read safety,
+   stale listener/auth teardown, search session capture (§1–§6).
+   ============================================================ */
+
+/* §1 — every discovery snapshot carries a monotonic request version and the
+   async result applies only if listener generation, request version, and the
+   authenticated User are all still current. */
+assert.match(mainSource, /const req = \+\+phase3\.discoveryReq;/,
+  "each discovery snapshot must bump a per-snapshot request version");
+assert.match(mainSource, /handleDiscoverySnapshot\(gen, req, uid, snap\)/);
+const discoverySnapFn = mainSource.match(/async function handleDiscoverySnapshot\([\s\S]*?\n\}/);
+assert.ok(discoverySnapFn, "handleDiscoverySnapshot must exist");
+assert.match(discoverySnapFn[0],
+  /const stillCurrent = \(\) => [^;]*gen === phase3\.discoveryGen[^;]*req === phase3\.discoveryReq[^;]*snapUid === \(user\?\.uid \|\| ""\)[^;]*snapUid === phase3\.discoveryUid/,
+  "a discovery result applies only if generation, request version, and User are all current (§1)");
+assert.equal((discoverySnapFn[0].match(/if \(!stillCurrent\(\)\) return;/g) || []).length, 2,
+  "stillCurrent must be re-checked after every await (§1)");
+
+/* §2 — a Firestore READ FAILURE for a Space root is never treated as "root
+   missing". Read failures fail closed for the whole discovery cycle. */
+assert.match(discoverySnapFn[0], /Promise\.allSettled\(mine\.map\(m => getDoc\(spaceDocFor\(m\.spaceId\)\)\)\)/,
+  "root reads use allSettled so a rejection is distinguishable from a successful non-existent read (§2)");
+assert.match(discoverySnapFn[0], /const readFailures = settled[\s\S]*?\.filter\(\(\{ s \}\) => s\.status === "rejected"\)/);
+assert.match(discoverySnapFn[0], /if \(readFailures\.length\)\{[\s\S]*?failLocal\("Space discovery",[\s\S]*?return;/,
+  "any root read failure aborts the discovery cycle and never provisions a Personal Space (§2)");
+assert.match(discoverySnapFn[0], /spaceDoc: snap\.exists\(\) \? snap\.data\(\) : null/,
+  "only a successful read that does not exist yields a null root (§2)");
+
+/* §3 — collection-group path shape is validated by the pure helper. */
+assert.match(mainSource, /import \{[\s\S]*?resolveSpaceMembershipPath[\s\S]*?\} from "\.\/spaces\.js"/);
+assert.match(discoverySnapFn[0], /resolveSpaceMembershipPath\(row\.path, snapUid\)/,
+  "discovery must validate each Membership document path against the exact Space membership shape (§3)");
+
+/* §4 — stale listener errors + auth teardown. Every current-Space onSnapshot
+   error callback is guarded; auth teardown mints a fresh Space session BEFORE
+   old listeners are dropped. */
+assert.match(mainSource, /const guardedError = handler => error => \{ if \(isStaleSpaceCallback\(session\)\) return; handler\(error\); \};/,
+  "current-Space listener error callbacks must be wrapped so a stale Space session's errors are ignored (§4)");
+assert.equal((mainSource.match(/guardedError\(error =>/g) || []).length, 5,
+  "all five current-Space listeners (space root, members, places, trips, meta) must use the guarded error callback (§4)");
+const discoveryErrCb = mainSource.match(/onSnapshot\(q,\s*\n[\s\S]*?err => \{([\s\S]*?)\}\s*\n\s*\);/);
+assert.ok(discoveryErrCb, "discovery listener error callback must exist");
+assert.match(discoveryErrCb[1], /gen !== phase3\.discoveryGen \|\| uid !== \(user\?\.uid \|\| ""\)/,
+  "the discovery listener error callback must ignore errors from a superseded generation or a changed User (§4)");
+const authCb = mainSource.match(/onAuthStateChanged\(auth, u => \{([\s\S]*?)\},\s*\n\s*err =>/);
+assert.ok(authCb, "onAuthStateChanged callback must exist");
+assert.match(authCb[1], /^\s*\/\/[\s\S]*?spaceSession = nextSpaceSession\(spaceSession, ""\);[\s\S]*?teardownPhase3\(\);[\s\S]*?unsubscribeCurrentSpaceListeners\(\);/,
+  "auth teardown must invalidate the Space session BEFORE tearing down old listeners (§4)");
+const teardownFn = mainSource.match(/function teardownPhase3\(\)\{([\s\S]*?)\n\}/);
+assert.ok(teardownFn, "teardownPhase3 must exist");
+assert.match(teardownFn[1], /phase3\.discoveryReq\+\+;\s*\n?\s*phase3\.discoveryUid = "";/,
+  "teardownPhase3 must invalidate any in-flight discovery request and clear the discovery UID (§4)");
+
+/* §5 — Google autocomplete captures its Space session AND a request generation
+   BEFORE searchPlace(); a switch or newer keystroke invalidates the result, and
+   each suggestion click keeps the same request session. */
+const searchTimerFn = mainSource.match(/searchTimer = setTimeout\(async \(\) => \{([\s\S]*?)\}, 350\);/);
+assert.ok(searchTimerFn, "the debounced search callback must exist");
+assert.match(searchTimerFn[1], /const reqSession = spaceSession;\s*\n\s*const reqSeq = \+\+searchReqSeq;/,
+  "the search request must capture the Space session and a request generation before it starts (§5)");
+assert.match(searchTimerFn[1], /const reqCurrent = \(\) => reqSeq === searchReqSeq && isCurrentSpaceSession\(reqSession, spaceSession\);/);
+assert.match(searchTimerFn[1], /rs = await searchPlace\(q\);[\s\S]*?if \(!reqCurrent\(\)\)\{ box\.style\.display = "none"; return; \}/,
+  "search results are dropped if the request is no longer current (§5)");
+assert.equal((searchTimerFn[1].match(/if \(!reqCurrent\(\)\) return;/g) || []).length, 2,
+  "reqCurrent must be re-checked after fetchFields() and after reverseGeocode(), before openSeed() (§5)");
+assert.match(mainSource, /searchReqSeq\+\+;\s*\/\/ invalidate any in-flight Google autocomplete request/,
+  "switchActiveSpace must invalidate pending search requests (§5)");
+assert.match(authCb[1], /searchReqSeq\+\+;/, "auth teardown must invalidate pending search requests (§5)");
+
+/* §6 — the write serialization Map is NOT cleared on a Space switch: clearing it
+   would abandon still-running Promise chains without cancelling them. */
+const clearScopedFn = mainSource.match(/function clearSpaceScopedState\(\)\{([\s\S]*?)\n\}/);
+assert.ok(clearScopedFn, "clearSpaceScopedState must exist");
+assert.doesNotMatch(clearScopedFn[1], /placeEditorWriteQueues\.clear\(\)/,
+  "clearSpaceScopedState must NOT clear placeEditorWriteQueues while writes may still be running (§6)");
+assert.match(clearScopedFn[1], /placeEditorWriteQueues` is intentionally NOT cleared/,
+  "the reason for not clearing placeEditorWriteQueues must be documented (§6)");
+assert.match(mainSource, /settled\.finally\(\(\)=>\{ if\(placeEditorWriteQueues\.get\(key\)===settled\) placeEditorWriteQueues\.delete\(key\); \}\)/,
+  "each write queue entry removes itself via its own .finally (§6)");
+
+/* ============================================================
+   Part B — Wishlist removed as a product feature (§11–§25).
+   ============================================================ */
+const indexHtml = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+
+/* §13 — only 去過 | 行程 tabs remain; no 想去 tab. */
+assert.doesNotMatch(mainSource, /data-t="wishlist"/, "the 想去 tab must be gone (§13)");
+assert.doesNotMatch(mainSource, /想去/, "no 想去 label anywhere in runtime source (§13)");
+assert.match(mainSource, /<button class="tab" data-t="visited">去過<\/button>\s*\n\s*<button class="tab" data-t="trips">行程<\/button>/,
+  "exactly the 去過 and 行程 tabs remain (§13)");
+assert.doesNotMatch(mainSource, /我的足跡/, "去過 must NOT be renamed to 我的足跡 — that name is reserved for a future cross-Space aggregate (§13)");
+assert.match(mainSource, /if \(tab !== "visited" && tab !== "trips"\) tab = "visited"/,
+  "renderList must coerce any unknown tab (e.g. a stale 'wishlist') back to 'visited' (§13)");
+
+/* §14 — the Place editor has no status toggle / 想去設定 / wishlist pickers. */
+assert.doesNotMatch(mainSource, /f_status/, "the 去過了/想去 status toggle must be gone from the editor (§14)");
+assert.doesNotMatch(mainSource, /f_wishlistSection|f_wishlist|wishSection/, "the 想去設定 section must be gone (§14)");
+assert.doesNotMatch(mainSource, /renderWishlistParticipants|wishlistParticipants|wishlistCats/,
+  "wishlist participant / category state must be gone (§14, §23)");
+assert.doesNotMatch(mainSource, /\bon-w\b/, "the wishlist status button class must be gone from runtime (§14)");
+assert.doesNotMatch(indexHtml, /\.on-w\b/, "the .on-w wishlist button style must be removed (§14)");
+
+/* §14 — opening/creating a Place operates directly on Visit history. */
+const openEditorFn = mainSource.match(/function openEditor\(id, seed, opts=\{\}\)\{([\s\S]*?)\n\}/);
+assert.ok(openEditorFn, "openEditor must exist");
+assert.match(openEditorFn[1], /if \(opts\.addVisit \|\| !id \|\| !visits\.length\)\{[\s\S]*?visits\.push\(newWorkingVisit\(/,
+  "a new / Visit-less Place always gets a Visit using the Phase 2 defaults — no status choice (§14)");
+assert.doesNotMatch(openEditorFn[1], /let status\b|status\s*=\s*b\.dataset\.s|status===["']wishlist["']/,
+  "openEditor must not carry a visited/wishlist status variable (§14, §18)");
+
+/* §15 — Visit-level delete: last Visit deletes the whole Place, never status="wishlist". */
+const delVisitFn = mainSource.match(/async function deleteVisitOccurrence\(key\)\{([\s\S]*?)\n\}/);
+assert.ok(delVisitFn, "deleteVisitOccurrence must exist");
+assert.match(delVisitFn[1], /if\(!vv\.length\)\{[\s\S]*?await deleteDoc\(placeDocFor\(opSpaceId,pid\)\)/,
+  "deleting the last Visit deletes the whole Place document (§15)");
+assert.doesNotMatch(delVisitFn[1], /status:"wishlist"/, "deleting the last Visit must NOT downgrade the Place to wishlist (§15)");
+assert.match(openEditorFn[1], /async function deletePlaceAndClose\(\)\{[\s\S]*?deleteDoc\(placeDocFor\(editorSpaceId, docId\)\)/,
+  "the editor's last-Visit / 刪除地點 path deletes the Place in its originating Space (§15)");
+assert.match(openEditorFn[1], /if\(visits\.length<=1\)\{ deletePlaceAndClose\(\); return; \}/,
+  "the Visit-row ✕ deletes the Place when it would remove the final Visit (§15)");
+assert.match(openEditorFn[1], /if\(!editorLive\(\) \|\| deleted\) return Promise\.resolve\(\);/,
+  "persist() must no-op once the Place has been deleted (§15)");
+assert.match(openEditorFn[1], /if\(!data\.visits\.length\) return Promise\.resolve\(\);/,
+  "persist() must never autosave an empty (Visit-less) Place (§15)");
+
+/* §16 — a central hasVisitHistory() gate; legacy wishlist docs are dormant. */
+assert.match(mainSource, /function hasVisitHistory\(p\)\{\s*\n?\s*return !!p && \(\(Array\.isArray\(p\.visits\) && p\.visits\.length > 0\) \|\| !!p\.visitedOn\);/,
+  "hasVisitHistory must gate on modern visits plus legacy visitedOn compat (§16)");
+assert.match(mainSource, /function passFilter\(p\)\{[\s\S]*?if \(!hasVisitHistory\(p\)\) return false;/,
+  "the normal list/marker filter must exclude Places with no Visit history (§16, §19)");
+assert.doesNotMatch(mainSource, /p\.status\s*!==\s*"visited"/, "no runtime path may branch on p.status !== 'visited' any more (§16, §19)");
+assert.doesNotMatch(mainSource, /p\.status\s*===\s*"wishlist"|p\.status\s*===\s*tab/, "no runtime path may branch on a wishlist status (§19)");
+
+/* §20 — the 是否去過 / status marker colour mode is gone. */
+assert.doesNotMatch(mainSource, /markerMode === "status"|\["status","是否去過"\]|status:"是否去過"/,
+  "the status marker colour mode must be removed from Settings and the legend (§20)");
+assert.doesNotMatch(mainSource, /getCSS\("--wish"\)/, "markerColor must not fall back to a wishlist colour (§20)");
+const markerOptsLine = mainSource.match(/const markerOpts = \[([\s\S]*?)\];/);
+assert.ok(markerOptsLine && !/status/.test(markerOptsLine[1]), "Settings marker options must not offer 'status' (§20)");
+
+/* §22 — search / map-add is independent of the active tab. */
+const openSeedFn = mainSource.match(/function openSeed\(seed\)\{([\s\S]*?)\n\}/);
+assert.ok(openSeedFn, "openSeed must exist");
+assert.doesNotMatch(openSeedFn[1], /tab\s*===\s*"visited"|tab\s*===\s*"wishlist"/,
+  "openSeed must not depend on the active tab (§22)");
+assert.match(openSeedFn[1], /if\(existing\) openEditor\(existing\.id,null,\{addVisit:true\}\);\s*else openEditor\(null,seed\);/,
+  "openSeed reuses an existing Place (adding a Visit) or creates a new one with a Visit (§17, §22)");
+
+/* §25 — no new status:"wishlist" writes anywhere in runtime. The only tolerated
+   occurrences are documentation comments (legacy-compat explanation). */
+const mainCode = mainSource
+  .split("\n")
+  .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
+  .join("\n");
+assert.doesNotMatch(mainCode, /["']wishlist["']/,
+  "runtime code must never reference a 'wishlist' status/tab value — comments aside (§18, §19, §25)");
+assert.doesNotMatch(mainCode, /想去/, "no 想去 UI string in runtime code (§13, §25)");
+
 console.log("space-membership assertions passed");

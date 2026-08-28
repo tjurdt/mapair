@@ -71,10 +71,21 @@ function coordinateKey(lat, lng) {
   return `${Number(lat).toFixed(8)},${Number(lng).toFixed(8)}`;
 }
 
+// A seed Place must have real Visit history — modern embedded `visits`, a legacy
+// `visitedOn` date, or (compat) an explicit `status:"visited"`. Dormant legacy
+// wishlist-only records never become proximity seeds.
+function seedHasVisitHistory(place) {
+  return !!place && (
+    place.status === "visited" ||
+    (Array.isArray(place.visits) && place.visits.length > 0) ||
+    !!place.visitedOn
+  );
+}
+
 export function selectEligibleProximitySeeds(placeSource, qualifies = () => true) {
   const values = Array.isArray(placeSource) ? placeSource : Object.values(placeSource || {});
   const candidates = values
-    .filter(place => place?.status === "visited" && Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lng)) && qualifies(place))
+    .filter(place => seedHasVisitHistory(place) && Number.isFinite(Number(place.lat)) && Number.isFinite(Number(place.lng)) && qualifies(place))
     .map(place => ({ id:String(place.id ?? ""), lat:Number(place.lat), lng:Number(place.lng) }))
     .sort((a, b) => a.id.localeCompare(b.id) || a.lat - b.lat || a.lng - b.lng);
   const usedCoordinates = new Set();

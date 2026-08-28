@@ -39,6 +39,29 @@ export function personalSpaceId(uid){
 }
 
 /* ------------------------------------------------------------
+   Collection-group path validation (§3).
+
+   `collectionGroup("members")` can match ANY collection named
+   "members". A discovered Membership is only trusted when its
+   document path is EXACTLY `spaces/{spaceId}/members/{uid}` — the
+   grandparent ID is only mapped into `spaces/{id}` for that shape.
+   Anything else (wrong depth, wrong collection names, empty
+   segments, or a member UID that is not the authenticated User) is
+   rejected, excluded from the switcher, and only diagnosed.
+   ------------------------------------------------------------ */
+export function resolveSpaceMembershipPath(path, expectedUid = null){
+  const parts = (typeof path === "string" ? path : "").split("/").filter(Boolean);
+  if (parts.length !== 4) return { valid: false, reason: "unexpected-path-depth", path: typeof path === "string" ? path : null };
+  if (parts[0] !== "spaces" || parts[2] !== "members") return { valid: false, reason: "not-a-space-membership-path", path };
+  const spaceId = usable(parts[1]);
+  const memberUid = usable(parts[3]);
+  if (!spaceId || !memberUid) return { valid: false, reason: "empty-path-segment", path };
+  const expected = usable(expectedUid);
+  if (expected && memberUid !== expected) return { valid: false, reason: "member-uid-mismatch", path, memberUid };
+  return { valid: true, spaceId, memberUid };
+}
+
+/* ------------------------------------------------------------
    Normalise one discovered Membership + its root Space document.
 
    `membership` must carry its own document `id` (which must equal
@@ -70,10 +93,20 @@ export function normalizeDiscoveredSpace({ spaceId, membership, spaceDoc } = {})
 
   const ownerId = hasRoot ? usable(spaceDoc.ownerId) : "";
   const name = hasRoot ? usable(spaceDoc.name) : "";
+  const memberUid = docId || storedUid || "";
+
+  // Ownership-semantic checks (§7). These cannot prove the full exactly-one-owner
+  // invariant without reading every Membership, but they reject obvious
+  // self/root contradictions.
+  if (hasRoot && !ownerId) issues.push({ code: "missing-owner-id", message: "Space.ownerId must be a usable UID." });
+  if (type === "personal" && role && role !== "owner") issues.push({ code: "personal-not-owner", message: "A Personal Space discovered as a non-owner Membership is invalid." });
+  if (type === "personal" && ownerId && memberUid && ownerId !== memberUid) issues.push({ code: "personal-owner-mismatch", message: "Personal Space.ownerId must equal the Membership UID." });
+  if (role === "owner" && ownerId && memberUid && ownerId !== memberUid) issues.push({ code: "owner-id-contradiction", message: "An owner Membership must match Space.ownerId." });
+  if (ownerId && memberUid && ownerId === memberUid && role && role !== "owner") issues.push({ code: "self-owner-wrong-role", message: "Space.ownerId equals the Membership UID but the role is not owner." });
 
   return {
     id,
-    userId: docId || storedUid || "",
+    userId: memberUid,
     role,
     status,
     type,

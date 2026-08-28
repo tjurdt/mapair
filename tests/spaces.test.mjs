@@ -11,6 +11,7 @@ import {
   orderSpacesForSwitcher,
   personalSpaceId,
   personalSpaceResolution,
+  resolveSpaceMembershipPath,
   readActiveSpacePreference,
   spaceDisplayName,
   spaceTypeLabel,
@@ -241,6 +242,91 @@ function accessibleIds(list){ return list.filter(s => s.valid).map(s => s.id); }
   assert.equal(res.spaceId, "test-space-personal-a");
   const order = orderSpacesForSwitcher(aSpaces, "test-user-a").map(s => s.id);
   assert.equal(order[0], "test-space-personal-a", "own Personal Space leads the switcher");
+}
+
+/* 16 — collection-group Membership path shape validation (§3) ------------- */
+{
+  // Only an exact spaces/{spaceId}/members/{uid} path is trusted.
+  const ok = resolveSpaceMembershipPath("spaces/test-space-group/members/test-user-a", "test-user-a");
+  assert.equal(ok.valid, true);
+  assert.equal(ok.spaceId, "test-space-group");
+  assert.equal(ok.memberUid, "test-user-a");
+
+  // A collectionGroup("members") query can match any collection named "members".
+  assert.equal(resolveSpaceMembershipPath("other/foo/members/test-user-a").valid, false, "wrong root collection");
+  assert.equal(resolveSpaceMembershipPath("other/foo/members/test-user-a").reason, "not-a-space-membership-path");
+  assert.equal(resolveSpaceMembershipPath("spaces/foo/nested/bar/members/test-user-a").valid, false, "deeper than one Space");
+  assert.equal(resolveSpaceMembershipPath("spaces/foo/nested/bar/members/test-user-a").reason, "unexpected-path-depth");
+  assert.equal(resolveSpaceMembershipPath("spaces//members/test-user-a").valid, false, "empty spaceId segment");
+  assert.equal(resolveSpaceMembershipPath("spaces/foo/members/").valid, false, "empty uid segment");
+  assert.equal(resolveSpaceMembershipPath("spaces/foo/friends/test-user-a").valid, false, "not the members collection");
+  assert.equal(resolveSpaceMembershipPath("").valid, false);
+  assert.equal(resolveSpaceMembershipPath(null).valid, false);
+
+  // The discovered member document must belong to the authenticated User.
+  const mismatch = resolveSpaceMembershipPath("spaces/s1/members/test-user-b", "test-user-a");
+  assert.equal(mismatch.valid, false);
+  assert.equal(mismatch.reason, "member-uid-mismatch");
+  // Without an expected uid it only checks shape.
+  assert.equal(resolveSpaceMembershipPath("spaces/s1/members/test-user-b").valid, true);
+}
+
+/* 17 — strengthened discovered-Space ownership validation (§7) ------------ */
+{
+  // Personal Space discovered only as a plain member is invalid.
+  const personalAsMember = normalizeDiscoveredSpace({
+    spaceId: "test-space-personal-a",
+    membership: { id: A, userId: A, role: "member", status: "active" },
+    spaceDoc: { type: "personal", ownerId: A, name: "個人" }
+  });
+  assert.equal(personalAsMember.valid, false);
+  assert.ok(personalAsMember.issues.some(i => i.code === "personal-not-owner"));
+
+  // Personal Space whose root ownerId is a different UID than the Membership.
+  const personalOwnerMismatch = normalizeDiscoveredSpace({
+    spaceId: "p", membership: { id: A, userId: A, role: "owner", status: "active" },
+    spaceDoc: { type: "personal", ownerId: B, name: "個人" }
+  });
+  assert.equal(personalOwnerMismatch.valid, false);
+  assert.ok(personalOwnerMismatch.issues.some(i => i.code === "personal-owner-mismatch"));
+
+  // Root with no usable ownerId at all.
+  const noOwner = normalizeDiscoveredSpace({
+    spaceId: "s", membership: { id: A, userId: A, role: "member", status: "active" },
+    spaceDoc: { type: "shared", ownerId: "  ", name: "共享" }
+  });
+  assert.equal(noOwner.valid, false);
+  assert.ok(noOwner.issues.some(i => i.code === "missing-owner-id"));
+
+  // owner Membership that does not match Space.ownerId.
+  const ownerContradiction = normalizeDiscoveredSpace({
+    spaceId: "s", membership: { id: A, userId: A, role: "owner", status: "active" },
+    spaceDoc: { type: "shared", ownerId: B, name: "共享" }
+  });
+  assert.equal(ownerContradiction.valid, false);
+  assert.ok(ownerContradiction.issues.some(i => i.code === "owner-id-contradiction"));
+
+  // Space.ownerId == Membership UID but the role is only "member".
+  const selfOwnerWrongRole = normalizeDiscoveredSpace({
+    spaceId: "s", membership: { id: A, userId: A, role: "member", status: "active" },
+    spaceDoc: { type: "shared", ownerId: A, name: "共享" }
+  });
+  assert.equal(selfOwnerWrongRole.valid, false);
+  assert.ok(selfOwnerWrongRole.issues.some(i => i.code === "self-owner-wrong-role"));
+
+  // A well-formed shared Space where the viewer is a member of someone else's Space stays valid.
+  const validSharedMember = normalizeDiscoveredSpace({
+    spaceId: "s", membership: { id: A, userId: A, role: "member", status: "active" },
+    spaceDoc: { type: "shared", ownerId: B, name: "共享" }
+  });
+  assert.equal(validSharedMember.valid, true);
+  // A valid Personal Space discovered as owner still passes.
+  const validPersonal = normalizeDiscoveredSpace({
+    spaceId: "p", membership: { id: A, userId: A, role: "owner", status: "active" },
+    spaceDoc: { type: "personal", ownerId: A, name: "個人" }
+  });
+  assert.equal(validPersonal.valid, true);
+  assert.equal(validPersonal.userId, A, "normalised userId comes from the Membership document ID");
 }
 
 console.log("spaces assertions passed");

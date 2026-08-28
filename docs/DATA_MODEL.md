@@ -34,6 +34,16 @@ Phase 3 is gated behind `?firebaseEnv=local&multiSpace=1` (localhost only, exact
 
 **Stale-session protection.** A monotonic `spaceSession` (`{ spaceId, version }`, a new object per switch). Every current-Space subscription and every Space-bound async callback (Places search, nearby search, reverse geocode, admin cache writes, editor autosave queues) captures the session in force when it started; a callback whose captured session is no longer current does not apply its result. Every deferred write also captures its originating Space ID and targets it through a `*For(spaceId)` path helper, so a queued write from Space A can never land in Space B.
 
+**Revised 2 hardening.**
+
+- *Ordered discovery.* Each discovery snapshot is stamped with a monotonically increasing request version alongside the listener generation and the authenticated UID. After every `await`, a result is applied only if the listener generation is current, the UID is unchanged, **and** the snapshot's request version is still the newest — so slow async snapshots can never apply out of order and resurrect a removed Space.
+- *Root reads fail closed.* A Space-root `getDoc` that **rejects** is never treated as "root missing". Only a successful read that reports non-existence counts as genuinely missing; a read failure aborts the whole discovery cycle with a LOCAL diagnostic and never lets provisioning create a duplicate Personal Space.
+- *Exact membership path.* `collectionGroup("members")` can match any `members` collection; a discovered Membership is trusted only when its document path is exactly `spaces/{spaceId}/members/{uid}` for the authenticated UID (`resolveSpaceMembershipPath` in `src/spaces.js`). Anything else is rejected and only diagnosed.
+- *Stale listener errors / auth teardown.* Every current-Space `onSnapshot` error callback (space root, members, places, trips, meta) ignores errors once its Space session is stale; the discovery listener's error callback is guarded by generation + UID. On logout / auth change the Space session is invalidated (`nextSpaceSession(spaceSession, "")`) and the in-flight discovery request is bumped **before** old listeners are torn down.
+- *Search session capture.* Google autocomplete captures the Space session and a request generation **before** `searchPlace()` runs; a switch or a newer keystroke invalidates the result, and the check is repeated after `fetchFields()` and `reverseGeocode()` before an editor is opened.
+- *Write queue not blindly cleared.* `placeEditorWriteQueues` is **not** cleared on a Space switch — clearing the Map would abandon running Promise chains without cancelling them. Each entry removes itself via its own `.finally`, so a returned-to Space still serializes behind any unresolved write for the same `${spaceId}:${placeId}`.
+- *Stronger discovered-Space validation.* `normalizeDiscoveredSpace()` also rejects: a root with no usable `ownerId`; a Personal Space discovered only as `member`; a Personal Space whose `ownerId` ≠ the Membership UID; an `owner` Membership whose UID ≠ `Space.ownerId`; and `Space.ownerId === Membership UID` while the role is not `owner`.
+
 **Shared Space creation** (`＋ 新共享地圖`): asks only for a name, then one transaction creates `spaces/{autoId}` (`type: "shared"`) and the creator's single active owner Membership, then switches to it. No second Member; no invitation UI (Phase 5). No Personal → Shared conversion.
 
 **Not in Phase 3:** Trip participant defaults (`Trip.participantIds`) — Phase 4; Friends/invites/mentions/member-management UI — Phase 5; production rules/migration/exposure — Phase 6. A future **"我的足跡" / My Footprints** view (a read-only cross-Space aggregate of Visits the User actually participated in) is a separate product surface, not a Space and not in the switcher; the Personal Space must not be confused with it. Existing `spaces/us` history is not moved or copied.
@@ -83,17 +93,25 @@ A Place is the stable geographic entity. It owns properties that are shared acro
 | `source` | Observed values include `google` and `map`. |
 | `extId` | Google Place ID when available; used for duplicate detection. |
 | `admin` | Reverse-geocoded display metadata: `country`, `county`, and `city`. |
-| `status` | `visited` or `wishlist`. |
+| `status` | Legacy field. New/updated Visit-bearing Places may still carry `status:"visited"` as a mixed-client compatibility mirror, but no normal domain behaviour depends on it. Dormant legacy `status:"wishlist"` documents (see below) may still exist but are ignored everywhere. No new value is introduced and no field is physically removed. |
 | `level` | Shared visit depth: `經過`, `接地`, `旅遊`, `住宿`, or `居住`. |
 | `rating` | Shared Place rating, from 0.5 through 5 in 0.5 steps; absent/null means unrated. |
 | `review` | Shared free-text review. |
 | `visits` | Embedded Visit array for visited Places. This is the canonical current visit history. |
 | `createdBy` | UID of the creator. |
 | `createdAt` | Firestore server timestamp used for collection ordering and fallback list ordering. |
-| `ord` | Optional wishlist ordering value. |
+| `ord` | Legacy ordering value on old wishlist documents. Not written by current code. |
 | `countyCode`, `townCode`, `villCode` | Cached point-in-polygon administrative identifiers. |
 
-A wishlist Place normally has no Visits and uses Place-level category and participant fields. A visited Place is expected to have one or more Visits. Removing its last Visit changes it to `wishlist`.
+### Place lifecycle
+
+A Place exists in the active product **only because it has real Visit history** — a non-empty embedded `visits` array, or (read compat) a legacy `visitedOn` date. The central `hasVisitHistory(place)` gate encodes this and is applied before a Place appears in the list, on the map, in participant/category filters, in statistics/counts, or in administrative and proximity coverage.
+
+Creating a Place always creates its first Visit at the same time (Phase 2 new-Visit defaults). Deleting a Place's **last** remaining Visit deletes the whole Place document — the code never writes an empty active Place and never downgrades a Place to `status:"wishlist"`. Deleting one of several Visits just rewrites the `visits` array.
+
+### Legacy wishlist documents (removed feature)
+
+The "想去 / wishlist" feature has been removed. Legacy documents with `status:"wishlist"`, `visits:[]`, and `visitedOn:""` may still be present in Firestore. They are **dormant**: `hasVisitHistory` returns false for them, so they are invisible in every normal surface and are never used as an administrative or proximity seed. This change performs **no production data migration** — no bulk delete, no startup migration, no field erasure. A separately approved migration may clean them up later. `findExistingPlace()` still detects such a document by `extId` / normalized name / location, so if a member explicitly searches for that Place and records a Visit, the existing document is reused and becomes normal Visit-bearing data through that explicit action.
 
 ## Visit
 
@@ -111,7 +129,7 @@ A Visit is one dated occurrence at a Place. Multiple Visits can refer to the sam
 | `who` | Array of participant UIDs. Legacy participant field, still written as a mirror for mixed-client compatibility. |
 | `order` | Optional numeric ordering among ordinary Visits on the same day. |
 
-Category, Trip, and participants are canonical at Visit level for visited history. Rating, review, depth, identity, and coordinates remain canonical at Place level.
+Category, Trip, and participants are canonical at Visit level. Rating, review, depth, identity, and coordinates remain canonical at Place level.
 
 ### Visit participant resolution (Phase 2)
 
@@ -129,7 +147,7 @@ this precedence:
    two-person legacy universe whose anchor is the record's own `createdBy` (one
    of the two — never the current viewer, so an old record resolves and
    serializes the same for everyone). An explicit empty Place `who` with no
-   meaningful `whoMode` (e.g. a Wishlist selection cleared to nobody) resolves
+   meaningful `whoMode` (e.g. a legacy selection cleared to nobody) resolves
    to `[]` and is not silently repopulated with the creator on reload. Only a
    record with no participant data at all falls back to its own `createdBy`.
 
@@ -233,8 +251,8 @@ The current application preserves a prior Place-level representation. These fiel
 | --- | --- |
 | `visitedOn` | Latest Visit date. If `visits` is absent/empty, it creates one normalized legacy Visit. |
 | `tripId` | Latest Visit's Trip ID; used when constructing a legacy Visit and by Place-level marker fallback. |
-| `categories` | Latest Visit category for visited Places; wishlist category remains current Place-level data. Its first value is the Visit category fallback. |
-| `who` | Latest Visit participants for visited Places; current Place-level participant data for wishlist Places. Full arbitrary-Member UID array (no longer capped at two). |
+| `categories` | Latest Visit category, mirrored to Place level. Its first value is the Visit category fallback. |
+| `who` | Latest Visit participants, mirrored to Place level. Full arbitrary-Member UID array (no longer capped at two). |
 | `whoMode` | Legacy serialization only. Emitted as `me` / `partner` / `both` **only** when the legacy `meta/config.members` universe has exactly two distinct Members, `createdBy` is an explicit usable UID inside that universe, and the participant set exactly matches one historical meaning; otherwise `""` (no fallback anchor). Never read for domain, filter, marker, or UI behavior. |
 
 Visit normalization also accepts legacy `visit.categories[0]`, missing Visit IDs, missing `kind`, missing `who`, string/number `order`, and Place records with only `visitedOn`. Normalization preserves a Visit's raw `participantIds` / `who` exactly and never synthesizes or collapses them.
