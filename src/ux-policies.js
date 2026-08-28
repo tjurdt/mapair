@@ -52,7 +52,12 @@ export function shouldShowReorderControls(movableCount) {
 }
 
 export function shouldAutoFitViewport({ tripId = "all", regionCount = 0 } = {}) {
-  return !(tripId !== "all" && tripId !== "daily" && regionCount > 0);
+  if (Number(regionCount) > 0) return false;
+  return true;
+}
+
+export function shouldFitFilterViewport({ requested = true, tripId = "all", regionCount = 0 } = {}) {
+  return !!requested && shouldAutoFitViewport({ tripId, regionCount });
 }
 
 export function placeSharedFields(place = {}) {
@@ -104,4 +109,12 @@ export function transitionMapSurfaceState(
 
 export function shouldShowRegionBlackout({ adminLevel = "off", regionCount = 0 } = {}) {
   return ADMIN_LEVELS.has(adminLevel) && adminLevel !== "off" && Number(regionCount) > 0;
+}
+
+export function shouldRenderAdministrativeThematicFill({ adminLevel = "off", proximityEnabled = false } = {}) {
+  return ADMIN_LEVELS.has(adminLevel) && adminLevel !== "off" && !proximityEnabled;
+}
+
+export function shouldShowAdministrativeLegend(state = {}) {
+  return shouldRenderAdministrativeThematicFill(state);
 }

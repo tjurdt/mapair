@@ -11,6 +11,9 @@ import {
   reorderWithinSlots,
   resolveVisitMoveTarget,
   shouldAutoFitViewport,
+  shouldFitFilterViewport,
+  shouldRenderAdministrativeThematicFill,
+  shouldShowAdministrativeLegend,
   shouldShowRegionBlackout,
   shouldShowReorderControls,
   transitionMapSurfaceState,
@@ -72,7 +75,10 @@ assert.equal(shouldShowReorderControls(2), true, "two movable Visits have reorde
 
 assert.equal(shouldAutoFitViewport({ tripId:"trip-a", regionCount:0 }), true);
 assert.equal(shouldAutoFitViewport({ tripId:"trip-a", regionCount:1 }), false);
-assert.equal(shouldAutoFitViewport({ tripId:"all", regionCount:1 }), true);
+assert.equal(shouldAutoFitViewport({ tripId:"all", regionCount:1 }), false, "any active region filter suppresses passive auto-fit");
+assert.equal(shouldFitFilterViewport({ requested:false, regionCount:1 }), false, "administrative map selection explicitly preserves the viewport");
+assert.equal(shouldFitFilterViewport({ requested:false, regionCount:0 }), false, "removing the final region through the map still preserves the viewport");
+assert.equal(shouldFitFilterViewport({ requested:true, tripId:"trip-a", regionCount:0 }), true, "Trip-only filtering may still fit");
 
 const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/mapair-baseline.json", import.meta.url), "utf8"));
 const station = fixture.places.find(x=>x.id==="place-test-station").data;
@@ -95,6 +101,7 @@ assert.equal(layoutViewState({map:false,filter:true,list:true},false).compactSid
 assert.equal(layoutViewState({map:false,filter:true,list:true},true).compactSidebar, false, "opening the layout menu temporarily expands the sidebar");
 assert.equal(layoutViewState({map:false,filter:true,list:true},false).contentHidden, true, "both content areas hide tabs and empty side content");
 const indexHtml=fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const mainSource=fs.readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
 assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
@@ -125,6 +132,31 @@ assert.equal(
   shouldShowRegionBlackout({adminLevel:combinedSurface.adminLevel,regionCount:2,proximityEnabled:combinedSurface.proximityEnabled}),
   true,
   "selected-region blackout remains active with proximity"
+);
+assert.equal(
+  shouldRenderAdministrativeThematicFill({adminLevel:"town",proximityEnabled:true}),
+  false,
+  "proximity disables administrative thematic fill"
+);
+assert.equal(
+  shouldRenderAdministrativeThematicFill({adminLevel:"town",proximityEnabled:false}),
+  true,
+  "turning proximity off restores administrative thematic fill"
+);
+assert.equal(
+  shouldShowAdministrativeLegend({adminLevel:"town",proximityEnabled:true}),
+  false,
+  "the administrative thematic legend is hidden with proximity"
+);
+assert.equal(
+  shouldShowAdministrativeLegend({adminLevel:"town",proximityEnabled:false}),
+  true,
+  "the administrative thematic legend returns when proximity is disabled"
+);
+assert.match(
+  mainSource,
+  /function handleAdministrativeRegionClick[\s\S]*?applyFilter\(\{fitViewport:false\}\);/,
+  "administrative polygon clicks explicitly request no viewport fitting"
 );
 assert.equal(
   resolveProximityMaskMode([{key:"townCode",code:"6300500"}],false).type,

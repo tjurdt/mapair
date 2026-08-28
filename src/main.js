@@ -15,6 +15,9 @@ import {
   resolveVisitMoveTarget,
   shouldShowReorderControls,
   shouldAutoFitViewport,
+  shouldFitFilterViewport,
+  shouldRenderAdministrativeThematicFill,
+  shouldShowAdministrativeLegend,
   shouldShowRegionBlackout,
   transitionMapSurfaceState,
   visitMatchesReorderScope
@@ -897,11 +900,20 @@ function scheduleFilterFit(){
   clearTimeout(filterFitTimer);
   filterFitTimer=setTimeout(fitMapToCurrentFilter,80);
 }
-function applyFilter(){
+function applyFilter({fitViewport=true}={}){
   renderList(); renderMarkers();
   refreshMapSurfaces();
   renderFilterChips();
-  scheduleFilterFit();
+  const shouldFit=shouldFitFilterViewport({
+    requested:fitViewport,
+    tripId:filter.tripId,
+    regionCount:filter.regions.length
+  });
+  if(shouldFit) scheduleFilterFit();
+  else {
+    clearTimeout(filterFitTimer);
+    filterFitTimer=null;
+  }
 }
 function refreshFilterUI(){
   const trip = document.getElementById("fl_trip"); if (!trip) return;
@@ -1204,7 +1216,7 @@ function markerLegendBody(){
 }
 
 function regionLegendBody(){
-  if(!regionLegendState || adminLevel==="off") return "";
+  if(!regionLegendState || !shouldShowAdministrativeLegend({adminLevel,proximityEnabled})) return "";
   const {metric,ctx}=regionLegendState;
   if(metric==="first"||metric==="last"){
     const lab=metric==="first"?"初次造訪":"最後造訪", grad=VISIT_DATE_RAINBOW.join(",");
@@ -1229,7 +1241,8 @@ function proximityLegendBody(){
 }
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
-  const hasMarker=showPins, hasRegion=adminLevel!=="off" && !!regionLegendState;
+  const hasMarker=showPins;
+  const hasRegion=!!regionLegendState && shouldShowAdministrativeLegend({adminLevel,proximityEnabled});
   const hasProximity=proximityEnabled;
   if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
   el.style.display="block";
@@ -1497,7 +1510,7 @@ function handleAdministrativeRegionClick(ev,level,codeProp){
   }
   tab="visited";
   document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("on",button.dataset.t==="visited"));
-  applyFilter();
+  applyFilter({fitViewport:false});
 }
 
 async function renderAdministrativeLayer(){
@@ -1569,9 +1582,10 @@ async function renderAdministrativeLayer(){
   }
   adminLayer.setStyle(feature=>{
     const color=colorOf(String(feature.getProperty(codeProp)));
+    const showThematicFill=shouldRenderAdministrativeThematicFill({adminLevel:level,proximityEnabled});
     return {
       fillColor:color || "#e5e0d6",
-      fillOpacity:color ? choroAlpha : 0.12,
+      fillOpacity:showThematicFill ? (color ? choroAlpha : 0.12) : 0,
       strokeWeight:0,
       zIndex:MAP_SURFACE_Z_INDEX.adminFill,
       clickable:false
@@ -1616,6 +1630,7 @@ async function refreshProximityLayer(){
     alert("鄰近範圍載入失敗：\n"+e.message);
     proximityEnabled=false;
     removeProximityLayer();
+    if(adminLevel!=="off") renderAdministrativeLayer();
     updateSurfaceControls();
     renderUnifiedLegend();
   }
@@ -1642,6 +1657,7 @@ function toggleMapSurface(control){
   const next=transitionMapSurfaceState({adminLevel,proximityEnabled},action);
   if(action.type==="proximity"){
     proximityEnabled=next.proximityEnabled;
+    if(adminLevel!=="off") renderAdministrativeLayer();
     refreshProximityLayer();
     return;
   }
@@ -1652,7 +1668,6 @@ function toggleMapSurface(control){
     filter.regions=[];
     renderList();
     renderFilterChips();
-    scheduleFilterFit();
   }
   renderAdministrativeLayer();
   if(proximityEnabled) refreshProximityLayer();
