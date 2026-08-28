@@ -6,6 +6,10 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
 import {
+  createMemberDirectory,
+  resolveSpaceMembershipFoundation
+} from "./space-membership.js";
+import {
   MAP_SURFACE_Z_INDEX,
   isVisitReorderAvailable,
   layoutViewState,
@@ -158,6 +162,10 @@ service cloud.firestore {
    2) 啟動
    ============================================================ */
 let db, auth, user;
+let currentSpaceId = "";
+let currentSpace = null, currentMembership = null, spaceMembers = [];
+let removedSpaceMembers = [], membershipSource = "pending", ownershipValidation = null;
+let memberDirectory = createMemberDirectory([]);
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
@@ -185,6 +193,20 @@ function textOn(hex){
   return (0.299*r+0.587*g+0.114*b) > 150 ? "#152230" : "#ffffff";
 }
 let members = {};   // uid -> 顯示名稱(兩人)
+let spaceFoundationReads = {
+  spaceReady:false,
+  membersReady:false,
+  metaReady:false,
+  formalReadFailed:false,
+  spaceDocument:null,
+  formalMemberships:[]
+};
+const currentSpaceUnsubscribes = new Map();
+let lastLocalMembershipDiagnostic = "";
+function memberById(uid){ return memberDirectory.memberById(uid); }
+function memberDisplayName(uid){ return memberDirectory.memberDisplayName(uid); }
+function activeSpaceMembers(){ return memberDirectory.activeSpaceMembers(); }
+function historicalSpaceMember(uid){ return memberDirectory.historicalSpaceMember(uid); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
@@ -521,7 +543,11 @@ function boot(){
         connectFirestoreEmulator(db, runtimeConfig.emulators.firestore.host, runtimeConfig.emulators.firestore.port);
       } catch(e){ failLocal("emulator connection setup", e); return; }
     }
-    onAuthStateChanged(auth, u => { user = u; u ? renderApp() : renderGate(); },
+    onAuthStateChanged(auth, u => {
+      if (!u) unsubscribeCurrentSpaceListeners();
+      user = u;
+      u ? renderApp() : renderGate();
+    },
       err => isLocalTest() ? failLocal("Auth", err) : window.__fatal("Firebase Auth 錯誤:" + err.message));
   } catch(e){ isLocalTest() ? failLocal("Firebase initialization", e) : window.__fatal("Firebase 初始化失敗:" + e.message); }
 }
@@ -1010,21 +1036,37 @@ async function initMap(){
 
 /* ---------- Firestore 即時同步 ---------- */
 function subscribe(){
-  const base = ["spaces", runtimeConfig.spaceId];
-  onSnapshot(query(collection(db, ...base, "places"), orderBy("createdAt","desc")), snap => {
+  unsubscribeCurrentSpaceListeners();
+  resetSpaceFoundationReads();
+
+  currentSpaceUnsubscribes.set("space", onSnapshot(spaceDoc(), snapshot => {
+    if (localFailure) return;
+    spaceFoundationReads.spaceReady = true;
+    spaceFoundationReads.spaceDocument = snapshot.exists() ? snapshot.data() : null;
+    reconcileSpaceMembershipFoundation();
+  }, error => handleOptionalFoundationReadError("Space root", "space", error)));
+
+  currentSpaceUnsubscribes.set("members", onSnapshot(membersCol(), snapshot => {
+    if (localFailure) return;
+    spaceFoundationReads.membersReady = true;
+    spaceFoundationReads.formalMemberships = snapshot.docs.map(member => ({ ...member.data(), id:member.id }));
+    reconcileSpaceMembershipFoundation();
+  }, error => handleOptionalFoundationReadError("Memberships", "members", error)));
+
+  currentSpaceUnsubscribes.set("places", onSnapshot(query(placesCol(), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("places", error));
-  onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
+  }, error => handleFirestoreError("places", error)));
+  currentSpaceUnsubscribes.set("trips", onSnapshot(query(tripsCol(), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     refreshFilterUI();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("trips", error));
-  onSnapshot(metaDoc(), s => {
+  }, error => handleFirestoreError("trips", error)));
+  currentSpaceUnsubscribes.set("meta", onSnapshot(metaDoc(), s => {
     if (localFailure) return;
     const d = s.data() || {};
     spaceCats = d.categories || [];
@@ -1032,16 +1074,106 @@ function subscribe(){
     catColors = d.catColors || {};
     nicknames = d.nicknames || {};
     levelColors = { ...LEVEL_COLORS, ...(d.levelColors||{}) };
+    spaceFoundationReads.metaReady = true;
+    reconcileSpaceMembershipFoundation();
     refreshFilterUI();
     renderList(); renderMarkers(); renderMarkerLegend();
     refreshMapSurfaces();
-  }, error => handleFirestoreError("meta/config", error));
+  }, error => handleFirestoreError("meta/config", error)));
 }
-const metaDoc   = () => doc(db, "spaces", runtimeConfig.spaceId, "meta", "config");
-const placesCol = () => collection(db, "spaces", runtimeConfig.spaceId, "places");
-const placeDoc  = id => doc(db, "spaces", runtimeConfig.spaceId, "places", id);
-const tripsCol  = () => collection(db, "spaces", runtimeConfig.spaceId, "trips");
-const tripDoc   = id => doc(db, "spaces", runtimeConfig.spaceId, "trips", id);
+function resetSpaceFoundationReads(){
+  spaceFoundationReads = {
+    spaceReady:false,
+    membersReady:false,
+    metaReady:false,
+    formalReadFailed:false,
+    spaceDocument:null,
+    formalMemberships:[]
+  };
+  currentSpace = null;
+  currentMembership = null;
+  spaceMembers = [];
+  removedSpaceMembers = [];
+  membershipSource = "pending";
+  ownershipValidation = null;
+  memberDirectory = createMemberDirectory([]);
+  lastLocalMembershipDiagnostic = "";
+}
+function unsubscribeCurrentSpaceListeners(){
+  for (const unsubscribe of currentSpaceUnsubscribes.values()){
+    try { unsubscribe(); } catch(error){ console.warn("Firestore listener cleanup failed:", error); }
+  }
+  currentSpaceUnsubscribes.clear();
+}
+function handleOptionalFoundationReadError(area, readKey, error){
+  if (isLocalTest()){
+    failLocal(`Firestore ${area}`, error);
+    return;
+  }
+  console.warn(`Optional Firestore ${area} read failed; continuing with legacy meta compatibility.`, error);
+  spaceFoundationReads.formalReadFailed = true;
+  if (readKey === "space"){
+    spaceFoundationReads.spaceReady = true;
+    spaceFoundationReads.spaceDocument = null;
+  } else {
+    spaceFoundationReads.membersReady = true;
+    spaceFoundationReads.formalMemberships = [];
+  }
+  reconcileSpaceMembershipFoundation();
+}
+function reconcileSpaceMembershipFoundation(){
+  if (!spaceFoundationReads.spaceReady || !spaceFoundationReads.membersReady || !spaceFoundationReads.metaReady) return;
+  const foundation = resolveSpaceMembershipFoundation({
+    spaceId:currentSpaceId,
+    spaceDocument:spaceFoundationReads.formalReadFailed ? null : spaceFoundationReads.spaceDocument,
+    formalMemberships:spaceFoundationReads.formalReadFailed ? [] : spaceFoundationReads.formalMemberships,
+    legacyMembers:members,
+    legacyNicknames:nicknames,
+    currentUserId:user?.uid || ""
+  });
+  currentSpace = foundation.currentSpace;
+  currentMembership = foundation.currentMembership;
+  spaceMembers = foundation.spaceMembers;
+  removedSpaceMembers = foundation.removedMembers;
+  membershipSource = foundation.membershipSource;
+  ownershipValidation = foundation.ownership;
+  memberDirectory = foundation.directory;
+  reportSpaceMembershipDiagnostic(foundation);
+}
+function reportSpaceMembershipDiagnostic(foundation){
+  const diagnostic = {
+    currentSpaceId,
+    membershipSource:foundation.membershipSource,
+    members:foundation.spaceMembers.length,
+    activeMembers:foundation.activeMembers.length,
+    removedMembers:foundation.removedMembers.length,
+    currentRole:foundation.currentMembership?.role || null,
+    currentStatus:foundation.currentMembership?.status || null,
+    currentMembershipAccessible:foundation.currentMembershipAccessible,
+    ownershipInvariant:foundation.ownership.code
+  };
+  if (isLocalTest()){
+    const key = JSON.stringify(diagnostic);
+    if (key !== lastLocalMembershipDiagnostic){
+      lastLocalMembershipDiagnostic = key;
+      console.info("Mapair LOCAL TEST membership foundation", diagnostic);
+    }
+  }
+  if (foundation.membershipSource === "formal" && !foundation.ownership.valid){
+    console.warn("Invalid formal Space ownership state detected; no repair or authorization change was attempted.", foundation.ownership);
+  }
+  if (foundation.membershipSource === "formal" && foundation.currentMembership?.status === "removed"){
+    console.warn("The authenticated User has a removed formal Membership. Phase 1 records this as inaccessible but does not enforce authorization in the UI.");
+  }
+}
+const spaceDoc   = () => doc(db, "spaces", currentSpaceId);
+const membersCol = () => collection(db, "spaces", currentSpaceId, "members");
+const memberDoc  = uid => doc(db, "spaces", currentSpaceId, "members", uid);
+const metaDoc    = () => doc(db, "spaces", currentSpaceId, "meta", "config");
+const placesCol  = () => collection(db, "spaces", currentSpaceId, "places");
+const placeDoc   = id => doc(db, "spaces", currentSpaceId, "places", id);
+const tripsCol   = () => collection(db, "spaces", currentSpaceId, "trips");
+const tripDoc    = id => doc(db, "spaces", currentSpaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
 function whoColor(p){
@@ -2310,6 +2442,7 @@ function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">
 /* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
 try {
   runtimeConfig = resolveRuntimeConfig();
+  currentSpaceId = runtimeConfig.spaceId;
   if (!runtimeConfig.firebase.projectId || !runtimeConfig.google.apiKey) renderSetup();
   else boot();
 } catch(e){
