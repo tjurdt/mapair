@@ -99,11 +99,15 @@
   .visitmain,.visitextra{display:grid;align-items:center;gap:6px}
   .visitmain{grid-template-columns:minmax(0,1fr) auto}
   .visitmain.stay{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr) auto}
-  .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.78fr);margin-top:6px}
-  .visitrow .v_date,.visitrow .v_end,.visitrow .v_trip,.visitrow .v_cat,.visitrow .v_who{width:100%;min-width:0;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff}
+  .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:6px}
+  .visitrow .v_date,.visitrow .v_end,.visitrow .v_trip,.visitrow .v_cat{width:100%;min-width:0;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff}
   .visitrow .v_del{font-size:16px;padding:6px}
   .visitmini{display:block;min-width:0}
-  .visitmini>span{display:block;font-size:11px;color:var(--ink-soft);margin:0 0 2px 2px;white-space:nowrap}
+  .visitmini>span,.visitparts>span{display:block;font-size:11px;color:var(--ink-soft);margin:0 0 2px 2px;white-space:nowrap}
+  .visitparts{margin-top:6px}
+  .visitparts .partpick{gap:6px}
+  .visitparts .partpick .chip{font-size:12px;padding:4px 10px}
+  .visitwarn{font-size:11px;color:var(--wish);margin-top:4px}
   .stayarrow{text-align:center;color:var(--ink-soft);font-size:12px}
   .staymeta{grid-column:1/-1;font-size:11px;color:var(--ink-soft);margin-top:1px}
   .visitrow.focus{outline:2px solid rgba(63,125,120,.35);box-shadow:0 0 0 3px rgba(63,125,120,.08)}
@@ -222,7 +226,7 @@
     #filterbar .frow{grid-template-columns:minmax(0,.85fr) minmax(0,1.12fr) minmax(0,.95fr) auto}
     .visitmain{grid-template-columns:minmax(0,1fr) auto}
     .visitmain.stay{grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr) auto}
-    .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.78fr)}
+    .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
     #maplegend{right:8px;bottom:10px;max-width:min(220px,calc(100% - 20px));max-height:calc(100% - 102px)}
     #multiBtn,#proximityCtl{left:10px}
     input:not([type=color]):not([type=range]):not([type=checkbox]):not([type=radio]),textarea{font-size:16px}

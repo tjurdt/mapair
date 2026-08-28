@@ -32,13 +32,33 @@ const LOCAL_TEST_CONFIG = {
   }
 };
 
+// Strict LOCAL-only development/test harness. It selects one of a fixed
+// allowlist of Emulator fixture Spaces; it is NOT a production Space switcher
+// and never accepts an arbitrary Firestore Space ID.
+const LOCAL_TEST_SPACES = {
+  baseline: "test-space-baseline",
+  group: "test-space-group"
+};
+
+function resolveLocalTestSpaceId(search){
+  const values = new URLSearchParams(search).getAll("testSpace");
+  if (!values.length) return LOCAL_TEST_CONFIG.spaceId;
+  if (values.length !== 1 || !Object.hasOwn(LOCAL_TEST_SPACES, values[0])){
+    throw new Error('testSpace must be exactly one of "baseline" or "group". Startup stopped.');
+  }
+  return LOCAL_TEST_SPACES[values[0]];
+}
+
 export function resolveRuntimeConfig(hostname = location.hostname, search = location.search){
   const localHost = hostname === "localhost" || hostname === "127.0.0.1";
   const values = new URLSearchParams(search).getAll("firebaseEnv");
   if (values.length){
     if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
     if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
-    return { mode: "local", ...LOCAL_TEST_CONFIG };
+    return { mode: "local", ...LOCAL_TEST_CONFIG, spaceId: resolveLocalTestSpaceId(search) };
+  }
+  if (new URLSearchParams(search).getAll("testSpace").length){
+    throw new Error("testSpace is only available in LOCAL TEST mode. Startup stopped.");
   }
   if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
   return { mode: "production", ...PRODUCTION_CONFIG };

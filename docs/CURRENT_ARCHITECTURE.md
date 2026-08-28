@@ -6,7 +6,7 @@ The current application is a static client-only site built with Vite:
 
 - `index.html` contains the document shell and CSS.
 - `src/main.js` contains the imperative application state, rendering, Firebase access, and Google Maps integration.
-- `src/space-membership.js`, `src/ux-policies.js`, and `src/proximity-geometry.js` contain pure domain/policy helpers that can be tested without Firebase.
+- `src/space-membership.js`, `src/participants.js`, `src/ux-policies.js`, and `src/proximity-geometry.js` contain pure domain/policy helpers that can be tested without Firebase. `src/participants.js` resolves Visit/Place participants for arbitrary Space Members and owns the participant read precedence, mismatch detection, new-selection sanitisation, write serialization, and legacy `whoMode` derivation.
 - `geo/county.json` contains 22 county features.
 - `geo/town.json` contains 368 town features.
 - `geo/village/` contains one file per county code, totaling 7,986 village features.
@@ -40,7 +40,7 @@ Most domain and rendering functions read these globals directly, so dependencies
 
 ## Firebase integration
 
-The configured shared-space root is exposed in memory as `currentSpaceId`. It still comes directly from runtime configuration (`us` in production and `test-space-baseline` in LOCAL TEST); there is no local preference, discovery query, or Space switcher. Narrow path helpers resolve:
+The configured shared-space root is exposed in memory as `currentSpaceId`. It still comes directly from runtime configuration (`us` in production and `test-space-baseline` in LOCAL TEST); there is no production local preference, discovery query, or Space switcher. In LOCAL TEST only, `?firebaseEnv=local&testSpace=group` selects `test-space-group` from a fixed allowlist so N-person participant behavior can be exercised against the fixture group Space; it fails closed in production and never accepts an arbitrary Space ID. Narrow path helpers resolve:
 
 - `spaces/{currentSpaceId}`
 - `spaces/{currentSpaceId}/members/{uid}`
@@ -54,7 +54,7 @@ Phase 1 also observes the optional root Space document and its Membership collec
 
 LOCAL TEST logs a compact Membership-source/member-count/current-role/ownership summary to the console. The summary is not emitted in production. Invalid formal ownership and removed-current-Membership states produce warnings only; they do not repair data or enforce access.
 
-The existing two-person participant and naming UI deliberately continues to use legacy meta state in Phase 1. Formal Membership presence does not change visible names, participant controls, or marker behavior. Membership-based authorization is not implemented in application code and remains a later security-rules migration; Phase 1 diagnostics must not be mistaken for security enforcement.
+Phase 2 generalized the participant and naming UI to arbitrary Space Members. Participant filters, Visit and Wishlist participant pickers, marker/legend "who" colouring, and card/list labels resolve Members through the Membership foundation and `src/participants.js`; removed Members are still resolved for historical display but are never offered for a new selection. `visit.participantIds` is the authoritative participant field, `visit.who` and Place `who`/`whoMode` remain compatibility mirrors, and a `who`/`participantIds` conflict is surfaced (editor notice, LOCAL TEST `console.warn`) rather than silently reconciled. Membership-based authorization is still not implemented in application code and remains a later security-rules migration; diagnostics must not be mistaken for security enforcement.
 
 Authentication uses Firebase Google popup sign-in. Authorization is not enforced in application code; it depends on deployed Firestore rules. The setup text shows an example allowlist for two authenticated UIDs, but the deployed rules are outside this repository.
 
