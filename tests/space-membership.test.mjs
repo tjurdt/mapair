@@ -99,12 +99,89 @@ const compatibleFormal = normalizeFormalMembers(
 assert.equal(compatibleFormal[0].displayName, "Compatible Name");
 assert.equal(createMemberDirectory([]).memberDisplayName("secret-uid"), "Member");
 
+const mismatchedIdentity = normalizeFormalMembers([{
+  id:"test-user-a",
+  userId:"test-user-b",
+  role:"member",
+  status:"active"
+}])[0];
+assert.equal(mismatchedIdentity.userId, "test-user-a", "document ID must remain the canonical Membership identity");
+assert.equal(mismatchedIdentity.valid, false);
+assert.ok(mismatchedIdentity.issues.some(issue => issue.code === "user-id-mismatch"));
+const mismatchedDirectory = createMemberDirectory([mismatchedIdentity]);
+assert.equal(mismatchedDirectory.memberById("test-user-b"), null, "stored userId cannot masquerade as another Member");
+assert.deepEqual(mismatchedDirectory.activeSpaceMembers(), [], "identity-mismatched Membership cannot become active");
+
+const missingStatus = normalizeFormalMembers([{
+  id:"test-user-a",
+  userId:"test-user-a",
+  role:"member"
+}])[0];
+assert.equal(missingStatus.valid, false);
+assert.equal(missingStatus.status, null);
+assert.ok(missingStatus.issues.some(issue => issue.code === "invalid-status"));
+assert.deepEqual(createMemberDirectory([missingStatus]).activeSpaceMembers(), []);
+const missingStatusState = resolveSpaceMembershipFoundation({
+  spaceId:"test-space-invalid",
+  spaceDocument:{ ownerId:"test-user-b", type:"shared" },
+  formalMemberships:[{
+    id:"test-user-a",
+    userId:"test-user-a",
+    role:"member"
+  }],
+  currentUserId:"test-user-a"
+});
+assert.equal(missingStatusState.currentMembership.valid, false);
+assert.equal(missingStatusState.currentMembershipAccessible, false);
+
+for (const role of [undefined, "administrator", " owner "]){
+  const invalidRole = normalizeFormalMembers([{
+    id:"test-user-a",
+    userId:"test-user-a",
+    ...(role === undefined ? {} : { role }),
+    status:"active"
+  }])[0];
+  assert.equal(invalidRole.valid, false);
+  assert.equal(invalidRole.role, null);
+  assert.ok(invalidRole.issues.some(issue => issue.code === "invalid-role"));
+}
+
+const invalidOwner = normalizeFormalMembers([{
+  id:"test-user-a",
+  userId:"test-user-a",
+  role:"owner"
+}]);
+const invalidOwnerState = validateFormalSpaceOwnership({ ownerId:"test-user-a" }, invalidOwner);
+assert.equal(invalidOwnerState.valid, false, "invalid owner Membership must fail ownership validation");
+assert.equal(invalidOwnerState.code, "zero-active-owner");
+
+const noPhantomLegacyMembers = normalizeLegacyMembers(
+  { "test-user-a":"A" },
+  { "test-user-a":"AA", "stale-user":"Old name" }
+);
+assert.deepEqual(noPhantomLegacyMembers.map(member => member.userId), ["test-user-a"]);
+assert.equal(noPhantomLegacyMembers[0].displayName, "AA");
+
+const canonicalSpaceState = resolveSpaceMembershipFoundation({
+  spaceId:"test-space-canonical",
+  spaceDocument:{ id:"stored-wrong-space", ownerId:"test-user-a", type:"shared" },
+  formalMemberships:[{
+    id:"test-user-a",
+    userId:"test-user-a",
+    role:"owner",
+    status:"active"
+  }],
+  currentUserId:"test-user-a"
+});
+assert.equal(canonicalSpaceState.currentSpace.id, "test-space-canonical", "path-derived Space ID must override stored id fields");
+
 const mainSource = fs.readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 assert.equal((mainSource.match(/runtimeConfig\.spaceId/g) || []).length, 1, "runtime config spaceId should only initialize currentSpaceId");
 assert.match(mainSource, /const spaceDoc\s*=\s*\(\)\s*=>\s*doc\(db,\s*"spaces",\s*currentSpaceId\)/);
 assert.match(mainSource, /const membersCol\s*=\s*\(\)\s*=>\s*collection\(db,\s*"spaces",\s*currentSpaceId,\s*"members"\)/);
 assert.match(mainSource, /currentSpaceUnsubscribes\.set\("space",\s*onSnapshot\(spaceDoc\(\)/);
 assert.match(mainSource, /currentSpaceUnsubscribes\.set\("members",\s*onSnapshot\(membersCol\(\)/);
+assert.match(mainSource, /snapshot\.docs\.map\(member\s*=>\s*\(\{\s*\.\.\.member\.data\(\),\s*id:member\.id\s*\}\)\)/, "Firestore Membership document ID must overwrite stored id-like data");
 assert.doesNotMatch(mainSource, /setDoc\s*\(\s*spaceDoc\s*\(/, "startup/runtime must not create or update root Space documents");
 assert.doesNotMatch(mainSource, /setDoc\s*\(\s*memberDoc\s*\(/, "startup/runtime must not create or update Membership documents");
 assert.doesNotMatch(mainSource, /addDoc\s*\(\s*membersCol\s*\(/, "startup/runtime must not create Membership documents");

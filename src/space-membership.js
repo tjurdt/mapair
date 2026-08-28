@@ -6,13 +6,8 @@ function nonEmptyString(value){
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
-function memberId(record){
-  return nonEmptyString(record?.userId) || nonEmptyString(record?.id);
-}
-
 export function legacyMemberNames(metaMembers={}, nicknames={}){
-  const userIds = new Set([...Object.keys(metaMembers || {}), ...Object.keys(nicknames || {})]);
-  return Object.fromEntries([...userIds].map(userId => [
+  return Object.fromEntries(Object.keys(metaMembers || {}).map(userId => [
     userId,
     nonEmptyString(nicknames?.[userId]) || nonEmptyString(metaMembers?.[userId]) || GENERIC_MEMBER_NAME
   ]));
@@ -20,14 +15,38 @@ export function legacyMemberNames(metaMembers={}, nicknames={}){
 
 export function normalizeFormalMembers(records=[], legacyNames={}){
   return records.map(record => {
-    const userId = memberId(record);
+    const userId = typeof record?.id === "string" ? record.id : "";
+    const hasStoredUserId = !!record && Object.hasOwn(record, "userId");
+    const storedUserId = hasStoredUserId ? record.userId : undefined;
+    const storedRole = record?.role;
+    const storedStatus = record?.status;
+    const issues = [];
+    if (!userId) issues.push({ code:"missing-document-id", message:"Membership document ID is missing." });
+    if (hasStoredUserId && storedUserId !== userId) issues.push({
+      code:"user-id-mismatch",
+      message:"Membership.userId does not match the Membership document ID.",
+      documentId:userId || null,
+      storedUserId:typeof storedUserId === "string" ? storedUserId : null
+    });
+    if (!["owner", "member"].includes(storedRole)) issues.push({
+      code:"invalid-role",
+      message:"Membership.role must explicitly be owner or member.",
+      received:typeof storedRole === "string" ? storedRole : null
+    });
+    if (!["active", "removed"].includes(storedStatus)) issues.push({
+      code:"invalid-status",
+      message:"Membership.status must explicitly be active or removed.",
+      received:typeof storedStatus === "string" ? storedStatus : null
+    });
     return {
       userId,
-      role:nonEmptyString(record?.role) || "member",
-      status:nonEmptyString(record?.status) || "active",
+      role:["owner", "member"].includes(storedRole) ? storedRole : null,
+      status:["active", "removed"].includes(storedStatus) ? storedStatus : null,
       displayName:nonEmptyString(record?.displayNameSnapshot) || nonEmptyString(legacyNames?.[userId]) || GENERIC_MEMBER_NAME,
       photoURL:nonEmptyString(record?.photoURLSnapshot),
-      source:FORMAL_SOURCE
+      source:FORMAL_SOURCE,
+      valid:issues.length === 0,
+      issues
     };
   });
 }
@@ -40,15 +59,17 @@ export function normalizeLegacyMembers(metaMembers={}, nicknames={}){
     status:"active",
     displayName,
     photoURL:"",
-    source:LEGACY_SOURCE
+    source:LEGACY_SOURCE,
+    valid:true,
+    issues:[]
   }));
 }
 
 export function validateFormalSpaceOwnership(space, members=[]){
-  const activeOwners = members.filter(member => member.role === "owner" && member.status === "active");
-  const removedOwners = members.filter(member => member.role === "owner" && member.status === "removed");
+  const activeOwners = members.filter(member => member.valid === true && member.role === "owner" && member.status === "active");
+  const removedOwners = members.filter(member => member.valid === true && member.role === "owner" && member.status === "removed");
   const issues = [];
-  const ownerId = nonEmptyString(space?.ownerId);
+  const ownerId = typeof space?.ownerId === "string" ? space.ownerId : "";
 
   if (!space) issues.push({ code:"missing-space", message:"Formal Space metadata is missing." });
   else if (!ownerId) issues.push({ code:"missing-owner-id", message:"Formal Space ownerId is missing." });
@@ -92,7 +113,7 @@ export function createMemberDirectory(members=[]){
   return {
     memberById:userId => byId.get(userId) || null,
     memberDisplayName:userId => byId.get(userId)?.displayName || GENERIC_MEMBER_NAME,
-    activeSpaceMembers:() => members.filter(member => member.status === "active"),
+    activeSpaceMembers:() => members.filter(member => member.valid === true && member.status === "active"),
     historicalSpaceMember:userId => byId.get(userId) || null
   };
 }
@@ -125,16 +146,16 @@ export function resolveSpaceMembershipFoundation({
 
   return {
     currentSpace:hasFormalSchema
-      ? { id:spaceId, ...spaceDocument, source:FORMAL_SOURCE }
+      ? { ...spaceDocument, id:spaceId, source:FORMAL_SOURCE }
       : { id:spaceId, name:"", type:"legacy", ownerId:null, source:LEGACY_SOURCE },
     currentMembership,
     spaceMembers:members,
     activeMembers:directory.activeSpaceMembers(),
-    removedMembers:members.filter(member => member.status === "removed"),
+    removedMembers:members.filter(member => member.valid === true && member.status === "removed"),
     membershipSource:hasFormalSchema ? FORMAL_SOURCE : LEGACY_SOURCE,
     ownership,
     currentMembershipAccessible:hasFormalSchema
-      ? currentMembership?.status === "active"
+      ? currentMembership?.valid === true && currentMembership.status === "active"
       : !!currentMembership,
     directory
   };

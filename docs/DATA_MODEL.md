@@ -38,9 +38,13 @@ status
 displayName
 photoURL
 source: formal | legacy-meta
+valid
+issues
 ```
 
-Formal Members use `owner` or `member` roles. A legacy compatibility Member has no asserted formal role because `meta/config.members` does not encode ownership; it remains active for compatibility only. Formal display names prefer `Membership.displayNameSnapshot`, then a legacy-compatible name, then a generic non-UID fallback. Legacy Member display names retain the current nickname-before-meta-name behavior. The existing visible two-person UI still reads legacy meta directly in Phase 1, so distinguishable formal snapshots do not silently rename current surfaces.
+The Membership document ID is the canonical formal Member identity; a stored `userId`, when present, must match it exactly. Formal Members are valid only when `role` explicitly equals `owner` or `member` and `status` explicitly equals `active` or `removed`. Malformed records retain structured issues for diagnostics but cannot become active, accessible, or valid owners. A stored root `id` field likewise cannot override the path-derived `currentSpaceId`.
+
+A legacy compatibility Member has no asserted formal role because `meta/config.members` does not encode ownership; it remains active for compatibility only. Only UIDs present in `meta/config.members` become legacy Members. Nicknames may override those Members' display names but cannot introduce nickname-only phantom Members. Formal display names prefer `Membership.displayNameSnapshot`, then a legacy-compatible name, then a generic non-UID fallback. The existing visible two-person UI still reads legacy meta directly in Phase 1, so distinguishable formal snapshots do not silently rename current surfaces.
 
 A pure ownership check reports whether there is exactly one active owner Membership and whether its `userId` matches `Space.ownerId`. Zero owners, multiple owners, a removed owner, and owner-ID mismatch are invalid diagnostic states; the application does not repair them. A removed current Membership is marked inaccessible in the target domain, but Phase 1 does not enforce Membership authorization in the UI or Firestore rules.
 

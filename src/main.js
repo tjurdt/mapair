@@ -1049,7 +1049,7 @@ function subscribe(){
   currentSpaceUnsubscribes.set("members", onSnapshot(membersCol(), snapshot => {
     if (localFailure) return;
     spaceFoundationReads.membersReady = true;
-    spaceFoundationReads.formalMemberships = snapshot.docs.map(member => ({ id:member.id, ...member.data() }));
+    spaceFoundationReads.formalMemberships = snapshot.docs.map(member => ({ ...member.data(), id:member.id }));
     reconcileSpaceMembershipFoundation();
   }, error => handleOptionalFoundationReadError("Memberships", "members", error)));
 
