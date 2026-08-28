@@ -2,14 +2,16 @@
 
 ## Repository shape
 
-The current application is a static client-only site:
+The current application is a static client-only site built with Vite:
 
-- `index.html` contains the document shell, all CSS, HTML templates, application state, domain helpers, rendering, Firebase access, and Google Maps integration.
+- `index.html` contains the document shell and CSS.
+- `src/main.js` contains the imperative application state, rendering, Firebase access, and Google Maps integration.
+- `src/space-membership.js`, `src/ux-policies.js`, and `src/proximity-geometry.js` contain pure domain/policy helpers that can be tested without Firebase.
 - `geo/county.json` contains 22 county features.
 - `geo/town.json` contains 368 town features.
 - `geo/village/` contains one file per county code, totaling 7,986 village features.
 - Firebase ES modules and Google Maps are loaded from vendor CDNs. Turf 7 is loaded as a global from jsDelivr.
-- There is no package manifest, bundler, router, test suite, or separate source tree.
+- `package.json` and `vite.config.js` define the build; dependency-free Node assertion files under `tests/` cover pure helpers. There is no router or component framework.
 
 ## Main runtime flow
 
@@ -17,17 +19,18 @@ The current application is a static client-only site:
 2. The module script checks embedded Firebase and Google configuration.
 3. `boot()` initializes Firebase Auth and Firestore and subscribes to authentication state.
 4. Signed-out users see the Google sign-in gate.
-5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, starts Firestore subscriptions, records the current member, and initializes date filters.
-6. Firestore snapshots replace the in-memory `places`, `trips`, and shared meta state, then invoke the relevant render functions.
+5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, starts current-Space Firestore subscriptions, records the current member in legacy meta, and initializes date filters.
+6. Firestore snapshots replace the in-memory `places`, `trips`, and shared meta state, then invoke the relevant render functions. Optional root Space and Membership snapshots also populate the Phase 1 Member domain without changing visible rendering.
 7. UI handlers mutate global state or write directly to Firestore. Snapshot updates eventually reconcile the rendered application with stored data.
 
-There is no component lifecycle or listener teardown. Rendering is imperative: template strings replace DOM subtrees and handlers are rebound after replacement.
+There is no component lifecycle. Rendering is imperative: template strings replace DOM subtrees and handlers are rebound after replacement. Current-Space Firestore unsubscribe functions are now retained and cleared before resubscription or sign-out, preparing listener ownership for a later Space-switching phase without exposing switching yet.
 
 ## Application state
 
 The module uses shared mutable globals in several groups:
 
-- Infrastructure: `db`, `auth`, `user`, Google API classes, `map`, and `geocoder`.
+- Infrastructure: `db`, `auth`, authenticated `user`, Google API classes, `map`, and `geocoder`.
+- Space foundation: `currentSpaceId`, optional formal `currentSpace`, `currentMembership`, normalized `spaceMembers`, removed Members, Membership source, ownership validation, and current-Space listener teardown handles.
 - Data: `places`, `trips`, `spaceCats`, `members`, `nicknames`, `catColors`, and `levelColors`.
 - Map presentation: `markers`, `choroLevel`, `choroLayer`, `geoCache`, `showPins`, `choroAlpha`, `choroMetric`, `markerMode`, `numberPins`, and legend state.
 - Navigation and filters: `tab`, `filter`, `dateScope`, `pickedMonth`, and administrative-region selection state.
@@ -37,13 +40,21 @@ Most domain and rendering functions read these globals directly, so dependencies
 
 ## Firebase integration
 
-The configured shared-space root is `spaces/{spaceId}`. Current paths are:
+The configured shared-space root is exposed in memory as `currentSpaceId`. It still comes directly from runtime configuration (`us` in production and `test-space-baseline` in LOCAL TEST); there is no local preference, discovery query, or Space switcher. Narrow path helpers resolve:
 
-- `spaces/{spaceId}/places/{placeId}`
-- `spaces/{spaceId}/trips/{tripId}`
-- `spaces/{spaceId}/meta/config`
+- `spaces/{currentSpaceId}`
+- `spaces/{currentSpaceId}/members/{uid}`
+- `spaces/{currentSpaceId}/places/{placeId}`
+- `spaces/{currentSpaceId}/trips/{tripId}`
+- `spaces/{currentSpaceId}/meta/config`
 
-Place and Trip collections are observed with `onSnapshot(query(..., orderBy("createdAt", "desc")))`. The meta document is observed directly. The meta document stores categories, members, nicknames, category colors, and visit-depth colors.
+The final existing content paths are therefore unchanged. Place and Trip collections are observed with `onSnapshot(query(..., orderBy("createdAt", "desc")))`. The meta document is observed directly. The meta document stores categories, members, nicknames, category colors, and visit-depth colors.
+
+Phase 1 also observes the optional root Space document and its Membership collection. Formal Memberships are normalized to a common Member shape, separated into active and removed Members, matched to the authenticated User, and checked against the root `ownerId`. These reads never create or repair documents. If the formal root and Memberships are absent—or optional formal reads fail in production—the client derives temporary in-memory Members from `meta/config.members` and nicknames.
+
+LOCAL TEST logs a compact Membership-source/member-count/current-role/ownership summary to the console. The summary is not emitted in production. Invalid formal ownership and removed-current-Membership states produce warnings only; they do not repair data or enforce access.
+
+The existing two-person participant and naming UI deliberately continues to use legacy meta state in Phase 1. Formal Membership presence does not change visible names, participant controls, or marker behavior. Membership-based authorization is not implemented in application code and remains a later security-rules migration; Phase 1 diagnostics must not be mistaken for security enforcement.
 
 Authentication uses Firebase Google popup sign-in. Authorization is not enforced in application code; it depends on deployed Firestore rules. The setup text shows an example allowlist for two authenticated UIDs, but the deployed rules are outside this repository.
 
@@ -93,7 +104,7 @@ Firestore listeners invoke overlapping subsets of the same cascade. Rendering on
 - Whole `visits` arrays are rewritten, so concurrent editors can overwrite one another.
 - Autosave writes are not serialized; older asynchronous writes may complete after newer edits.
 - Bulk category updates are not awaited or batched.
-- Snapshot subscriptions have no error handlers or teardown.
+- Listener teardown is prepared for one current Space, but Space discovery, state clearing policies, and switching UI do not exist yet.
 - `orderBy("createdAt")` can exclude legacy documents without that field.
 - Choropleth requests can overlap and finish out of order.
 - Village rendering loads and processes all county files and performs linear point-in-polygon scans.

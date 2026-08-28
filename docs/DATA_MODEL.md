@@ -1,6 +1,6 @@
 # Current Data Model
 
-This document records the data model implemented by the current application. It does not propose a replacement schema.
+This document records the deployed-compatible data model implemented by the current application. Phase 1 additionally supports read-only, additive root Space and Membership documents when present, but it does not require them, migrate existing data, or implement the complete target model.
 
 ## Storage layout
 
@@ -13,6 +13,36 @@ spaces/{spaceId}/meta/config
 ```
 
 The application adds Firestore document IDs as in-memory `id` fields after reading documents.
+
+The active application Space remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production and `test-space-baseline` in LOCAL TEST). There is no Space discovery, switching, or local active-Space preference yet.
+
+## Optional Phase 1 Space and Membership documents
+
+The application can now also read these additive paths:
+
+```text
+spaces/{currentSpaceId}
+spaces/{currentSpaceId}/members/{uid}
+```
+
+The optional root Space currently supports `name`, `type`, `ownerId`, `createdBy`, and `createdAt`. A formal Membership supports `userId`, `role`, `status`, `displayNameSnapshot`, optional `photoURLSnapshot`, `joinedAt`, and optional `removedAt`.
+
+These documents are not created, updated, repaired, or required by normal application startup. Existing production data may omit them. When both formal areas are absent, the client constructs temporary compatible Members in memory from `spaces/{currentSpaceId}/meta/config.members` and nicknames. Existing content remains at its current paths and is not moved.
+
+The normalized in-memory Member interface is:
+
+```text
+userId
+role
+status
+displayName
+photoURL
+source: formal | legacy-meta
+```
+
+Formal Members use `owner` or `member` roles. A legacy compatibility Member has no asserted formal role because `meta/config.members` does not encode ownership; it remains active for compatibility only. Formal display names prefer `Membership.displayNameSnapshot`, then a legacy-compatible name, then a generic non-UID fallback. Legacy Member display names retain the current nickname-before-meta-name behavior. The existing visible two-person UI still reads legacy meta directly in Phase 1, so distinguishable formal snapshots do not silently rename current surfaces.
+
+A pure ownership check reports whether there is exactly one active owner Membership and whether its `userId` matches `Space.ownerId`. Zero owners, multiple owners, a removed owner, and owner-ID mismatch are invalid diagnostic states; the application does not repair them. A removed current Membership is marked inaccessible in the target domain, but Phase 1 does not enforce Membership authorization in the UI or Firestore rules.
 
 ## Place
 
@@ -106,6 +136,8 @@ For current Visits, `visit.who` is authoritative when it is a non-empty array. U
 - `both`: includes both UIDs; arrays with more than one unknown participant also fall back to this display mode.
 
 When `visit.who` is absent or empty, participant logic falls back to the Place-level compatibility representation.
+
+The new generic Space Member helpers support arbitrary active and removed Members and historical lookup without `partnerUid()`/`otherOf()`. They are a parallel Phase 1 foundation only. Existing participant editing, filtering, labels, and compatibility projections remain on the two-person logic until Phase 2.
 
 ## Legacy compatibility fields
 
