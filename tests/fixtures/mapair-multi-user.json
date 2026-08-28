@@ -1,0 +1,520 @@
+{
+  "fixtureVersion": 1,
+  "fixtureName": "multi-user",
+  "extends": "mapair-baseline",
+  "documents": [
+    {
+      "path": "users/test-user-a",
+      "data": {
+        "displayName": "測試旅人甲",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "users/test-user-b",
+      "data": {
+        "displayName": "測試旅人乙",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-01T00:01:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "users/test-user-c",
+      "data": {
+        "displayName": "測試旅人丙",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-01T00:02:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "users/test-user-d",
+      "data": {
+        "displayName": "測試旅人丁",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-01T00:03:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-baseline",
+      "data": {
+        "name": "雙人測試地圖",
+        "type": "shared",
+        "ownerId": "test-user-a",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-02T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-baseline/members/test-user-a",
+      "data": {
+        "userId": "test-user-a",
+        "role": "owner",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人甲",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-02T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-baseline/members/test-user-b",
+      "data": {
+        "userId": "test-user-b",
+        "role": "member",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人乙",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-02T00:01:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-a",
+      "data": {
+        "name": "甲的個人地圖",
+        "type": "personal",
+        "ownerId": "test-user-a",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-a/members/test-user-a",
+      "data": {
+        "userId": "test-user-a",
+        "role": "owner",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人甲",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-b",
+      "data": {
+        "name": "乙的個人地圖",
+        "type": "personal",
+        "ownerId": "test-user-b",
+        "createdBy": "test-user-b",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:01:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-b/members/test-user-b",
+      "data": {
+        "userId": "test-user-b",
+        "role": "owner",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人乙",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:01:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-c",
+      "data": {
+        "name": "丙的個人地圖",
+        "type": "personal",
+        "ownerId": "test-user-c",
+        "createdBy": "test-user-c",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:02:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-personal-c/members/test-user-c",
+      "data": {
+        "userId": "test-user-c",
+        "role": "owner",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人丙",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-02-01T00:02:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group",
+      "data": {
+        "name": "四人測試地圖",
+        "type": "shared",
+        "ownerId": "test-user-a",
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/members/test-user-a",
+      "data": {
+        "userId": "test-user-a",
+        "role": "owner",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人甲",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/members/test-user-b",
+      "data": {
+        "userId": "test-user-b",
+        "role": "member",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人乙",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:01:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/members/test-user-c",
+      "data": {
+        "userId": "test-user-c",
+        "role": "member",
+        "status": "active",
+        "displayNameSnapshot": "測試旅人丙",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:02:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/members/test-user-d",
+      "data": {
+        "userId": "test-user-d",
+        "role": "member",
+        "status": "removed",
+        "displayNameSnapshot": "測試旅人丁",
+        "joinedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:03:00.000Z"
+        },
+        "removedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-08-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/trips/trip-test-group",
+      "data": {
+        "name": "測試群組旅行",
+        "emoji": "🧭",
+        "startDate": "2024-06-10",
+        "endDate": "2024-06-12",
+        "color": "#52796f",
+        "participantIds": [
+          "test-user-a",
+          "test-user-b",
+          "test-user-c",
+          "test-user-d"
+        ],
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-06-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/places/place-test-group-museum",
+      "data": {
+        "name": "測試記憶館",
+        "lat": 23.5,
+        "lng": 121,
+        "source": "map",
+        "extId": null,
+        "status": "visited",
+        "visits": [
+          {
+            "id": "visit-test-group-legacy-who",
+            "kind": "visit",
+            "date": "2024-06-10",
+            "endDate": "",
+            "tripId": "trip-test-group",
+            "category": "散步",
+            "who": [
+              "test-user-a",
+              "test-user-b"
+            ],
+            "order": 1
+          },
+          {
+            "id": "visit-test-group-participant-ids",
+            "kind": "visit",
+            "date": "2024-06-11",
+            "endDate": "",
+            "tripId": "trip-test-group",
+            "category": "參觀",
+            "participantIds": [
+              "test-user-a",
+              "test-user-b",
+              "test-user-c"
+            ],
+            "order": 1
+          },
+          {
+            "id": "visit-test-group-both-equal",
+            "kind": "visit",
+            "date": "2024-06-12",
+            "endDate": "",
+            "tripId": "trip-test-group",
+            "category": "用餐",
+            "who": [
+              "test-user-b",
+              "test-user-c"
+            ],
+            "participantIds": [
+              "test-user-b",
+              "test-user-c"
+            ],
+            "order": 1
+          }
+        ],
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-06-02T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "spaces/test-space-group/places/place-test-group-garden",
+      "data": {
+        "name": "測試風景園",
+        "lat": 23.6,
+        "lng": 121.1,
+        "source": "map",
+        "extId": null,
+        "status": "visited",
+        "visits": [
+          {
+            "id": "visit-test-group-mismatch",
+            "kind": "visit",
+            "date": "2024-05-01",
+            "endDate": "",
+            "tripId": "",
+            "category": "散步",
+            "who": [
+              "test-user-a",
+              "test-user-b"
+            ],
+            "participantIds": [
+              "test-user-a",
+              "test-user-c"
+            ],
+            "order": 1
+          },
+          {
+            "id": "visit-test-group-removed-member",
+            "kind": "visit",
+            "date": "2024-05-02",
+            "endDate": "",
+            "tripId": "",
+            "category": "回憶",
+            "participantIds": [
+              "test-user-a",
+              "test-user-d"
+            ],
+            "order": 1
+          }
+        ],
+        "createdBy": "test-user-a",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-05-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "friendships/friendship-test-a-b",
+      "data": {
+        "userIds": [
+          "test-user-a",
+          "test-user-b"
+        ],
+        "requestedBy": "test-user-a",
+        "status": "accepted",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-10T00:00:00.000Z"
+        },
+        "acceptedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-11T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "path": "friendships/friendship-test-a-c",
+      "data": {
+        "userIds": [
+          "test-user-a",
+          "test-user-c"
+        ],
+        "requestedBy": "test-user-a",
+        "status": "pending",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-12T00:00:00.000Z"
+        },
+        "acceptedAt": null
+      }
+    },
+    {
+      "path": "friendships/friendship-test-b-d",
+      "data": {
+        "userIds": [
+          "test-user-b",
+          "test-user-d"
+        ],
+        "requestedBy": "test-user-b",
+        "status": "blocked",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-13T00:00:00.000Z"
+        },
+        "acceptedAt": null
+      }
+    },
+    {
+      "path": "spaceInvites/invite-test-pending-direct",
+      "data": {
+        "spaceId": "test-space-baseline",
+        "createdBy": "test-user-a",
+        "targetUid": "test-user-c",
+        "role": "member",
+        "status": "pending",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-07-01T00:00:00.000Z"
+        },
+        "expiresAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2099-07-08T00:00:00.000Z"
+        },
+        "spaceNameSnapshot": "雙人測試地圖",
+        "inviterDisplayNameSnapshot": "測試旅人甲"
+      }
+    },
+    {
+      "path": "spaceInvites/invite-test-pending-link",
+      "data": {
+        "spaceId": "test-space-group",
+        "createdBy": "test-user-a",
+        "targetUid": null,
+        "role": "member",
+        "status": "pending",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-07-02T00:00:00.000Z"
+        },
+        "expiresAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2099-07-09T00:00:00.000Z"
+        },
+        "spaceNameSnapshot": "四人測試地圖",
+        "inviterDisplayNameSnapshot": "測試旅人甲"
+      }
+    },
+    {
+      "path": "spaceInvites/invite-test-expired",
+      "data": {
+        "spaceId": "test-space-group",
+        "createdBy": "test-user-a",
+        "targetUid": "test-user-d",
+        "role": "member",
+        "status": "expired",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-01T00:00:00.000Z"
+        },
+        "expiresAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-01-08T00:00:00.000Z"
+        },
+        "spaceNameSnapshot": "四人測試地圖",
+        "inviterDisplayNameSnapshot": "測試旅人甲"
+      }
+    },
+    {
+      "path": "spaceInvites/invite-test-revoked",
+      "data": {
+        "spaceId": "test-space-group",
+        "createdBy": "test-user-a",
+        "targetUid": "test-user-b",
+        "role": "member",
+        "status": "revoked",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-04-01T00:00:00.000Z"
+        },
+        "expiresAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-04-08T00:00:00.000Z"
+        },
+        "spaceNameSnapshot": "四人測試地圖",
+        "inviterDisplayNameSnapshot": "測試旅人甲"
+      }
+    },
+    {
+      "path": "spaceInvites/invite-test-accepted",
+      "data": {
+        "spaceId": "test-space-group",
+        "createdBy": "test-user-a",
+        "targetUid": "test-user-c",
+        "role": "member",
+        "status": "accepted",
+        "createdAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-01T00:00:00.000Z"
+        },
+        "expiresAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-08T00:00:00.000Z"
+        },
+        "acceptedBy": "test-user-c",
+        "acceptedAt": {
+          "__type": "firestore-timestamp",
+          "iso": "2024-03-02T00:00:00.000Z"
+        },
+        "spaceNameSnapshot": "四人測試地圖",
+        "inviterDisplayNameSnapshot": "測試旅人甲"
+      }
+    }
+  ]
+}

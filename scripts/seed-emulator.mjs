@@ -8,19 +8,24 @@
  * design with new safety boundaries. There is no cloud fallback.
  */
 
-import { readFile } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
+import {
+  BASELINE_FIXTURE_URL,
+  BASELINE_SPACE_ID,
+  MULTI_USER_FIXTURE_URL,
+  assertFixture as assert,
+  readJsonFixture,
+  validateBaselineFixture,
+  validateDocumentList,
+  validateDocumentPath,
+  validateMultiUserFixture
+} from "./fixture-support.mjs";
 
 const EMULATOR_ORIGIN = "http://127.0.0.1:8080";
 const PROJECT_ID = "demo-mapair-local";
 const DATABASE_ID = "(default)";
-const FIXTURE_SPACE_ID = "test-space-baseline";
-const FIXTURE_URL = new URL("../tests/fixtures/mapair-baseline.json", import.meta.url);
 const FIREBASE_CONFIG_URL = new URL("../firebase.json", import.meta.url);
 const REQUEST_TIMEOUT_MS = 5000;
-
-function assert(condition, message){
-  if (!condition) throw new Error(message);
-}
 
 function assertStaticSafety(){
   const endpoint = new URL(EMULATOR_ORIGIN);
@@ -29,50 +34,23 @@ function assertStaticSafety(){
   assert(endpoint.port === "8080", "Refusing emulator port other than exact 8080.");
   assert(endpoint.origin === "http://127.0.0.1:8080", "Refusing unexpected emulator origin.");
   assert(PROJECT_ID === "demo-mapair-local", "Refusing project ID other than demo-mapair-local.");
-  assert(FIXTURE_SPACE_ID === "test-space-baseline", "Refusing space ID other than test-space-baseline.");
+  assert(BASELINE_SPACE_ID === "test-space-baseline", "Refusing baseline space ID other than test-space-baseline.");
 }
 
 function parseArguments(argv){
-  if (argv.length === 0) return { resetOnly:false };
-  if (argv.length === 1 && argv[0] === "--reset-only") return { resetOnly:true };
-  throw new Error("Usage: node scripts/seed-emulator.mjs [--reset-only]");
-}
-
-async function readJson(url, label){
-  let value;
-  try {
-    value = JSON.parse(await readFile(url, "utf8"));
-  } catch(error){
-    throw new Error(`Could not read ${label}: ${error.message}`);
+  if (argv.length === 0) return { fixtureName:"baseline", resetOnly:false };
+  if (argv.length === 1 && argv[0] === "--reset-only") return { fixtureName:"baseline", resetOnly:true };
+  if (argv.length === 2 && argv[0] === "--fixture"){
+    assert(["baseline", "multi-user"].includes(argv[1]), `Unknown fixture name: ${argv[1]}`);
+    return { fixtureName:argv[1], resetOnly:false };
   }
-  return value;
-}
-
-function validateFixture(fixture){
-  assert(fixture && typeof fixture === "object" && !Array.isArray(fixture), "Fixture root must be an object.");
-  assert(fixture.spaceId === FIXTURE_SPACE_ID, `Refusing fixture spaceId other than ${FIXTURE_SPACE_ID}.`);
-  assert(fixture.meta?.config && typeof fixture.meta.config === "object", "Fixture meta.config is required.");
-  assert(Array.isArray(fixture.trips), "Fixture trips must be an array.");
-  assert(Array.isArray(fixture.places), "Fixture places must be an array.");
-
-  for (const [label, records] of [["trip", fixture.trips], ["place", fixture.places]]){
-    const ids = new Set();
-    for (const record of records){
-      assert(record && typeof record === "object", `Each ${label} fixture must be an object.`);
-      assert(typeof record.id === "string" && record.id.length > 0 && !record.id.includes("/"), `Invalid ${label} document ID.`);
-      assert(!ids.has(record.id), `Duplicate ${label} document ID: ${record.id}`);
-      assert(record.data && typeof record.data === "object" && !Array.isArray(record.data), `Missing data for ${label} ${record.id}.`);
-      ids.add(record.id);
-    }
-  }
-
-  const legacy = fixture.places.find(record => record.id === "place-test-legacy-no-created-at");
-  assert(legacy, "Required legacy fixture is missing.");
-  assert(!Object.hasOwn(legacy.data, "createdAt"), "Legacy fixture must intentionally omit createdAt.");
+  const unknown = argv.find(argument => !["--fixture", "--reset-only", "baseline", "multi-user"].includes(argument));
+  if (unknown) throw new Error(`Unknown argument: ${unknown}`);
+  throw new Error("Usage: node scripts/seed-emulator.mjs [--reset-only | --fixture baseline | --fixture multi-user]");
 }
 
 async function validateFirebaseReference(){
-  const config = await readJson(FIREBASE_CONFIG_URL, "firebase.json");
+  const config = await readJsonFixture(FIREBASE_CONFIG_URL, "firebase.json");
   assert(config.emulators?.firestore?.port === 8080, "firebase.json Firestore emulator port must be 8080.");
 }
 
@@ -112,7 +90,24 @@ function encodeFields(object, path="$"){
   return Object.fromEntries(Object.entries(object).map(([key, value]) => [key, encodeValue(value, `${path}.${key}`)]));
 }
 
+function decodeValue(value, path="$"){
+  if (Object.hasOwn(value, "nullValue")) return null;
+  if (Object.hasOwn(value, "stringValue")) return value.stringValue;
+  if (Object.hasOwn(value, "booleanValue")) return value.booleanValue;
+  if (Object.hasOwn(value, "integerValue")) return Number(value.integerValue);
+  if (Object.hasOwn(value, "doubleValue")) return value.doubleValue;
+  if (Object.hasOwn(value, "timestampValue")) return { __type:"firestore-timestamp", iso:new Date(value.timestampValue).toISOString() };
+  if (Object.hasOwn(value, "arrayValue")) return (value.arrayValue.values || []).map((item, index) => decodeValue(item, `${path}[${index}]`));
+  if (Object.hasOwn(value, "mapValue")) return decodeFields(value.mapValue.fields || {}, path);
+  throw new Error(`Unsupported Firestore REST value at ${path}.`);
+}
+
+function decodeFields(fields, path="$"){
+  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, decodeValue(value, `${path}.${key}`)]));
+}
+
 function firestorePath(suffix){
+  assert(suffix.startsWith("/"), "Internal error: Firestore suffix must be absolute.");
   return `/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents${suffix}`;
 }
 
@@ -155,26 +150,28 @@ async function clearDatabase(){
   if (!response.ok) await responseError(response, "Emulator database reset");
 }
 
-async function verifyReset(){
-  const [meta, trips, places] = await Promise.all([
-    emulatorFetch(firestorePath(`/spaces/${FIXTURE_SPACE_ID}/meta/config`), { method:"GET" }),
-    listCollection(`spaces/${FIXTURE_SPACE_ID}/trips`),
-    listCollection(`spaces/${FIXTURE_SPACE_ID}/places`)
-  ]);
-  assert(meta.status === 404, "Reset verification failed: meta/config still exists.");
-  assert(trips.length === 0, "Reset verification failed: Trip documents still exist.");
-  assert(places.length === 0, "Reset verification failed: Place documents still exist.");
-}
-
 async function writeDocument(documentPath, data){
+  validateDocumentPath(documentPath);
   const response = await emulatorFetch(firestorePath(`/${documentPath}`), {
     method:"PATCH",
-    body:JSON.stringify({ fields:encodeFields(data) })
+    body:JSON.stringify({ fields:encodeFields(data, documentPath) })
   });
   if (!response.ok) await responseError(response, `Writing ${documentPath}`);
 }
 
+async function writeDocuments(documents){
+  validateDocumentList(documents, "documents selected for emulator seeding");
+  for (const document of documents) await writeDocument(document.path, document.data);
+}
+
+async function getDocument(documentPath){
+  validateDocumentPath(documentPath);
+  return emulatorFetch(firestorePath(`/${documentPath}`), { method:"GET" });
+}
+
 async function listCollection(collectionPath){
+  const segments = collectionPath.split("/");
+  assert(segments.length % 2 === 1 && segments.every(segment => /^[A-Za-z0-9_-]+$/.test(segment)), `Unsafe collection path: ${collectionPath}`);
   const response = await emulatorFetch(`${firestorePath(`/${collectionPath}`)}?pageSize=1000`, { method:"GET" });
   if (!response.ok) await responseError(response, `Listing ${collectionPath}`);
   const body = await response.json();
@@ -188,55 +185,88 @@ function documentIds(documents){
 function assertIds(actualDocuments, expectedRecords, label){
   const actual = documentIds(actualDocuments);
   const expected = expectedRecords.map(record => record.id).sort();
-  assert(JSON.stringify(actual) === JSON.stringify(expected), `${label} verification failed: expected [${expected}], got [${actual}].`);
+  assert(isDeepStrictEqual(actual, expected), `${label} verification failed: expected [${expected}], got [${actual}].`);
 }
 
-async function verifySeed(fixture){
-  const metaResponse = await emulatorFetch(firestorePath(`/spaces/${FIXTURE_SPACE_ID}/meta/config`), { method:"GET" });
-  if (!metaResponse.ok) await responseError(metaResponse, "Verifying meta/config");
+async function verifyDocument(document){
+  const response = await getDocument(document.path);
+  if (!response.ok) await responseError(response, `Verifying ${document.path}`);
+  const stored = await response.json();
+  const actualData = decodeFields(stored.fields || {}, document.path);
+  assert(isDeepStrictEqual(actualData, document.data), `Stored data does not match fixture at ${document.path}.`);
+}
 
+async function verifyDocuments(documents){
+  await Promise.all(documents.map(verifyDocument));
+}
+
+async function verifyReset(knownDocuments){
+  const responses = await Promise.all(knownDocuments.map(document => getDocument(document.path)));
+  assert(responses.every(response => response.status === 404), "Reset verification failed: a known fixture document still exists.");
   const [trips, places] = await Promise.all([
-    listCollection(`spaces/${FIXTURE_SPACE_ID}/trips`),
-    listCollection(`spaces/${FIXTURE_SPACE_ID}/places`)
+    listCollection(`spaces/${BASELINE_SPACE_ID}/trips`),
+    listCollection(`spaces/${BASELINE_SPACE_ID}/places`)
   ]);
-  assertIds(trips, fixture.trips, "Trip documents");
-  assertIds(places, fixture.places, "Place documents");
+  assert(trips.length === 0, "Reset verification failed: baseline Trip documents still exist.");
+  assert(places.length === 0, "Reset verification failed: baseline Place documents still exist.");
+}
 
-  const legacyResponse = await emulatorFetch(firestorePath(`/spaces/${FIXTURE_SPACE_ID}/places/place-test-legacy-no-created-at`), { method:"GET" });
-  if (!legacyResponse.ok) await responseError(legacyResponse, "Verifying legacy Place");
+async function verifyBaselineSeed(fixture, documents){
+  await verifyDocuments(documents);
+  const [trips, places] = await Promise.all([
+    listCollection(`spaces/${BASELINE_SPACE_ID}/trips`),
+    listCollection(`spaces/${BASELINE_SPACE_ID}/places`)
+  ]);
+  assertIds(trips, fixture.trips, "Baseline Trip documents");
+  assertIds(places, fixture.places, "Baseline Place documents");
+
+  const legacyResponse = await getDocument(`spaces/${BASELINE_SPACE_ID}/places/place-test-legacy-no-created-at`);
+  if (!legacyResponse.ok) await responseError(legacyResponse, "Verifying baseline legacy Place");
   const legacyDocument = await legacyResponse.json();
-  assert(!Object.hasOwn(legacyDocument.fields || {}, "createdAt"), "Legacy Place unexpectedly contains createdAt.");
-
+  assert(!Object.hasOwn(legacyDocument.fields || {}, "createdAt"), "Baseline legacy Place unexpectedly contains createdAt.");
   return { meta:1, trips:trips.length, places:places.length };
 }
 
-async function seedFixture(fixture){
-  await writeDocument(`spaces/${FIXTURE_SPACE_ID}/meta/config`, fixture.meta.config);
-  for (const trip of fixture.trips) await writeDocument(`spaces/${FIXTURE_SPACE_ID}/trips/${trip.id}`, trip.data);
-  for (const place of fixture.places) await writeDocument(`spaces/${FIXTURE_SPACE_ID}/places/${place.id}`, place.data);
+async function loadSelection(fixtureName){
+  const baseline = await readJsonFixture(BASELINE_FIXTURE_URL, "baseline fixture");
+  const baselineRecords = validateBaselineFixture(baseline);
+  if (fixtureName === "baseline") return { baseline, baselineRecords, additiveRecords:[], allRecords:baselineRecords };
+
+  const multiUser = await readJsonFixture(MULTI_USER_FIXTURE_URL, "multi-user fixture");
+  const validation = validateMultiUserFixture(multiUser, baseline);
+  return {
+    baseline,
+    baselineRecords:validation.baselineDocuments,
+    additiveRecords:validation.additiveDocuments,
+    allRecords:validation.allDocuments
+  };
 }
 
 async function main(){
   assertStaticSafety();
-  const { resetOnly } = parseArguments(process.argv.slice(2));
+  const { fixtureName, resetOnly } = parseArguments(process.argv.slice(2));
   await validateFirebaseReference();
-  const fixture = await readJson(FIXTURE_URL, "baseline fixture");
-  validateFixture(fixture);
+  const { baseline, baselineRecords, additiveRecords, allRecords } = await loadSelection(resetOnly ? "multi-user" : fixtureName);
 
   await verifyReachable();
   await clearDatabase();
 
   if (resetOnly){
-    await verifyReset();
+    await verifyReset(allRecords);
     console.log("Firestore Emulator reset complete; no fixtures loaded.");
-    console.log(`Host: ${EMULATOR_ORIGIN} | Project: ${PROJECT_ID} | Space: ${FIXTURE_SPACE_ID}`);
+    console.log(`Host: ${EMULATOR_ORIGIN} | Project: ${PROJECT_ID} | Space: ${BASELINE_SPACE_ID}`);
     return;
   }
 
-  await seedFixture(fixture);
-  const counts = await verifySeed(fixture);
-  console.log(`Firestore Emulator seed complete: ${counts.meta} meta, ${counts.trips} trip, ${counts.places} places.`);
-  console.log(`Host: ${EMULATOR_ORIGIN} | Project: ${PROJECT_ID} | Space: ${FIXTURE_SPACE_ID}`);
+  await writeDocuments(baselineRecords);
+  if (fixtureName === "multi-user") await writeDocuments(additiveRecords);
+
+  const baselineCounts = await verifyBaselineSeed(baseline, baselineRecords);
+  if (fixtureName === "multi-user") await verifyDocuments(additiveRecords);
+
+  console.log(`Firestore Emulator seed complete: ${baselineCounts.meta} baseline meta, ${baselineCounts.trips} baseline trip, ${baselineCounts.places} baseline places${fixtureName === "multi-user" ? `, ${additiveRecords.length} additive multi-user documents` : ""}.`);
+  console.log(`Fixture: ${fixtureName} | Verified documents: ${allRecords.length}`);
+  console.log(`Host: ${EMULATOR_ORIGIN} | Project: ${PROJECT_ID} | Space: ${BASELINE_SPACE_ID}`);
 }
 
 main().catch(error => {
