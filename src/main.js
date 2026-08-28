@@ -6,6 +6,7 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
 import {
+  MAP_SURFACE_Z_INDEX,
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
@@ -14,8 +15,27 @@ import {
   resolveVisitMoveTarget,
   shouldShowReorderControls,
   shouldAutoFitViewport,
+  shouldFitFilterViewport,
+  shouldRenderAdministrativeThematicFill,
+  shouldShowAdministrativeLegend,
+  shouldShowRegionBlackout,
+  transitionMapSurfaceState,
   visitMatchesReorderScope
 } from "./ux-policies.js";
+import {
+  PROXIMITY_RADIUS_MAX,
+  PROXIMITY_RADIUS_MIN,
+  buildProximityFeatureCollection,
+  createMaskIndex,
+  formatProximityRadius,
+  normalizeProximityRadius,
+  parseProximityRadius,
+  readProximityPreferences,
+  resolveProximityMaskMode,
+  selectEligibleProximitySeeds,
+  selectRegionMaskCandidates,
+  writeProximityPreferences
+} from "./proximity-geometry.js";
 
 /* ============================================================
    1) 設定
@@ -141,11 +161,21 @@ let db, auth, user;
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
-let choroLevel = "off", choroLayer = null, geoCache = {};
+let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let nicknames = {}, levelColors = { ...LEVEL_COLORS }, addMode = false;
-let choroLayerLevel = null, legendCollapsed = false;
+let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
+let proximityStorage = null;
+try { proximityStorage = globalThis.localStorage; } catch(e) {}
+const initialProximityPreferences = readProximityPreferences(proximityStorage);
+let proximityRadius = initialProximityPreferences.radius;
+let proximityMaskTaiwan = initialProximityPreferences.maskToTaiwan;
+let proximityEnabled = false;
+let proximityLayer = null, proximityLayerKey = "", proximityMaskIndex = null, proximityRenderVersion = 0;
+let selectedRegionMaskCache = { identity:"", maskIndex:null };
+let proximitySeedCount = 0, proximityRadiusTimer = null;
+const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
 const nameFor = uid => nicknames[uid] || members[uid] || (uid===(user&&user.uid) ? "我" : "對方");
 function catColor(c){ return catColors[c] || CAT_PALETTE[Math.max(0, spaceCats.indexOf(c)) % CAT_PALETTE.length]; }
@@ -200,6 +230,10 @@ function defaultDateForNewVisit(){
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
+const REGION_GEO = {
+  countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
+  townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
+};
 const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
 const otherOf = uid => Object.keys(members).find(u => u !== uid) || null;
 // 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.who 為準
@@ -522,6 +556,10 @@ function renderGate(){
    3) 主畫面
    ============================================================ */
 async function renderApp(){
+  adminRenderVersion++;
+  proximityRenderVersion++;
+  removeAdministrativeLayer();
+  removeProximityLayer();
   document.getElementById("app").innerHTML = `
     <header>
       <span class="title">我們去過的地方</span>
@@ -539,12 +577,20 @@ async function renderApp(){
             <button data-l="county">縣市</button>
             <button data-l="town">鄉鎮</button>
             <button data-l="village">村里</button>
+            <button data-l="proximity">鄰近</button>
           </div>
           <button id="addBtn" title="新增地點模式">＋</button>
           <button id="locBtn" title="定位到我的位置">📍</button>
           <button id="setBtn">設定</button>
         </div>
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
+        <div id="proximityCtl" style="display:none">
+          <label for="proximityRadius">半徑</label>
+          <input id="proximityRadius" type="number" min="${PROXIMITY_RADIUS_MIN}" max="${PROXIMITY_RADIUS_MAX}" step="any" inputmode="decimal" value="${formatProximityRadius(proximityRadius)}" aria-label="鄰近涵蓋半徑（公里）">
+          <span>km</span>
+          <label class="proximity-mask" id="proximityMaskLabel"><input id="proximityMask" type="checkbox" ${proximityMaskTaiwan?'checked':''}> 僅限台灣陸地</label>
+          <span class="proximity-region-status" id="proximityRegionStatus" style="display:none"></span>
+        </div>
         <div id="maplegend" style="display:none"></div>
       </div>
       <div class="side">
@@ -639,10 +685,8 @@ async function renderApp(){
   wireSearch();
   subscribe();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
-    if (filter.regions.length){ filter.regions = []; renderList(); renderFilterChips(); }
-    setChoro(b.dataset.l);
+    toggleMapSurface(b.dataset.l);
     renderMarkers();
-    document.getElementById("multiBtn").style.display = b.dataset.l === "off" ? "none" : "block";
   });
   document.getElementById("addBtn").onclick = e => {
     addMode = !addMode;
@@ -661,6 +705,42 @@ async function renderApp(){
   document.getElementById("multiBtn").onclick = e => {
     regionMulti = !regionMulti;
     e.target.classList.toggle("on", regionMulti);
+  };
+  const proximityRadiusInput = document.getElementById("proximityRadius");
+  const saveProximityPreferences = () => writeProximityPreferences(proximityStorage, {
+    radius:proximityRadius,
+    maskToTaiwan:proximityMaskTaiwan
+  });
+  const applyProximityRadius = next => {
+    if (next === proximityRadius) return;
+    proximityRadius = next;
+    saveProximityPreferences();
+    if (proximityEnabled) refreshProximityLayer();
+  };
+  const finalizeProximityRadius = () => {
+    clearTimeout(proximityRadiusTimer);
+    const parsed = parseProximityRadius(proximityRadiusInput.value);
+    const next = parsed == null ? proximityRadius : normalizeProximityRadius(parsed, proximityRadius);
+    proximityRadiusInput.value = formatProximityRadius(next);
+    applyProximityRadius(next);
+  };
+  proximityRadiusInput.oninput = () => {
+    clearTimeout(proximityRadiusTimer);
+    const parsed = parseProximityRadius(proximityRadiusInput.value);
+    if (parsed == null || parsed < PROXIMITY_RADIUS_MIN || parsed > PROXIMITY_RADIUS_MAX) return;
+    proximityRadiusTimer = setTimeout(()=>applyProximityRadius(parsed), 280);
+  };
+  proximityRadiusInput.onchange = finalizeProximityRadius;
+  proximityRadiusInput.onblur = finalizeProximityRadius;
+  proximityRadiusInput.onkeydown = e => {
+    if(e.key!=="Enter") return;
+    finalizeProximityRadius();
+    proximityRadiusInput.blur();
+  };
+  document.getElementById("proximityMask").onchange = e => {
+    proximityMaskTaiwan = e.target.checked;
+    saveProximityPreferences();
+    if (proximityEnabled) refreshProximityLayer();
   };
 
   // 記錄自己是這個空間的成員(單/雙人篩選用)
@@ -744,8 +824,8 @@ function openSettings(){
   g("s_metric").value = choroMetric;
   g("s_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
   g("s_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
-  g("s_alpha").oninput = e => { choroAlpha = (+e.target.value)/100; if(choroLevel!=="off") setChoro(choroLevel); };
-  g("s_metric").onchange = e => { choroMetric = e.target.value; if(choroLevel!=="off") setChoro(choroLevel); };
+  g("s_alpha").oninput = e => { choroAlpha = (+e.target.value)/100; refreshMapSurfaces(); };
+  g("s_metric").onchange = e => { choroMetric = e.target.value; if(adminLevel!=="off") renderAdministrativeLayer(); };
   const saveNick = () => {
     nicknames[user.uid] = g("s_nick").value.trim();
     setDoc(metaDoc(), { nicknames: { [user.uid]: nicknames[user.uid] } }, { merge:true });
@@ -755,7 +835,7 @@ function openSettings(){
   document.querySelectorAll("input[data-lv]").forEach(inp => inp.onchange = () => {
     levelColors[inp.dataset.lv] = inp.value;
     setDoc(metaDoc(), { levelColors: { [inp.dataset.lv]: inp.value } }, { merge:true });
-    renderMarkers(); if(choroLevel!=="off") setChoro(choroLevel);
+    renderMarkers(); if(adminLevel!=="off") renderAdministrativeLayer();
   });
   document.querySelectorAll("input[data-cat]").forEach(inp => inp.onchange = () => {
     catColors[inp.dataset.cat] = inp.value;
@@ -820,11 +900,20 @@ function scheduleFilterFit(){
   clearTimeout(filterFitTimer);
   filterFitTimer=setTimeout(fitMapToCurrentFilter,80);
 }
-function applyFilter(){
+function applyFilter({fitViewport=true}={}){
   renderList(); renderMarkers();
-  if (choroLevel !== "off") setChoro(choroLevel);
+  refreshMapSurfaces();
   renderFilterChips();
-  scheduleFilterFit();
+  const shouldFit=shouldFitFilterViewport({
+    requested:fitViewport,
+    tripId:filter.tripId,
+    regionCount:filter.regions.length
+  });
+  if(shouldFit) scheduleFilterFit();
+  else {
+    clearTimeout(filterFitTimer);
+    filterFitTimer=null;
+  }
 }
 function refreshFilterUI(){
   const trip = document.getElementById("fl_trip"); if (!trip) return;
@@ -858,6 +947,7 @@ function refreshFilterUI(){
 }
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
+  updateProximityMaskControl();
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => p.status===tab && passFilter(p)).length;
@@ -876,7 +966,6 @@ function renderFilterChips(){
   if (op) op.onclick = () => { numberPins=!numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
     filter.regions.splice(+x.dataset.rx, 1); applyFilter();
-    if (choroLevel!=="off") setChoro(choroLevel);
   });
 }
 
@@ -926,14 +1015,14 @@ function subscribe(){
     if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
-    if (choroLevel !== "off") setChoro(choroLevel);
+    refreshMapSurfaces();
   }, error => handleFirestoreError("places", error));
   onSnapshot(query(collection(db, ...base, "trips"), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
     renderList(); renderMarkers();
     refreshFilterUI();
-    if (choroLevel !== "off") setChoro(choroLevel);
+    refreshMapSurfaces();
   }, error => handleFirestoreError("trips", error));
   onSnapshot(metaDoc(), s => {
     if (localFailure) return;
@@ -945,7 +1034,7 @@ function subscribe(){
     levelColors = { ...LEVEL_COLORS, ...(d.levelColors||{}) };
     refreshFilterUI();
     renderList(); renderMarkers(); renderMarkerLegend();
-    if (choroLevel !== "off") setChoro(choroLevel);
+    refreshMapSurfaces();
   }, error => handleFirestoreError("meta/config", error));
 }
 const metaDoc   = () => doc(db, "spaces", runtimeConfig.spaceId, "meta", "config");
@@ -1042,10 +1131,25 @@ function markerColorForOccurrence(o){
   if(markerMode==="dateFirst" || markerMode==="dateLast") return dateOccurrenceColor(o);
   return markerColorForVisit(o.p,o.v);
 }
+function effectiveMarkerColor(p){
+  let color=markerColor(p);
+  if(p.status!=="visited") return color;
+  if(markerMode==="dateFirst" || markerMode==="dateLast"){
+    const occurrence=representativeDateOccurrence(p,markerMode);
+    return occurrence ? dateOccurrenceColor(occurrence) : color;
+  }
+  const visits=placeVisits(p)
+    .map((v,visitIndex)=>({p,v,visitIndex,seqDate:v.date,stayAnchor:visitKind(v)==="stay"?"night":""}))
+    .filter(o=>visitPassFilter(p,o.v))
+    .sort(sortOccurrences);
+  const occurrence=visits[visits.length-1];
+  return occurrence ? markerColorForVisit(p,occurrence.v) : color;
+}
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
   renderMarkerLegend();
+  restyleProximityLayer();
   if (!showPins) return;
 
   const seq=sequenceContext();
@@ -1070,15 +1174,7 @@ function renderMarkers(){
 
   Object.values(places).forEach(p => {
     if (!passFilter(p)) return;
-    let col=markerColor(p);
-    if(p.status==="visited"){
-      if(markerMode==="dateFirst" || markerMode==="dateLast"){
-        const o=representativeDateOccurrence(p,markerMode); if(o) col=dateOccurrenceColor(o);
-      }else{
-        const vv=placeVisits(p).map((v,visitIndex)=>({p,v,visitIndex,seqDate:v.date,stayAnchor:visitKind(v)==="stay"?"night":""})).filter(o=>visitPassFilter(p,o.v)).sort(sortOccurrences);
-        const o=vv[vv.length-1]; if(o) col=markerColorForVisit(p,o.v);
-      }
-    }
+    const col=effectiveMarkerColor(p);
     const pin = new Pin({ background:col, borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
     pin.element.style.cursor = "pointer";
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
@@ -1090,24 +1186,24 @@ function dateMarkerLegendBody(){
   const b=markerDateBounds(), grad=VISIT_DATE_RAINBOW.join(",");
   return `<div class="legendsection"><div class="legendtitle">地標 · ${markerMode==="dateFirst"?"最早造訪":"最後造訪"}</div>`+
     `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-    `<div style="display:flex;justify-content:space-between;width:108px;font-size:9px"><span>${esc((b.from||"").slice(5)||"早")}</span><span>${esc((b.to||"").slice(5)||"晚")}</span></div>`+
-    `<div style="font-size:9px;margin-top:2px">同日：淺 → 深 = 第一站 → 最後一站</div></div>`;
+    `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((b.from||"").slice(5)||"早")}</span><span>${esc((b.to||"").slice(5)||"晚")}</span></div>`+
+    `<div style="font-size:11px;margin-top:2px">同日：淺 → 深 = 第一站 → 最後一站</div></div>`;
 }
 function markerLegendBody(){
-  if (!showPins) return "";
+  if (!showPins && !proximityEnabled) return "";
   const titles = { status:"是否去過", cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
   const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
   let order="";
   if(orderMode){
     const txt=seq.type==="trip" ? "D1-1 = 第1天第1站" : "數字 = 當日造訪順序";
-    order=`<div class="legendsection"><div class="legendtitle">地標 · 順序</div><div style="font-size:10px">${txt}</div></div>`;
+    order=`<div class="legendsection"><div class="legendtitle">地標 · 順序</div><div style="font-size:11px">${txt}</div></div>`;
   }
   if(markerMode==="dateFirst" || markerMode==="dateLast") return order+dateMarkerLegendBody();
-  if(orderMode) return order+`<div style="font-size:9px;margin-top:3px">顏色沿用目前地標配色</div>`;
+  if(orderMode) return order+`<div style="font-size:11px;margin-top:3px">顏色沿用目前地標配色</div>`;
   if (markerMode === "rating"){
     return `<div class="legendsection"><div class="legendtitle">地標 · 評分</div>`+
       `<div style="height:8px;width:92px;border-radius:3px;background:linear-gradient(90deg,#e9d8c0,#8f4f18)"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:92px;font-size:9px"><span>1</span><span>5</span></div></div>`;
+      `<div style="display:flex;justify-content:space-between;width:92px;font-size:11px"><span>1</span><span>5</span></div></div>`;
   }
   let rows=[];
   if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
@@ -1115,18 +1211,18 @@ function markerLegendBody(){
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.map(c=>[catColor(c), c]);
   else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
-  const body=rows.length ? rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") : `<div style="font-size:10px">尚無項目</div>`;
+  const body=rows.length ? rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${esc(r[1])}</div>`).join("") : `<div style="font-size:11px">尚無項目</div>`;
   return `<div class="legendsection"><div class="legendtitle">地標 · ${titles[markerMode]||"地標"}</div>${body}</div>`;
 }
 
 function regionLegendBody(){
-  if(!regionLegendState || choroLevel==="off") return "";
+  if(!regionLegendState || !shouldShowAdministrativeLegend({adminLevel,proximityEnabled})) return "";
   const {metric,ctx}=regionLegendState;
   if(metric==="first"||metric==="last"){
     const lab=metric==="first"?"初次造訪":"最後造訪", grad=VISIT_DATE_RAINBOW.join(",");
     return `<div class="legendsection"><div class="legendtitle">行政區 · ${lab}</div>`+
       `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:108px;font-size:9px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
+      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
   }
   let rows=metric==="count"
     ? [[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]]
@@ -1134,13 +1230,24 @@ function regionLegendBody(){
   return `<div class="legendsection"><div class="legendtitle">行政區 · ${metric==="count"?"地標數":"造訪深度"}</div>`+
     rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("")+`</div>`;
 }
+function proximityLegendBody(){
+  if(!proximityEnabled) return "";
+  const maskMode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
+    : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
+  const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
+  return `<div class="legendsection"><div class="legendtitle">最近造訪涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
+    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
+}
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
-  const hasMarker=showPins, hasRegion=choroLevel!=="off" && !!regionLegendState;
-  if(!hasMarker && !hasRegion){ el.style.display="none"; return; }
+  const hasMarker=showPins;
+  const hasRegion=!!regionLegendState && shouldShowAdministrativeLegend({adminLevel,proximityEnabled});
+  const hasProximity=proximityEnabled;
+  if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
   el.style.display="block";
   const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${legendCollapsed?"▸":"▾"}</span></div>`;
-  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody());
+  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
   document.getElementById("legendHead").onclick=()=>{ legendCollapsed=!legendCollapsed; renderUnifiedLegend(); };
 }
 function renderMarkerLegend(){ renderUnifiedLegend(); }
@@ -1238,77 +1345,332 @@ function renderLegend(metric,ctx){
   renderUnifiedLegend();
 }
 
-async function setChoro(level){
-  choroLevel = level;
-  document.querySelectorAll("#mapctl button").forEach(b => b.classList.toggle("on", b.dataset.l === level));
-  if (level === "off"){
-    if (choroLayer){ choroLayer.setMap(null); choroLayer = null; choroLayerLevel = null; }
-    regionLegendState=null; renderUnifiedLegend(); return;
+function updateSurfaceControls(){
+  document.querySelectorAll("#mapctl button").forEach(b => {
+    const active=b.dataset.l==="proximity" ? proximityEnabled : b.dataset.l===adminLevel;
+    b.classList.toggle("on",active);
+  });
+  const administrative=adminLevel!=="off";
+  const multi=document.getElementById("multiBtn");
+  const proximity=document.getElementById("proximityCtl");
+  if(multi) multi.style.display=administrative ? "block" : "none";
+  if(proximity) proximity.style.display=proximityEnabled ? "flex" : "none";
+  updateProximityMaskControl();
+}
+function updateProximityMaskControl(){
+  const maskLabel=document.getElementById("proximityMaskLabel");
+  const regionStatus=document.getElementById("proximityRegionStatus");
+  if(!maskLabel || !regionStatus) return;
+  const mode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  maskLabel.style.display=mode.type==="regions" ? "none" : "flex";
+  regionStatus.style.display=mode.type==="regions" ? "inline" : "none";
+  regionStatus.textContent=mode.type==="regions" ? `限制於已選 ${mode.count} 個行政區` : "";
+}
+function removeAdministrativeLayer(){
+  if(adminLayer) adminLayer.setMap(null);
+  if(adminContextLayer) adminContextLayer.setMap(null);
+  adminLayer=null;
+  adminContextLayer=null;
+  adminLayerLevel=null;
+  adminContextLevel=null;
+}
+function removeProximityLayer(){
+  if(proximityLayer){
+    proximityLayer.setMap(null);
+    proximityLayer=null;
+    proximityLayerKey="";
+  }
+}
+function restyleProximityLayer(){
+  if(!proximityLayer) return;
+  proximityLayer.setStyle(feature=>{
+    const place=places[String(feature.getProperty("seedId"))];
+    const color=place ? effectiveMarkerColor(place) : getCSS("--visited");
+    return {
+      fillColor:color,
+      fillOpacity:choroAlpha,
+      strokeColor:color,
+      strokeOpacity:0.28,
+      strokeWeight:0.35,
+      zIndex:MAP_SURFACE_Z_INDEX.proximity,
+      clickable:false
+    };
+  });
+}
+async function selectedRegionFeatures(regions){
+  const candidates=[];
+  for(const key of ["countyCode","townCode"]){
+    if(!regions.some(region=>region.key===key)) continue;
+    const spec=REGION_GEO[key], geo=await loadGeo(spec.url);
+    geo.features.forEach(feature=>candidates.push({
+      key,
+      code:String(feature.properties?.[spec.codeProperty] ?? ""),
+      feature
+    }));
+  }
+  const villageRegions=regions.filter(region=>region.key==="villCode");
+  if(villageRegions.length){
+    const urls=new Set(villageRegions.map(region=>region.countyCode ? `geo/village/${region.countyCode}.json` : "").filter(Boolean));
+    if(villageRegions.some(region=>!region.countyCode)){
+      const countyGeo=await loadGeo("geo/county.json");
+      countyGeo.features.forEach(feature=>urls.add(`geo/village/${feature.properties.COUNTYCODE}.json`));
+    }
+    for(const url of urls){
+      let geo; try { geo=await loadGeo(url); } catch(e){ continue; }
+      geo.features.forEach(feature=>candidates.push({
+        key:"villCode",
+        code:String(feature.properties?.VILLCODE ?? ""),
+        feature
+      }));
+    }
+  }
+  return selectRegionMaskCandidates(candidates,regions).map(candidate=>candidate.feature);
+}
+async function selectedRegionMask(mode,regions){
+  if(selectedRegionMaskCache.identity===mode.identity) return selectedRegionMaskCache;
+  const selectedFeatures=await selectedRegionFeatures(regions);
+  let maskFeatures=selectedFeatures;
+  if(selectedFeatures.length>1){
+    try {
+      const combined=turf.union(turf.featureCollection(selectedFeatures),{properties:{mask:"selected-regions"}});
+      if(combined) maskFeatures=[combined];
+    } catch(e) {}
+  }
+  selectedRegionMaskCache={
+    identity:mode.identity,
+    maskIndex:createMaskIndex(turf,maskFeatures)
+  };
+  return selectedRegionMaskCache;
+}
+function proximityGeometryKey(seeds,maskMode){
+  const seedKey=seeds.map(seed=>`${seed.id}:${seed.lat.toFixed(7)},${seed.lng.toFixed(7)}`).join("|");
+  return `${formatProximityRadius(proximityRadius)}:${maskMode.identity}:${seedKey}`;
+}
+async function renderProximityCoverage(requestVersion){
+  const selectedRegions=filter.regions.map(region=>({...region}));
+  const seeds=selectEligibleProximitySeeds(places, passFilter);
+  const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
+  proximitySeedCount=seeds.length;
+  updateProximityMaskControl();
+  renderUnifiedLegend();
+  let maskIndex=null;
+  if(maskMode.type==="regions"){
+    const selectedMask=await selectedRegionMask(maskMode,selectedRegions);
+    maskIndex=selectedMask.maskIndex;
+  }else if(maskMode.type==="taiwan" && seeds.length){
+    if(!proximityMaskIndex){
+      const townGeo=await loadGeo("geo/town.json");
+      proximityMaskIndex=createMaskIndex(turf,townGeo.features);
+    }
+    maskIndex=proximityMaskIndex;
+  }
+  if(requestVersion!==proximityRenderVersion || !proximityEnabled) return;
+  const key=proximityGeometryKey(seeds,maskMode);
+  let featureCollection=proximityGeometryCache.get(key);
+  if(!featureCollection){
+    if(!seeds.length){
+      featureCollection=turf.featureCollection([]);
+    }else{
+      featureCollection=buildProximityFeatureCollection({
+        turfApi:turf,
+        seeds,
+        radiusKm:proximityRadius,
+        maskIndex
+      });
+    }
+    proximityGeometryCache.set(key,featureCollection);
+    while(proximityGeometryCache.size>6) proximityGeometryCache.delete(proximityGeometryCache.keys().next().value);
+  }
+  if(requestVersion!==proximityRenderVersion || !proximityEnabled) return;
+  if(proximityLayer && proximityLayerKey===key){ restyleProximityLayer(); return; }
+  if(proximityLayer) proximityLayer.setMap(null);
+  proximityLayer=new google.maps.Data({map});
+  proximityLayer.addGeoJson(featureCollection);
+  proximityLayerKey=key;
+  restyleProximityLayer();
+  renderUnifiedLegend();
+}
+
+function handleAdministrativeRegionClick(ev,level,codeProp){
+  const f=ev.feature;
+  const parts=level==="county" ? [f.getProperty("COUNTYNAME")]
+    : level==="town" ? [f.getProperty("COUNTYNAME"),f.getProperty("TOWNNAME")]
+    : [f.getProperty("COUNTYNAME"),f.getProperty("TOWNNAME"),f.getProperty("VILLNAME")];
+  const entry={
+    key:CODEKEY[level],
+    code:f.getProperty(codeProp),
+    name:parts.filter(Boolean).join(""),
+    ...(level==="village" ? {countyCode:f.getProperty("COUNTYCODE")} : {})
+  };
+  const idx=filter.regions.findIndex(region=>region.key===entry.key && region.code===entry.code);
+  if(regionMulti){
+    if(idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
+  }else{
+    filter.regions=(idx>=0 && filter.regions.length===1) ? [] : [entry];
+  }
+  tab="visited";
+  document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("on",button.dataset.t==="visited"));
+  applyFilter({fitViewport:false});
+}
+
+async function renderAdministrativeLayer(){
+  const level=adminLevel;
+  const requestVersion=++adminRenderVersion;
+  updateSurfaceControls();
+  if(level==="off"){
+    removeAdministrativeLayer();
+    regionLegendState=null;
+    renderUnifiedLegend();
+    return;
   }
 
-  let fc, codeProp, codeOf;
+  let fc,codeProp,codeOf;
   try {
-    if (level === "county"){ fc = await ensureCounty(); codeProp = "COUNTYCODE"; codeOf = p => p.countyCode; }
-    else if (level === "town"){ fc = await ensureTown(); codeProp = "TOWNCODE"; codeOf = p => p.townCode; }
-    else { fc = await ensureVillage(); codeProp = "VILLCODE"; codeOf = p => p.villCode; }
-  } catch(e){
-    alert("行政區資料載入失敗——確認 geo/ 資料夾已上傳到 repo:\n" + e.message);
-    setChoro("off"); return;
+    if(level==="county"){ fc=await ensureCounty(); codeProp="COUNTYCODE"; codeOf=p=>p.countyCode; }
+    else if(level==="town"){ fc=await ensureTown(); codeProp="TOWNCODE"; codeOf=p=>p.townCode; }
+    else { fc=await ensureVillage(); codeProp="VILLCODE"; codeOf=p=>p.villCode; }
+  }catch(e){
+    if(requestVersion!==adminRenderVersion || adminLevel!==level) return;
+    alert("行政區圖資載入失敗，請確認 geo/ 圖資已包含在 repo：\n"+e.message);
+    adminLevel="off";
+    filter.regions=[];
+    removeAdministrativeLayer();
+    updateSurfaceControls();
+    renderList();
+    renderMarkers();
+    renderFilterChips();
+    if(proximityEnabled) refreshProximityLayer();
+    renderUnifiedLegend();
+    return;
   }
+  if(requestVersion!==adminRenderVersion || adminLevel!==level) return;
 
-  const byRegion = regionPlaces(codeOf);
-  let dmin, dmax;
-  if (choroMetric === "first" || choroMetric === "last"){
-    const b=markerDateBounds(); dmin=b.from; dmax=b.to;
+  const byRegion=regionPlaces(codeOf);
+  let dmin,dmax;
+  if(choroMetric==="first" || choroMetric==="last"){
+    const bounds=markerDateBounds(); dmin=bounds.from; dmax=bounds.to;
   }
-  const colorOf = code => {
-    const pls = byRegion[code]; if (!pls || !pls.length) return null;
-    if (choroMetric === "level"){
-      let best=-1; for(const p of pls){ const i=LEVEL_ORDER.indexOf(effLevel(p)); if(i>best) best=i; }
+  const colorOf=code=>{
+    const regionPlacesList=byRegion[code];
+    if(!regionPlacesList || !regionPlacesList.length) return null;
+    if(choroMetric==="level"){
+      let best=-1;
+      for(const place of regionPlacesList){
+        const index=LEVEL_ORDER.indexOf(effLevel(place));
+        if(index>best) best=index;
+      }
       return best<0 ? null : levelColors[LEVEL_ORDER[best]];
     }
-    if (choroMetric === "count") return countColor(pls.length);
-    const d = regionDate(pls, choroMetric); return d ? dateColor(d, dmin, dmax) : null;
+    if(choroMetric==="count") return countColor(regionPlacesList.length);
+    const date=regionDate(regionPlacesList,choroMetric);
+    return date ? dateColor(date,dmin,dmax) : null;
   };
-  const selCodes = new Set(filter.regions.filter(r => r.key === CODEKEY[level]).map(r => r.code));
-  const styleFn = f => {
-    const code = f.getProperty(codeProp);
-    if (selCodes.size && !selCodes.has(code)){
-      return { fillColor:"#12202e", fillOpacity:0.55, strokeWeight:0, clickable:true };  // 其餘變暗
-    }
-    const c = colorOf(code);
-    return {
-      fillColor: c || "#e5e0d6", fillOpacity: c ? choroAlpha : 0.12,
-      strokeColor: selCodes.has(code) ? "#152230" : "#ffffff",
-      strokeWeight: selCodes.has(code) ? 1.6 : 0.6, clickable: true
-    };
-  };
+  const selectedCodes=new Set(filter.regions
+    .filter(region=>region.key===CODEKEY[level])
+    .map(region=>String(region.code)));
+  const hasBlackout=shouldShowRegionBlackout({adminLevel:level,regionCount:selectedCodes.size});
 
-  if (!choroLayer || choroLayerLevel !== level){
-    if (choroLayer) choroLayer.setMap(null);
-    choroLayer = new google.maps.Data({ map });
-    choroLayer.addGeoJson(fc);
-    choroLayer.addListener("click", ev => {
-      const f = ev.feature;
-      const parts = level==="county" ? [f.getProperty("COUNTYNAME")]
-        : level==="town" ? [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME")]
-        : [f.getProperty("COUNTYNAME"), f.getProperty("TOWNNAME"), f.getProperty("VILLNAME")];
-      const entry = { key: CODEKEY[level], code: f.getProperty(codeProp), name: parts.filter(Boolean).join("") };
-      const idx = filter.regions.findIndex(r => r.key===entry.key && r.code===entry.code);
-      if (regionMulti){
-        if (idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
-      } else {
-        filter.regions = (idx>=0 && filter.regions.length===1) ? [] : [entry];
-      }
-      tab = "visited";
-      document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
-      applyFilter();
-      setChoro(level);   // 重新套遮罩
-    });
-    choroLayerLevel = level;
+  if(!adminLayer || adminLayerLevel!==level || !adminContextLayer || adminContextLevel!==level){
+    removeAdministrativeLayer();
+    adminLayer=new google.maps.Data({map});
+    adminLayer.addGeoJson(fc);
+    adminContextLayer=new google.maps.Data({map});
+    adminContextLayer.addGeoJson(fc);
+    adminContextLayer.addListener("click",ev=>handleAdministrativeRegionClick(ev,level,codeProp));
+    adminLayerLevel=level;
+    adminContextLevel=level;
   }
-  choroLayer.setStyle(styleFn);
-  renderLegend(choroMetric, { dmin, dmax });
+  adminLayer.setStyle(feature=>{
+    const color=colorOf(String(feature.getProperty(codeProp)));
+    const showThematicFill=shouldRenderAdministrativeThematicFill({adminLevel:level,proximityEnabled});
+    return {
+      fillColor:color || "#e5e0d6",
+      fillOpacity:showThematicFill ? (color ? choroAlpha : 0.12) : 0,
+      strokeWeight:0,
+      zIndex:MAP_SURFACE_Z_INDEX.adminFill,
+      clickable:false
+    };
+  });
+  adminContextLayer.setStyle(feature=>{
+    const code=String(feature.getProperty(codeProp));
+    const selected=selectedCodes.has(code);
+    if(hasBlackout && !selected){
+      return {
+        fillColor:"#12202e",
+        fillOpacity:0.55,
+        strokeWeight:0,
+        zIndex:MAP_SURFACE_Z_INDEX.adminContext,
+        clickable:true
+      };
+    }
+    return {
+      fillOpacity:0,
+      strokeColor:selected ? "#152230" : "#ffffff",
+      strokeOpacity:selected ? 0.78 : 0.75,
+      strokeWeight:selected ? 1.6 : 0.6,
+      zIndex:MAP_SURFACE_Z_INDEX.adminContext,
+      clickable:true
+    };
+  });
+  renderLegend(choroMetric,{dmin,dmax});
+}
+
+async function refreshProximityLayer(){
+  const requestVersion=++proximityRenderVersion;
+  updateSurfaceControls();
+  if(!proximityEnabled){
+    removeProximityLayer();
+    renderUnifiedLegend();
+    return;
+  }
+  try {
+    await renderProximityCoverage(requestVersion);
+  }catch(e){
+    if(requestVersion!==proximityRenderVersion || !proximityEnabled) return;
+    alert("鄰近範圍載入失敗：\n"+e.message);
+    proximityEnabled=false;
+    removeProximityLayer();
+    if(adminLevel!=="off") renderAdministrativeLayer();
+    updateSurfaceControls();
+    renderUnifiedLegend();
+  }
+}
+
+function refreshMapSurfaces(){
+  if(adminLevel!=="off") renderAdministrativeLayer();
+  else {
+    adminRenderVersion++;
+    removeAdministrativeLayer();
+    regionLegendState=null;
+  }
+  if(proximityEnabled) refreshProximityLayer();
+  else {
+    proximityRenderVersion++;
+    removeProximityLayer();
+  }
+  updateSurfaceControls();
+  renderUnifiedLegend();
+}
+
+function toggleMapSurface(control){
+  const action=control==="proximity" ? {type:"proximity"} : {type:"admin",level:control};
+  const next=transitionMapSurfaceState({adminLevel,proximityEnabled},action);
+  if(action.type==="proximity"){
+    proximityEnabled=next.proximityEnabled;
+    if(adminLevel!=="off") renderAdministrativeLayer();
+    refreshProximityLayer();
+    return;
+  }
+
+  const changed=next.adminLevel!==adminLevel;
+  adminLevel=next.adminLevel;
+  if(filter.regions.length && (changed || adminLevel==="off")){
+    filter.regions=[];
+    renderList();
+    renderFilterChips();
+  }
+  renderAdministrativeLayer();
+  if(proximityEnabled) refreshProximityLayer();
 }
 
 /* ============================================================
@@ -1402,7 +1764,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
   const key=`${p.id}:${o.visitIndex}`;
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
-    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
+    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="移動造訪位置" title="移動到指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
     <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button></div></div>`;
 }
@@ -1413,7 +1775,7 @@ function stayAnchorCardHTML(o,label,date){
   const t=v.tripId?trips[v.tripId]:null;
   return `<div class="card compact stayanchor" data-stay-anchor="1" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}10"><div style="display:flex;align-items:center;gap:8px">
     <span style="font-size:15px">🏨</span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags"><span class="stayedge">${edge}</span><span class="ptag" style="background:#efe9df">${esc(visitWhoText(p,v))}</span>${t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:""}</div></div>
-    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:9px':''}">${esc(String(label))}</span>
+    <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
   </div></div>`;
 }
 function renderDayVisitList(el,date){

@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>我們去過的地方</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,16 +16,16 @@
   *{box-sizing:border-box}
   body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:var(--paper);-webkit-tap-highlight-color:transparent}
   h1,h2,h3,.display{font-family:"Fraunces",serif;letter-spacing:-.01em}
-  button{font-family:inherit;cursor:pointer}
+  button{font-family:inherit;cursor:pointer;white-space:nowrap}
   input,textarea,select{font-family:inherit;font-size:15px}
 
-  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--ink);color:#fff}
-  header .title{font-size:20px;font-weight:600;font-family:"Fraunces",serif}
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--ink);color:#fff;min-width:0}
+  header .title{flex:0 0 auto;font-size:20px;font-weight:600;font-family:"Fraunces",serif;white-space:nowrap}
   .localtest-badge{display:inline-flex;align-items:center;border:2px solid #fff;border-radius:999px;background:#b23b3b;color:#fff;padding:3px 8px;font-size:11px;font-weight:700;letter-spacing:.08em;white-space:nowrap}
   .gate .localtest-badge{margin-bottom:12px;border-color:#b23b3b}
-  header .spacer{flex:1}
-  header .who{font-size:13px;opacity:.85}
-  .btn{border:none;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:500;background:var(--us);color:#fff}
+  header .spacer{flex:1;min-width:0}
+  header .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;opacity:.85}
+  .btn{border:none;border-radius:10px;padding:9px 14px;min-height:34px;font-size:14px;font-weight:500;background:var(--us);color:#fff}
   .btn.ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35)}
   .btn.mini{padding:5px 10px;font-size:13px;border-radius:8px}
   .btn.grey{background:#eee;color:var(--ink)}
@@ -35,25 +35,31 @@
   #map{width:100%;height:100%}
   #maptop{position:absolute;top:10px;left:12px;right:12px;z-index:5;display:flex;align-items:stretch;gap:6px;pointer-events:none}
   #maptop>*{pointer-events:auto}
-  #mapctl{display:flex;flex:1;min-width:0;height:24px;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:var(--shadow)}
-  #mapctl button{flex:1;min-width:0;height:22px;border:none;background:#fff;padding:0 7px;font-size:12px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line);white-space:nowrap}
+  #mapctl{display:flex;flex:1;min-width:0;height:34px;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:var(--shadow)}
+  #mapctl button{flex:1;min-width:0;height:32px;border:none;background:#fff;padding:0 6px;font-size:12px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
-  #setBtn,#locBtn,#addBtn{position:static;z-index:5;height:24px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);color:var(--ink)}
+  #setBtn,#locBtn,#addBtn{position:static;z-index:5;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);color:var(--ink)}
   #setBtn{padding:0 10px;font-size:12px;font-weight:500;flex:0 0 auto}
   #locBtn,#addBtn{width:32px;flex:0 0 32px;padding:0}
   #locBtn{font-size:14px}
   #addBtn{font-size:17px}
   #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
-  #multiBtn{position:absolute;top:42px;left:12px;z-index:5;height:24px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:11px;color:var(--ink)}
+  #multiBtn{position:absolute;top:52px;left:12px;z-index:5;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
+  #proximityCtl{position:absolute;top:52px;left:12px;z-index:5;align-items:center;gap:5px;max-width:calc(100% - 24px);min-height:34px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink);white-space:nowrap}
+  #proximityCtl input[type=number]{width:58px;height:26px;padding:2px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12px}
+  #proximityCtl .proximity-mask{display:flex;align-items:center;gap:3px;margin-left:5px;white-space:nowrap}
+  #proximityCtl input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto}
+  #proximityCtl .proximity-region-status{margin-left:5px;color:var(--ink-soft);font-size:12px;white-space:nowrap}
   .seqpin{width:24px;height:24px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(21,34,48,.28);cursor:pointer;user-select:none}
   #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
   .nb:hover{background:var(--paper)}
-  #maplegend{position:absolute;bottom:18px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;box-shadow:var(--shadow);font-size:11px;color:var(--ink-soft);max-width:210px;transform-origin:bottom right}
-  .legendhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--ink);font-size:11px;cursor:pointer}
+  #maplegend{position:absolute;bottom:18px;right:12px;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;box-shadow:var(--shadow);font-size:11px;line-height:1.4;color:var(--ink-soft);width:max-content;max-width:min(240px,calc(100% - 24px));max-height:calc(100% - 104px);overflow:auto}
+  .legendhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--ink);font-size:12px;cursor:pointer}
   .legendsection{margin-top:6px;padding-top:5px;border-top:1px solid var(--line)}
-  .legendtitle{font-size:10px;font-weight:700;color:var(--ink);margin-bottom:3px}
+  .legendtitle{font-size:11px;font-weight:700;color:var(--ink);margin-bottom:3px}
+  .legendnote{font-size:11px;line-height:1.45}
   .chip.addcat{cursor:pointer;background:#fff;border:1px dashed var(--ink-soft);color:var(--ink-soft)}
   #filterbar{padding:5px 10px 0;position:relative}
   #filterbar .frow{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.15fr) minmax(0,1fr) auto;gap:5px;align-items:center}
@@ -62,12 +68,12 @@
   #filterChips{display:block;flex:1;min-width:0;margin-top:3px;line-height:1.35}
   #fl_more{height:32px;padding:0 8px}
   #fl_clear{flex:0 0 auto;margin-top:3px;height:26px;padding:0 7px}
-  .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:2px 8px;margin:2px 0 0 4px;font-size:11px;color:var(--ink-soft);vertical-align:middle}
+  .fchip{display:inline-block;background:#f0ebe3;border-radius:999px;padding:3px 8px;margin:2px 0 0 4px;font-size:12px;color:var(--ink-soft);vertical-align:middle;white-space:nowrap}
   button.fchip{border:none;font-family:inherit;cursor:pointer}
   .fchip.active{background:var(--ink);color:#fff}
   .fchip b{cursor:pointer;margin-left:3px}
   #filterPanel{margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px;box-shadow:var(--shadow)}
-  .delx{border:none;background:transparent;color:#b0a89c;font-size:15px;cursor:pointer;padding:0 4px;line-height:1}
+  .delx{border:none;background:transparent;color:#b0a89c;font-size:15px;cursor:pointer;min-width:32px;min-height:32px;padding:0 4px;line-height:1}
   .delx:hover{color:#b23b3b}
   .card.compact{padding:8px 10px;margin-bottom:6px}
   .cname{font-family:"Fraunces",serif;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -75,11 +81,11 @@
   .ptag{font-size:11px;padding:1px 7px;border-radius:999px;color:var(--ink);white-space:nowrap}
   .card.compact .dot{width:11px;height:11px}
   .ordcol{display:flex;flex-direction:column;gap:1px}
-  .ordbtn{border:none;background:transparent;color:#b0a89c;font-size:10px;cursor:pointer;padding:0 3px;line-height:1.1}
+  .ordbtn{border:none;background:transparent;color:#b0a89c;font-size:12px;cursor:pointer;min-width:24px;min-height:22px;padding:0 3px;line-height:1.1}
   .ordbtn:hover{color:var(--ink)}
   .ordbtn:disabled{opacity:.3;cursor:default}
   .visitorder{display:flex;align-items:center;gap:2px;flex:0 0 auto}
-  .ordselect{width:46px;height:28px;padding:1px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink-soft);font-size:10px}
+  .ordselect{width:58px;height:30px;padding:1px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink-soft);font-size:12px}
   .daysep{font-family:"Fraunces",serif;font-size:13px;font-weight:600;color:var(--ink-soft);margin:12px 2px 6px;border-bottom:1px solid var(--line);padding-bottom:3px}
   .daynum{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:#efe9df;color:var(--ink-soft);font-size:11px;display:flex;align-items:center;justify-content:center}
   .sethead{font-family:"Fraunces",serif;font-size:17px;font-weight:600;color:var(--ink);margin:18px 0 8px}
@@ -97,7 +103,7 @@
   .visitrow .v_date,.visitrow .v_end,.visitrow .v_trip,.visitrow .v_cat,.visitrow .v_who{width:100%;min-width:0;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff}
   .visitrow .v_del{font-size:16px;padding:6px}
   .visitmini{display:block;min-width:0}
-  .visitmini>span{display:block;font-size:10px;color:var(--ink-soft);margin:0 0 2px 2px;white-space:nowrap}
+  .visitmini>span{display:block;font-size:11px;color:var(--ink-soft);margin:0 0 2px 2px;white-space:nowrap}
   .stayarrow{text-align:center;color:var(--ink-soft);font-size:12px}
   .staymeta{grid-column:1/-1;font-size:11px;color:var(--ink-soft);margin-top:1px}
   .visitrow.focus{outline:2px solid rgba(63,125,120,.35);box-shadow:0 0 0 3px rgba(63,125,120,.08)}
@@ -105,7 +111,7 @@
   .editor-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
   .editor-section-title{font-size:13px;font-weight:700;color:var(--ink)}
   .editor-section-note{font-size:11px;color:var(--ink-soft);font-weight:400}
-  .visitbadge{display:inline-block;font-size:10px;font-weight:700;color:var(--wish);background:#e6efe9;border-radius:999px;padding:2px 6px;margin-bottom:5px}
+  .visitbadge{display:inline-block;font-size:11px;font-weight:700;color:var(--wish);background:#e6efe9;border-radius:999px;padding:2px 6px;margin-bottom:5px}
   .stayanchor{border-style:dashed;background:#f4f8f5!important}
   .stayanchor .stayedge{font-size:11px;font-weight:700;color:var(--wish)}
   .monthquick{display:none;align-items:center;gap:5px;margin-top:4px}
@@ -114,7 +120,6 @@
   @media(max-width:760px){
     .colgrid{grid-template-columns:1fr}
     .modal{padding:16px}
-    .field input,.field textarea,.field select,.sselect{font-size:16px}
     .seg button{padding:11px 2px}
     .tab{font-size:15px}
     .btn{padding:9px 13px}
@@ -125,12 +130,12 @@
   #filterPanel .ff:last-child{margin-bottom:0}
   #filterPanel .ff>label{display:block;color:var(--ink-soft);margin-bottom:2px}
   #filterPanel select,#filterPanel input[type=date]{width:100%;height:32px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;font-size:12px}
-  .card.triprow{display:flex;align-items:center;gap:8px}
+  .card.triprow{display:flex;align-items:center;gap:8px;min-width:0}
   .lg{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px}
   .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.12);flex:0 0 auto;display:inline-block}
   .side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .tabs{display:flex;padding:6px 10px 0;gap:4px}
-  .tab{flex:1;border:none;background:transparent;padding:7px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft)}
+  .tab{flex:1;min-width:0;min-height:36px;border:none;background:transparent;padding:7px 4px;border-radius:9px 9px 0 0;font-weight:500;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tab.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
   .search{padding:6px 10px;position:relative}
   .search input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
@@ -140,6 +145,7 @@
   .results div:hover{background:var(--paper)}
   .list{flex:1;min-height:0;overflow:auto;padding:4px 10px 20px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:var(--shadow);cursor:pointer}
+  .card.compact>div{min-width:0}
   .card h3{margin:0 0 3px;font-size:16px}
   .card .admin{font-size:12px;color:var(--ink-soft)}
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
@@ -147,10 +153,10 @@
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
   .empty{color:var(--ink-soft);text-align:center;padding:40px 20px;font-size:14px;line-height:1.7}
   .layoutctl{display:flex;align-items:center;gap:5px;flex:0 0 auto;padding:5px 10px 0}
-  .layoutfab{height:28px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:11px;color:var(--ink)}
+  .layoutfab{height:32px;padding:0 9px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;color:var(--ink)}
   .layoutmenu{display:none;flex:1;min-width:0;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
   .layoutmenu.open{display:grid}
-  .layoutmenu button{height:28px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:11px;text-align:center;padding:0 4px;white-space:nowrap}
+  .layoutmenu button{height:32px;border:none;border-radius:7px;background:#f4f0ea;color:var(--ink);font-size:12px;text-align:center;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .layoutmenu button.off{color:var(--ink-soft);background:#faf8f4}
   .wrap.map-hidden{grid-template-columns:0 minmax(0,1fr)}
   .wrap.map-hidden .mapcol{width:0;overflow:hidden}
@@ -192,7 +198,7 @@
 
   .center{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
   .gate{max-width:440px;text-align:center}
-  .gate h1{font-size:34px;margin:0 0 6px}
+  .gate h1{font-size:clamp(28px,9vw,34px);margin:0 0 6px;white-space:nowrap}
   .gate p{color:var(--ink-soft);line-height:1.7}
   .setup{max-width:660px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
   .setup h1{font-size:26px;margin-top:0}
@@ -210,16 +216,42 @@
     .wrap.layout-compact{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
     .wrap.list-hidden .side{min-height:0}
     #maptop{left:10px;right:10px;gap:5px}
-    #mapctl button{padding:0 5px;font-size:11px}
-    #setBtn{padding:0 8px;font-size:11px}
+    #mapctl button{padding:0 2px;font-size:12px}
+    #setBtn{padding:0 7px;font-size:12px}
     #locBtn,#addBtn{width:30px;flex-basis:30px}
     #filterbar .frow{grid-template-columns:minmax(0,.85fr) minmax(0,1.12fr) minmax(0,.95fr) auto}
-    .fmini{font-size:14px}
-    #filterPanel select,#filterPanel input[type=date]{font-size:14px}
     .visitmain{grid-template-columns:minmax(0,1fr) auto}
     .visitmain.stay{grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr) auto}
     .visitextra{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.78fr)}
-    #maplegend{transform:scale(.6);right:7px;bottom:28px}
+    #maplegend{right:8px;bottom:10px;max-width:min(220px,calc(100% - 20px));max-height:calc(100% - 102px)}
+    #multiBtn,#proximityCtl{left:10px}
+    input:not([type=color]):not([type=range]):not([type=checkbox]):not([type=radio]),textarea{font-size:16px}
+    select{font-size:14px}
+    #fl_scope,#fl_trip,#fl_who,.fmini{font-size:12px}
+    #filterPanel input[type=date],.visitrow .v_date,.visitrow .v_end{font-size:16px}
+    .ordselect{font-size:12px}
+  }
+  @media(max-width:520px){
+    header .who{display:none}
+  }
+  @media(max-width:430px){
+    header{gap:8px;padding-left:12px;padding-right:10px}
+    header .localtest-badge{display:none}
+    header .title{font-size:19px}
+    #maptop{left:8px;right:8px;gap:4px}
+    #mapctl button{padding:0 1px}
+    #setBtn{padding:0 6px}
+    #locBtn,#addBtn{width:29px;flex-basis:29px}
+    #proximityCtl{right:8px;max-width:none}
+  }
+  @media(max-width:360px){
+    header .title{font-size:18px}
+    header .btn.mini{padding-left:8px;padding-right:8px}
+    #maptop{gap:3px}
+    #setBtn{padding:0 5px}
+    #locBtn,#addBtn{width:28px;flex-basis:28px}
+    #proximityCtl{gap:4px;padding-left:6px;padding-right:6px}
+    #proximityCtl .proximity-mask{margin-left:2px}
   }
 </style>
 </head>
