@@ -37,6 +37,72 @@ const shared = { id:"visit-shared", date:"2026-08-02", participantUserIds:[A,B],
 const soloA = { id:"visit-solo-a", date:"2026-08-02", participantUserIds:[A], createdBy:A };
 const soloB = { id:"visit-solo-b", date:"2026-08-02", participantUserIds:[B], createdBy:B };
 
+function createMemoryFirestore(initialDocuments={},hooks={}){
+  const documents=new Map(Object.entries(initialDocuments).map(([path,data])=>[path,{...data}]));
+  const events=[];
+  let autoId=0;
+  const snapshot=(path)=>({
+    id:path.split("/").at(-1),
+    exists:()=>documents.has(path),
+    data:()=>documents.get(path)
+  });
+  const applyOperation=operation=>{
+    if(operation.type==="delete") documents.delete(operation.reference.path);
+    else if(operation.type==="set") documents.set(operation.reference.path,operation.merge?{...(documents.get(operation.reference.path)||{}),...operation.data}:{...operation.data});
+    else documents.set(operation.reference.path,{...(documents.get(operation.reference.path)||{}),...operation.data});
+  };
+  const firestore={
+    addDoc(){},
+    collection:(base,...segments)=>({path:segments.join("/")}),
+    doc:(base,...segments)=>{
+      if(segments.length) return {path:segments.join("/"),id:segments.at(-1)};
+      const id=`auto-${++autoId}`;
+      return {path:`${base.path}/${id}`,id};
+    },
+    getDocs:async collectionRef=>{
+      events.push(`getDocs:${collectionRef.path}`);
+      if(hooks.beforeGetDocs) await hooks.beforeGetDocs(collectionRef);
+      const prefix=`${collectionRef.path}/`;
+      const docs=[...documents.entries()].filter(([path])=>path.startsWith(prefix)&&!path.slice(prefix.length).includes("/")).map(([path])=>({
+        id:path.split("/").at(-1),ref:{path},data:()=>documents.get(path)
+      }));
+      return {docs};
+    },
+    onSnapshot(){},
+    query:(...parts)=>({type:"query",parts}),
+    runTransaction:async(db,callback)=>{
+      const operations=[];
+      const transaction={
+        get:async reference=>snapshot(reference.path),
+        update:(reference,data)=>operations.push({type:"update",reference,data}),
+        set:(reference,data,options)=>operations.push({type:"set",reference,data,merge:!!options?.merge}),
+        delete:reference=>operations.push({type:"delete",reference})
+      };
+      const result=await callback(transaction);
+      operations.forEach(applyOperation);
+      operations.forEach(operation=>events.push(`transaction:${operation.type}:${operation.reference.path}`));
+      return result;
+    },
+    serverTimestamp:()=>({stamp:true}),
+    setDoc(){},
+    updateDoc(){},
+    where:(...parts)=>({type:"where",parts}),
+    writeBatch:()=>{
+      const operations=[];
+      return {
+        delete:reference=>operations.push({type:"delete",reference}),
+        set:(reference,data,options)=>operations.push({type:"set",reference,data,merge:!!options?.merge}),
+        commit:async()=>{
+          events.push("batch:commit");
+          if(hooks.failNextBatch){ hooks.failNextBatch=false; throw new Error("simulated batch failure"); }
+          operations.forEach(applyOperation);
+        }
+      };
+    }
+  };
+  return {documents,events,firestore};
+}
+
 /* A. Visit visibility */
 assert.equal(canViewVisit(A, shared), true);
 assert.equal(canViewVisit(B, shared), true);
@@ -115,6 +181,9 @@ assert.deepEqual(findForbiddenClockFields(visitShape), []);
 assert.throws(()=>visitSharedFields({...visitShape,placeId:""}),/placeId must be a non-empty/);
 assert.throws(()=>visitSharedFields({...visitShape,placeId:"   "}),/placeId must be a non-empty/);
 assert.throws(()=>visitSharedFields({...visitShape,placeId:"places/other"}),/not a valid Firestore document ID/);
+assert.throws(()=>visitSharedFields({...visitShape,tripId:"trips/other"}),/tripId is not a valid Firestore document ID/);
+assert.equal(visitSharedFields({...visitShape,tripId:""}).tripId,null);
+assert.equal(visitSharedFields({...visitShape,tripId:"deleted-trip"}).tripId,"deleted-trip");
 assert.throws(() => assertNoClockFields({ startTime:"14:30" }), /forbidden clock-time/);
 assert.throws(() => visitSharedFields({ ...visitShape, time:"14:30" }), /forbidden clock-time/);
 const objective = placeObjectiveFields({ name:"Cafe", lat:25, lng:121, rating:5, review:"subjective", level:"deep", visits:[visitShape] });
@@ -191,42 +260,81 @@ assert.equal(selectExactExternalPlace([
   ]);
 }
 
-/* Creator deletion atomically queues every contribution and then the Visit. */
+/* Existing mutations authorize from current stored state, not stale drafts. */
 {
-  const deletes=[]; let commits=0, contributionReads=0;
-  let contributionDocs=[
-    {ref:{path:"visits/visit-delete/contributions/a"}},
-    {ref:{path:"visits/visit-delete/contributions/b"}}
-  ];
   const db={};
-  const repository=createNoSpaceRepository({db,uid:A,firestore:{
-    addDoc(){}, deleteDoc(){}, limit:value=>({type:"limit",value}), onSnapshot(){}, query:(...parts)=>({type:"query",parts}),
-    runTransaction(){}, serverTimestamp:()=>({stamp:true}), setDoc(){}, updateDoc(){}, where:(...parts)=>({type:"where",parts}),
-    collection:(base,...segments)=>({path:segments.join("/")}),
-    doc:(base,...segments)=>({path:segments.join("/"),id:segments.at(-1)}),
-    getDocs:async target=>{
-      contributionReads++;
-      assert.equal(target.path,"visits/visit-delete/contributions");
-      return {docs:contributionDocs};
-    },
-    writeBatch:()=>({
-      delete:reference=>deletes.push(reference.path), set(){},
-      commit:async()=>{commits++;}
-    })
-  }});
-  await repository.deleteVisit("visit-delete",{createdBy:A});
-  assert.equal(contributionReads,1);
-  assert.deepEqual(deletes,[
-    "visits/visit-delete/contributions/a",
-    "visits/visit-delete/contributions/b",
-    "visits/visit-delete"
-  ]);
-  assert.equal(commits,1);
-  await assert.rejects(()=>repository.deleteVisit("visit-delete",{createdBy:B}),/only the Visit creator/i);
-  contributionDocs=Array.from({length:500},(_,index)=>({ref:{path:`visits/visit-delete/contributions/${index}`}}));
-  await assert.rejects(()=>repository.deleteVisit("visit-delete",{createdBy:A}),/more than 499 contributions/i);
-  assert.equal(commits,1,"an oversized cascade must stop before committing a partial deletion");
-  assert.throws(()=>repository.setContribution("visit-delete",{rating:4},{participantUserIds:[B]}),/current Visit participant/i);
+  const currentVisit={placeId:"place-1",date:"2026-08-02",category:"current",participantUserIds:[A],tripId:"deleted-trip",kind:"visit",endDate:"",createdBy:A};
+  const currentTrip={name:"Current",emoji:"",startDate:"",endDate:"",participantUserIds:[A],createdBy:A};
+  const historicalVisit={...currentVisit,tripId:"trip-current"};
+  const memory=createMemoryFirestore({"visits/visit-current":currentVisit,"visits/visit-historical":historicalVisit,"trips/trip-current":currentTrip});
+  const repositoryA=createNoSpaceRepository({db,uid:A,firestore:memory.firestore});
+  const repositoryB=createNoSpaceRepository({db,uid:B,firestore:memory.firestore});
+  const staleVisit={...currentVisit,category:"stale B write",participantUserIds:[A,B],createdBy:B};
+  const staleTrip={...currentTrip,name:"stale B write",participantUserIds:[A,B],createdBy:B};
+
+  await assert.rejects(()=>repositoryB.updateVisit("visit-current",staleVisit),/current participant/i);
+  await assert.rejects(()=>repositoryB.setContribution("visit-current",{rating:5}),/current Visit participant/i);
+  await assert.rejects(()=>repositoryB.updateTrip("trip-current",staleTrip),/current participant/i);
+  await assert.rejects(()=>repositoryB.deleteVisit("visit-current",{createdBy:B}),/stored Visit creator/i);
+  await assert.rejects(()=>repositoryB.deleteTrip("trip-current",{createdBy:B}),/stored Trip creator/i);
+  assert.deepEqual(memory.documents.get("visits/visit-current"),currentVisit,"stale B must not re-add themselves");
+
+  await repositoryA.updateVisit("visit-current",{...currentVisit,category:"safe update",createdBy:B});
+  assert.equal(memory.documents.get("visits/visit-current").createdBy,A,"Visit update preserves stored creator");
+  assert.equal(memory.documents.get("visits/visit-current").tripId,"deleted-trip","unrelated edits preserve a dangling Trip reference");
+  await repositoryA.updateVisit("visit-current",{...currentVisit,tripId:null,category:"explicit detach"});
+  assert.equal(memory.documents.get("visits/visit-current").tripId,null,"explicitly selecting no Trip detaches the Visit");
+  await repositoryA.updateTrip("trip-current",{...currentTrip,name:"safe update",createdBy:B});
+  assert.equal(memory.documents.get("trips/trip-current").createdBy,A,"Trip update preserves stored creator");
+  await repositoryA.deleteTrip("trip-current");
+  assert.equal(memory.documents.has("trips/trip-current"),false);
+  assert.equal(memory.documents.get("visits/visit-historical").tripId,"trip-current","Trip deletion must not rewrite historical Visits");
+}
+
+/* Deletion closes contribution writes before reading and atomically removes the final set. */
+{
+  const db={},hooks={};
+  const visit={placeId:"place-1",date:"2026-08-02",category:"",participantUserIds:[A,B],tripId:null,kind:"visit",endDate:"",createdBy:A};
+  const memory=createMemoryFirestore({
+    "visits/visit-delete":visit,
+    "visits/visit-delete/contributions/a":{rating:4},
+    "visits/visit-delete/contributions/b":{rating:3.5}
+  },hooks);
+  const repositoryA=createNoSpaceRepository({db,uid:A,firestore:memory.firestore});
+  const repositoryB=createNoSpaceRepository({db,uid:B,firestore:memory.firestore});
+  let racingWriteError=null;
+  hooks.beforeGetDocs=async()=>{
+    try{await repositoryB.setContribution("visit-delete",{rating:5});}
+    catch(error){racingWriteError=error;}
+  };
+  await repositoryA.deleteVisit("visit-delete");
+  assert.match(racingWriteError?.message||"",/being deleted/);
+  assert.equal([...memory.documents.keys()].some(path=>path==="visits/visit-delete"||path.startsWith("visits/visit-delete/contributions/")),false);
+  assert.ok(memory.events.indexOf("transaction:update:visits/visit-delete")<memory.events.indexOf("getDocs:visits/visit-delete/contributions"));
+  assert.ok(memory.events.indexOf("getDocs:visits/visit-delete/contributions")<memory.events.indexOf("batch:commit"));
+}
+
+/* Oversized or failed cleanup never partially deletes and remains recoverable. */
+{
+  const db={},hooks={};
+  const visit={placeId:"place-1",date:"2026-08-02",category:"",participantUserIds:[A],tripId:null,kind:"visit",endDate:"",createdBy:A};
+  const initial={"visits/visit-large":visit};
+  for(let index=0;index<500;index++) initial[`visits/visit-large/contributions/${index}`]={rating:4};
+  const memory=createMemoryFirestore(initial,hooks);
+  const repository=createNoSpaceRepository({db,uid:A,firestore:memory.firestore});
+  await assert.rejects(()=>repository.deleteVisit("visit-large"),/more than 499 contributions/i);
+  assert.equal(memory.documents.get("visits/visit-large").deleting,false);
+  assert.equal([...memory.documents.keys()].filter(path=>path.startsWith("visits/visit-large/contributions/")).length,500);
+
+  const failed=createMemoryFirestore({"visits/visit-retry":visit,"visits/visit-retry/contributions/a":{rating:4}},{failNextBatch:true});
+  const retryRepository=createNoSpaceRepository({db,uid:A,firestore:failed.firestore});
+  await assert.rejects(()=>retryRepository.deleteVisit("visit-retry"),/remains marked deleting and may be retried/i);
+  assert.equal(failed.documents.get("visits/visit-retry").deleting,true);
+  await assert.rejects(()=>retryRepository.setContribution("visit-retry",{rating:5}),/being deleted/i);
+  await assert.rejects(()=>retryRepository.updateVisit("visit-retry",visit),/being deleted/i);
+  await retryRepository.deleteVisit("visit-retry");
+  assert.equal(failed.documents.has("visits/visit-retry"),false);
+  assert.equal(failed.documents.has("visits/visit-retry/contributions/a"),false);
 }
 
 /* Centralized paths never point back into spaces/{spaceId}. */
@@ -258,11 +366,14 @@ assert.equal(fixture.documents.some(document=>document.path.startsWith("spaces/"
 const editorBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceVisitEditor"),mainSource.indexOf("function openEditor",mainSource.indexOf("function openNoSpaceVisitEditor")+1));
 assert.match(editorBlock,/const allowNewPlace=creating&&!selectedPlaceId/);
 assert.match(editorBlock,/if\(rawVisit&&!selectedPlaceId\)/);
+assert.match(editorBlock,/value="\$\{esc\(rawVisit\.tripId\)\}" selected>已刪除旅程/,"a dangling Trip must remain selected until explicitly changed");
+assert.match(editorBlock,/tripId:g\("ns_trip"\)\.value\|\|null/,"explicitly selecting no Trip detaches the Visit");
 assert.doesNotMatch(editorBlock,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");
 assert.doesNotMatch(editorBlock,/placeName/,"Visit writes must not create a competing Place-name override");
 assert.doesNotMatch(repositorySource,/\bupdatePlace\(/,"Phase A exposes no general global Place mutation method");
 assert.match(repositorySource,/where\("extId","==",identity\.extId\)/,"external Place reuse must use exact extId lookup");
 assert.match(repositorySource,/runTransaction\(db/,'external Place creation must converge transactionally');
+assert.match(repositorySource,/if\(current\.deleting\).*cannot accept contributions/,'contributions must reject the deletion lifecycle');
 assert.match(repositorySource,/contributionSnapshot\.docs\.forEach\(item=>batch\.delete\(item\.ref\)\)/);
 const deleteTripBlock=repositorySource.slice(repositorySource.indexOf("deleteTrip("),repositorySource.indexOf("updateOwnProfile",repositorySource.indexOf("deleteTrip(")));
 assert.doesNotMatch(deleteTripBlock,/updateVisit|deleteVisit/,"Trip deletion retains historical Visits");

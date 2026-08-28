@@ -56,6 +56,8 @@ export function normalizeParticipantUserIds(value){
 export function visitSharedFields(input={}){
   assertNoClockFields(input, "Visit");
   const placeId=assertDocumentId(input.placeId,"placeId");
+  const rawTripId=nonEmptyString(input.tripId);
+  const tripId=rawTripId?assertDocumentId(rawTripId,"tripId"):null;
   const date = assertDateOnly(input.date);
   const kind = input.kind === "stay" ? "stay" : "visit";
   const endDate = kind === "stay" ? assertDateOnly(input.endDate, "endDate") : "";
@@ -67,7 +69,7 @@ export function visitSharedFields(input={}){
     date,
     category:nonEmptyString(input.category),
     participantUserIds,
-    tripId:nonEmptyString(input.tripId) || null,
+    tripId,
     kind,
     endDate,
     createdBy:nonEmptyString(input.createdBy)

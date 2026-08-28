@@ -2953,7 +2953,7 @@ async function deleteVisitOccurrence(key){
     const visit=placeVisits(p)[idx];
     if (!visit || !canDeleteVisit(user.uid, visit._shared || visit)) return;
     const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
-    if (repo && noSpaceSessionIsCurrent(session,uid)) await repo.deleteVisit(visit.id,visit._shared||visit);
+    if (repo && noSpaceSessionIsCurrent(session,uid)) await repo.deleteVisit(visit.id);
     return;
   }
   const vv=placeVisits(p).map(v=>persistableVisit(p,v)); if(idx<0||idx>=vv.length) return;
@@ -3149,6 +3149,8 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(trip=>
     `<option value="${esc(trip.id)}" ${trip.id===initialTripId?'selected':''}>${esc((trip.emoji?trip.emoji+" ":"")+(trip.name||""))}</option>`
   ).join("");
+  const missingTripOption=rawVisit?.tripId&&!trips[rawVisit.tripId]
+    ?`<option value="${esc(rawVisit.tripId)}" selected>已刪除旅程</option>`:"";
   const contributionRows=()=>{
     const others=Object.entries(scopedContributions()).filter(([uid])=>uid!==editorUid);
     return others.length?others.map(([uid,value])=>`
@@ -3174,7 +3176,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
         <div class="field" style="flex:1"><label>活動</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
       </div>
       <div class="field"><label>參與者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
-      <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${tripOptions}</select></div>
+      <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
       <div class="row">
         <div class="field" style="flex:1"><label>類型</label><select id="ns_kind"><option value="visit" ${rawVisit?.kind==='stay'?'':'selected'}>一般造訪</option><option value="stay" ${rawVisit?.kind==='stay'?'selected':''}>住宿</option></select></div>
         <div class="field" id="ns_end_wrap" style="flex:1"><label>退房日期</label><input type="date" id="ns_end_date" value="${rawVisit?.endDate||addDays(rawVisit?.date||defaultDateForNewVisit(),1)}"></div>
@@ -3257,7 +3259,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
         savedVisitId=created.visitId; shared.placeId=created.placeId;
       }
       if(!live()) return;
-      await repo.setContribution(savedVisitId,personal,shared);
+      await repo.setContribution(savedVisitId,personal);
       if(creating){
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
         const order=normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]);
@@ -3270,7 +3272,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   if(deleteButton) deleteButton.onclick=async()=>{
     if(!live()||!canDeleteVisit(editorUid,rawVisit)) return;
     try{
-      await repo.deleteVisit(rawVisit.id,rawVisit);
+      await repo.deleteVisit(rawVisit.id);
       if(live()) closeModal();
     }catch(error){if(live())alert(`無法完整刪除造訪：${error.message}`);}
   };
@@ -3631,7 +3633,7 @@ function renderTrips(el){
     if (!currentSpaceFoundationReady()) return;
     if (isNoSpace()){
       const trip=noSpaceState.trips[b.dataset.del];
-      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id,trip).catch(error=>alert(`無法刪除旅程：${error.message}`));
+      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id).catch(error=>alert(`無法刪除旅程：${error.message}`));
     } else deleteDoc(tripDoc(b.dataset.del));
   });
 }
@@ -3685,7 +3687,7 @@ function openNoSpaceTripEditor(id,onDone){
   const del=g("nst_delete");
   if(del) del.onclick=async()=>{
     if(!live()||!canDeleteTrip(uid,trip)) return;
-    try{await repo.deleteTrip(trip.id,trip);if(live())closeModal();}
+    try{await repo.deleteTrip(trip.id);if(live())closeModal();}
     catch(error){if(live())alert(`無法刪除旅程：${error.message}`);}
   };
 }

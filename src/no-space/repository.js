@@ -15,7 +15,7 @@ export const noSpacePaths = Object.freeze({
 export function createNoSpaceRepository({ db, firestore, uid }){
   if (!db || !firestore || !uid) throw new Error("No-Space repository requires db, Firestore helpers, and uid.");
   const {
-    addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction,
+    addDoc, collection, doc, getDocs, onSnapshot, query, runTransaction,
     serverTimestamp, setDoc, updateDoc, where, writeBatch
   } = firestore;
   const stamp = () => serverTimestamp();
@@ -73,26 +73,71 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     },
     updatePlaceCache(placeId, fields){ return updateDoc(ref(noSpacePaths.place(placeId)), fields); },
     updateVisit(visitId, input){
-      const createdBy = input.createdBy || uid;
-      const shared=visitSharedFields({ ...input, createdBy });
-      if (!canEditVisitSharedFacts(uid,shared)) throw new Error("Only a participant may edit shared Visit facts.");
-      const { createdBy:ignoredCreator, ...editable } = shared;
-      return updateDoc(ref(noSpacePaths.visit(visitId)), { ...editable, updatedAt:stamp() });
+      const visitRef=ref(noSpacePaths.visit(visitId));
+      return runTransaction(db,async transaction=>{
+        const snapshot=await transaction.get(visitRef);
+        if(!snapshot.exists()) throw new Error("Visit no longer exists.");
+        const current=snapshot.data();
+        if(current.deleting) throw new Error("Visit is being deleted and cannot be edited.");
+        if(!canEditVisitSharedFacts(uid,current)) throw new Error("Only a current participant may edit shared Visit facts.");
+        const shared=visitSharedFields({...input,createdBy:current.createdBy});
+        if(!canEditVisitSharedFacts(uid,shared)) throw new Error("Phase A Visit editing cannot remove the current User.");
+        const {createdBy:ignoredCreator,...editable}=shared;
+        transaction.update(visitRef,{...editable,updatedAt:stamp()});
+      });
     },
-    async deleteVisit(visitId, visit){
-      if (!canDeleteVisit(uid,visit)) throw new Error("Only the Visit creator may delete it in Phase A.");
-      const contributionSnapshot=await getDocs(col(noSpacePaths.visit(visitId)+"/contributions"));
+    async deleteVisit(visitId){
+      const visitRef=ref(noSpacePaths.visit(visitId));
+      await runTransaction(db,async transaction=>{
+        const snapshot=await transaction.get(visitRef);
+        if(!snapshot.exists()) throw new Error("Visit no longer exists.");
+        const current=snapshot.data();
+        if(!canDeleteVisit(uid,current)) throw new Error("Only the stored Visit creator may delete it in Phase A.");
+        if(!current.deleting){
+          transaction.update(visitRef,{deleting:true,deletingAt:stamp(),updatedAt:stamp()});
+        }
+      });
+      let contributionSnapshot;
+      try{
+        contributionSnapshot=await getDocs(col(noSpacePaths.visit(visitId)+"/contributions"));
+      }catch(error){
+        throw new Error(`Visit deletion could not read its final contributions; it remains marked deleting and may be retried. ${error.message}`);
+      }
       if(contributionSnapshot.docs.length>499){
+        try{
+          await runTransaction(db,async transaction=>{
+            const snapshot=await transaction.get(visitRef);
+            const current=snapshot.exists()?snapshot.data():null;
+            if(current?.deleting&&canDeleteVisit(uid,current)){
+              transaction.update(visitRef,{deleting:false,deletingAt:null,updatedAt:stamp()});
+            }
+          });
+        }catch(error){
+          throw new Error(`Visit deletion stopped with more than 499 contributions, and its deletion marker could not be cleared. ${error.message}`);
+        }
         throw new Error("Visit deletion stopped: more than 499 contributions require a separately designed cleanup job.");
       }
       const batch=writeBatch(db);
       contributionSnapshot.docs.forEach(item=>batch.delete(item.ref));
-      batch.delete(ref(noSpacePaths.visit(visitId)));
-      await batch.commit();
+      batch.delete(visitRef);
+      try{
+        await batch.commit();
+      }catch(error){
+        throw new Error(`Visit deletion did not complete; it remains marked deleting and may be retried. ${error.message}`);
+      }
     },
-    setContribution(visitId, input, visit){
-      if(!canViewVisit(uid,visit)) throw new Error("Only a current Visit participant may edit a contribution.");
-      return setDoc(ref(noSpacePaths.contribution(visitId, uid)), { ...contributionFields(input), updatedAt:stamp() }, { merge:true });
+    setContribution(visitId, input){
+      const visitRef=ref(noSpacePaths.visit(visitId));
+      const contributionRef=ref(noSpacePaths.contribution(visitId,uid));
+      const contribution=contributionFields(input);
+      return runTransaction(db,async transaction=>{
+        const snapshot=await transaction.get(visitRef);
+        if(!snapshot.exists()) throw new Error("Visit no longer exists.");
+        const current=snapshot.data();
+        if(current.deleting) throw new Error("Visit is being deleted and cannot accept contributions.");
+        if(!canViewVisit(uid,current)) throw new Error("Only a current Visit participant may edit a contribution.");
+        transaction.set(contributionRef,{...contribution,updatedAt:stamp()},{merge:true});
+      });
     },
     setDayOrder(date, visitIds){
       return setDoc(ref(noSpacePaths.dayOrder(uid, date)), { visitIds:[...visitIds], updatedAt:stamp() });
@@ -103,14 +148,26 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       return addDoc(col("trips"), { ...shared, createdAt:stamp(), updatedAt:stamp() });
     },
     updateTrip(tripId, input){
-      const shared=tripSharedFields(input);
-      if (!canEditTripSharedFacts(uid,shared)) throw new Error("Only a participant may edit shared Trip facts.");
-      const { createdBy:ignoredCreator, ...editable } = shared;
-      return updateDoc(ref(noSpacePaths.trip(tripId)), { ...editable, updatedAt:stamp() });
+      const tripRef=ref(noSpacePaths.trip(tripId));
+      return runTransaction(db,async transaction=>{
+        const snapshot=await transaction.get(tripRef);
+        if(!snapshot.exists()) throw new Error("Trip no longer exists.");
+        const current=snapshot.data();
+        if(!canEditTripSharedFacts(uid,current)) throw new Error("Only a current participant may edit shared Trip facts.");
+        const shared=tripSharedFields({...input,createdBy:current.createdBy});
+        if(!canEditTripSharedFacts(uid,shared)) throw new Error("Phase A Trip editing cannot remove the current User.");
+        const {createdBy:ignoredCreator,...editable}=shared;
+        transaction.update(tripRef,{...editable,updatedAt:stamp()});
+      });
     },
-    deleteTrip(tripId, trip){
-      if (!canDeleteTrip(uid,trip)) throw new Error("Only the Trip creator may delete it in Phase A.");
-      return deleteDoc(ref(noSpacePaths.trip(tripId)));
+    deleteTrip(tripId){
+      const tripRef=ref(noSpacePaths.trip(tripId));
+      return runTransaction(db,async transaction=>{
+        const snapshot=await transaction.get(tripRef);
+        if(!snapshot.exists()) throw new Error("Trip no longer exists.");
+        if(!canDeleteTrip(uid,snapshot.data())) throw new Error("Only the stored Trip creator may delete it in Phase A.");
+        transaction.delete(tripRef);
+      });
     },
     updateOwnProfile(input){
       const displayName = typeof input?.displayName === "string" ? input.displayName.trim() : "";

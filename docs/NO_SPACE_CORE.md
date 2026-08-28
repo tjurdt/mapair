@@ -62,7 +62,9 @@ No-Space path construction is centralized in `src/no-space/repository.js`. No No
 
 ### Visible Visit and Trip queries
 
-The client queries top-level `visits` and `trips` with `participantUserIds array-contains authenticatedUid`. A participant can edit shared facts. In Phase A only `createdBy` can delete the whole Visit or Trip; `createdBy` is solely destructive-action protection and is not a permission role. The current User cannot remove their own UID as an ersatz Exit operation.
+The client queries top-level `visits` and `trips` with `participantUserIds array-contains authenticatedUid`. A participant can edit shared facts. Every existing-Visit or existing-Trip mutation transaction first reads the current persisted parent and authorizes against that document, never permission facts supplied by an editor draft. The transaction preserves the stored `createdBy`; a stale editor belonging to a removed participant cannot edit or re-add that User. In Phase A only the currently stored `createdBy` can delete the whole Visit or Trip. `createdBy` is solely destructive-action protection and is not a permission role. The current User cannot remove their own UID as an ersatz Exit operation.
+
+These repository checks are Phase A application correctness and do not replace separately reviewed production Firestore Security Rules.
 
 ### Place resolution
 
@@ -78,9 +80,9 @@ The client derives known UIDs from the authenticated User plus participants on v
 
 ## Contributions and ratings
 
-Each current participant writes only `visits/{visitId}/contributions/{theirUid}`. Editing one contribution cannot replace another participant's document. Before projection, display, or averaging, contribution documents are intersected with the Visit's current `participantUserIds`. A dormant contribution from a removed participant may remain temporarily, but its memory is hidden and its rating is excluded. Other current-participant contributions are shown read-only. The average is computed at read time over submitted numeric ratings only; missing ratings are excluded and no average is stored.
+Each current participant writes only `visits/{visitId}/contributions/{theirUid}`. The write runs in a transaction that reads the current Visit, verifies current participation, and rejects a missing or deleting Visit. Editing one contribution cannot replace another participant's document. Before projection, display, or averaging, contribution documents are intersected with the Visit's current `participantUserIds`. A dormant contribution from a removed participant may remain temporarily, but its memory is hidden and its rating is excluded. Other current-participant contributions are shown read-only. The average is computed at read time over submitted numeric ratings only; missing ratings are excluded and no average is stored.
 
-Creator-only hard deletion first reads the Visit's contribution documents, then deletes every contribution and the Visit parent in one atomic batch. Phase A stops with a clear error before deleting anything if the batch would exceed Firestore's 500-operation limit. Stale day-order references may remain because normalization already ignores them.
+Creator-only hard deletion transactionally verifies the persisted creator and marks the Visit `deleting` before reading its final contribution set. Visit edits and contribution transactions reject that lifecycle state. One atomic batch then deletes every contribution and the Visit parent, so a successful return guarantees that no contribution child remains. Phase A stops without partial deletion if the batch would exceed Firestore's 500-operation limit and clears the marker so the Visit remains usable. A read or batch failure reports clearly and leaves the marker in place, blocking new writes while allowing the creator to retry deletion safely. Stale day-order references may remain because normalization already ignores them.
 
 The preserved rating range is 0.5–5 in 0.5 increments. An absent/null rating means “not rated.”
 
@@ -102,7 +104,7 @@ Stay anchors remain fixed derived occurrences; ordinary Visits use the personal 
 
 `trips/{tripId}.participantUserIds` defines defaults for future Visits created in that Trip. The array is copied into a new Visit and remains editable there. Updating Trip defaults never rewrites an existing Visit. Phase A prevents the current User from removing themselves from a Trip because explicit Exit semantics are deferred.
 
-Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tripId` remains as a dangling historical reference, is excluded from the Daily filter, and renders as “已刪除旅程” instead of being mislabeled as Daily life. This is the deterministic Phase A referential-integrity policy; detaching/backfilling history is deferred.
+Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tripId` remains as a dangling historical reference, is excluded from the Daily filter, and renders as “已刪除旅程” instead of being mislabeled as Daily life. When such a Visit is edited, the missing Trip appears as a synthetic selected “已刪除旅程” option, so unrelated changes preserve the original ID. The User may explicitly choose no Trip or another current Trip to detach or reassign it. This is the deterministic Phase A referential-integrity policy; detaching/backfilling history is deferred.
 
 ## Legacy Place-field decisions
 
