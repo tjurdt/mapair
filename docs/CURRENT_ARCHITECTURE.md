@@ -6,7 +6,8 @@ The current application is a static client-only site built with Vite:
 
 - `index.html` contains the document shell and CSS.
 - `src/main.js` contains the imperative application state, rendering, Firebase access, and Google Maps integration.
-- `src/space-membership.js`, `src/participants.js`, `src/ux-policies.js`, and `src/proximity-geometry.js` contain pure domain/policy helpers that can be tested without Firebase. `src/participants.js` resolves Visit/Place participants for arbitrary Space Members and owns the participant read precedence, mismatch detection, new-selection sanitisation, selection ordering, write serialization, deterministic UID→colour mapping, and legacy `whoMode` derivation.
+- `src/space-membership.js`, `src/participants.js`, `src/spaces.js`, `src/ux-policies.js`, and `src/proximity-geometry.js` contain pure domain/policy helpers that can be tested without Firebase. `src/participants.js` resolves Visit/Place participants for arbitrary Space Members and owns the participant read precedence, mismatch detection, new-selection sanitisation, selection ordering, write serialization, deterministic UID→colour mapping, and legacy `whoMode` derivation. `src/spaces.js` (Phase 3) owns the deterministic Personal Space ID, discovered-Space normalisation and diagnostics, Personal Space provisioning decision, switcher ordering + labels, the scoped active-Space `localStorage` preference, the initial-Space choice policy, and the Space session token used to make stale async callbacks inert.
+- `firestore.indexes.json` declares the `members` `(userId, status)` collection-group index for the eventual Phase 6 deployment; the Emulator serves the discovery query unindexed.
 - `geo/county.json` contains 22 county features.
 - `geo/town.json` contains 368 town features.
 - `geo/village/` contains one file per county code, totaling 7,986 village features.
@@ -22,8 +23,9 @@ The current application is a static client-only site built with Vite:
 5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, starts current-Space Firestore subscriptions, records the current member in legacy meta, and initializes date filters.
 6. Firestore snapshots replace the in-memory `places`, `trips`, and shared meta state, then invoke the relevant render functions. Optional root Space and Membership snapshots also populate the Phase 1 Member domain without changing visible rendering.
 7. UI handlers mutate global state or write directly to Firestore. Snapshot updates eventually reconcile the rendered application with stored data.
+8. In Phase 3 LOCAL multi-Space mode (`?firebaseEnv=local&multiSpace=1`) `renderApp()` does not subscribe immediately: it renders the header Space switcher, starts one collection-group Membership discovery listener, ensures/reuses the User's single Personal Space, chooses the initial active Space, and only then calls `subscribe()` via `switchActiveSpace()`. Every subsequent switch re-runs that teardown-then-resubscribe cycle. Without the flag the flow is exactly as before.
 
-There is no component lifecycle. Rendering is imperative: template strings replace DOM subtrees and handlers are rebound after replacement. Current-Space Firestore unsubscribe functions are now retained and cleared before resubscription or sign-out, preparing listener ownership for a later Space-switching phase without exposing switching yet.
+There is no component lifecycle. Rendering is imperative: template strings replace DOM subtrees and handlers are rebound after replacement. Current-Space Firestore unsubscribe functions are retained and cleared before resubscription or sign-out. In Phase 3 LOCAL mode `switchActiveSpace()` is the single controlled activation: it closes editors/modals/search, disables add-mode, unsubscribes all current-Space listeners, mints a fresh `spaceSession` token, clears every Space-scoped slice of state, resets data-bound filters (keeping visual prefs), then resubscribes.
 
 ## Application state
 
@@ -31,6 +33,7 @@ The module uses shared mutable globals in several groups:
 
 - Infrastructure: `db`, `auth`, authenticated `user`, Google API classes, `map`, and `geocoder`.
 - Space foundation: `currentSpaceId`, optional formal `currentSpace`, `currentMembership`, normalized `spaceMembers`, removed Members, Membership source, ownership validation, and current-Space listener teardown handles.
+- Phase 3 (LOCAL multi-Space only): `spaceSession` (`{ spaceId, version }`, replaced per switch — captured by every current-Space subscription and every Space-bound async callback), `spaceSwitchInFlight`, and a `phase3` object holding the discovery listener handle + generation counter, the discovered/normalised Space list, the initial-selection/provisioning flags, and the resolved Personal Space ID. `*For(spaceId)` path helpers bind an explicit Space for every deferred/queued/async write; the bare `spaceDoc()`/`placeDoc()`/etc. wrappers resolve `currentSpaceId` for the live subscription and synchronous handlers only.
 - Data: `places`, `trips`, `spaceCats`, `members`, `nicknames`, `catColors`, and `levelColors`.
 - Map presentation: `markers`, `choroLevel`, `choroLayer`, `geoCache`, `showPins`, `choroAlpha`, `choroMetric`, `markerMode`, `numberPins`, and legend state.
 - Navigation and filters: `tab`, `filter`, `dateScope`, `pickedMonth`, and administrative-region selection state.
@@ -51,6 +54,8 @@ The configured shared-space root is exposed in memory as `currentSpaceId`. It st
 The final existing content paths are therefore unchanged. Place and Trip collections are observed with `onSnapshot(query(..., orderBy("createdAt", "desc")))`. The meta document is observed directly. The meta document stores categories, members, nicknames, category colors, and visit-depth colors.
 
 Phase 1 also observes the optional root Space document and its Membership collection. Formal Memberships are normalized to a common Member shape, separated into active and removed Members, matched to the authenticated User, and checked against the root `ownerId`. These reads never create or repair documents. If the formal root and Memberships are absent—or optional formal reads fail in production—the client derives temporary in-memory Members from `meta/config.members` and nicknames.
+
+Phase 3 (LOCAL `?firebaseEnv=local&multiSpace=1` only — production and fixed-Space LOCAL modes are unchanged and expose none of it) adds Membership-based Space discovery, Personal Space provisioning, an active-Space `localStorage` preference (`mapair.activeSpace.v1:<projectId>:<uid>`), a header Space switcher, empty Shared Space creation, and a controlled switch lifecycle with stale-session/cross-Space-write protection. Discovery is one `collectionGroup("members").where("userId","==",uid).where("status","==","active")` listener; each result's root Space is fetched and normalised, malformed Memberships / missing roots are excluded and only diagnosed. Personal Space provisioning and Shared Space creation are single Firestore transactions that create a root plus one active owner Membership, never overwrite a Shared Space or foreign-owner document, and never `merge`. A Personal Space is a normal Space, not a cross-Space aggregate; a future read-only "我的足跡" view of Visits the User participated in across accessible Spaces is a separate surface, not implemented here. Access is Membership only — never Friendship, participants, or `createdBy`. Trip participant defaults (Phase 4), invitations/friends (Phase 5), and production rules/exposure (Phase 6) are not part of this phase.
 
 LOCAL TEST logs a compact Membership-source/member-count/current-role/ownership summary to the console. The summary is not emitted in production. Invalid formal ownership and removed-current-Membership states produce warnings only; they do not repair data or enforce access.
 
@@ -104,7 +109,7 @@ Firestore listeners invoke overlapping subsets of the same cascade. Rendering on
 - Whole `visits` arrays are rewritten, so concurrent editors can overwrite one another.
 - Autosave writes are not serialized; older asynchronous writes may complete after newer edits.
 - Bulk category updates are not awaited or batched.
-- Listener teardown is prepared for one current Space, but Space discovery, state clearing policies, and switching UI do not exist yet.
+- Current-Space listener teardown, plus Phase 3 Space discovery, switch-time state clearing, session tokens, and the switcher UI, exist only behind the LOCAL `multiSpace=1` flag; production still runs a single fixed Space with no switching.
 - `orderBy("createdAt")` can exclude legacy documents without that field.
 - Choropleth requests can overlap and finish out of order.
 - Village rendering loads and processes all county files and performs linear point-in-polygon scans.

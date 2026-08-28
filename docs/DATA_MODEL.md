@@ -14,9 +14,29 @@ spaces/{spaceId}/meta/config
 
 The application adds Firestore document IDs as in-memory `id` fields after reading documents.
 
-The active application Space remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production and `test-space-baseline` in LOCAL TEST). There is no production Space discovery, switching, or local active-Space preference yet.
+The active application Space in production remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production). Production has no Space discovery, switching, Personal Space provisioning, or local active-Space preference — none of the Phase 3 surfaces are exposed there.
 
 LOCAL TEST additionally accepts a strict development/test harness parameter, `?firebaseEnv=local&testSpace=group`, which selects `test-space-group` from a fixed two-entry allowlist (`baseline` → `test-space-baseline`, `group` → `test-space-group`). It is localhost-only, rejects unknown or duplicate values, fails closed in production, and never accepts an arbitrary Firestore Space ID. It is not a Space switcher.
+
+## Phase 3 — Personal Space and Space switcher (LOCAL only)
+
+Phase 3 is gated behind `?firebaseEnv=local&multiSpace=1` (localhost only, exactly `multiSpace=1`, rejects duplicate/unknown values, fails closed and never modifies config anywhere but LOCAL TEST). Production multi-Space support stays non-public until Phase 6 Membership-based Firestore rules exist. Without the flag every prior LOCAL workflow — including `?firebaseEnv=local` fixed-Space baseline testing that needs no formal Memberships — is unchanged.
+
+**Personal Space.** A Personal Space is one ordinary Space (`spaces/{id}` + `spaces/{id}/members`, `/places`, `/trips`, `/meta/config`) owned and managed by exactly one User; it is not a cross-Space aggregate and Visits are never copied into it. Every User has exactly one. It is discovered by `Space.type === "personal"` + `Space.ownerId === uid` + an active owner Membership — the discovered Space's stored ID is used as-is (fixtures do not use the deterministic ID). If none exists it is provisioned at the deterministic, path-safe ID `personal-${encodeURIComponent(uid)}` (never shown in normal UI) via one idempotent Firestore transaction that creates the root and the single owner Membership, refuses to overwrite a Shared Space or a foreign-owner document, and never uses `merge` to hide a conflict. More than one valid Personal Space fails closed with a LOCAL diagnostic. A Personal Space stays one-member in v0.2; sharing means creating a Shared Space.
+
+**Discovery.** `collectionGroup("members").where("userId","==",uid).where("status","==","active")` — one authenticated-User listener that outlives Space switches and is torn down on logout / auth change. Each result's parent `spaceId` is derived from the path and its root Space document fetched. Malformed Memberships (document ID ≠ `userId`, non-`owner`/`member` role, non-`active` status) and missing/invalid roots are excluded from the switcher and reported only in LOCAL diagnostics. Access is never inferred from Friendship, Visit/Trip participants, or `createdBy`. The Firestore Emulator serves this query unindexed; `firestore.indexes.json` declares the `members` `(userId, status)` collection-group composite index for the eventual (separately approved) Phase 6 deployment.
+
+**Active-Space preference.** `localStorage` key `mapair.activeSpace.v1:<projectId>:<uid>` — scoped by Firebase project/environment AND UID so accounts never share one active Space. Only written after confirming active Membership; an inaccessible saved value is ignored and replaced by the Personal Space. Storage failure never crashes the app.
+
+**Initial active Space** after sign-in: (A) an explicitly requested, accessible LOCAL `testSpace` — an explicit-but-inaccessible `testSpace` is a LOCAL TEST failure, never a silent fallback; (B) an accessible saved preference; (C) the Personal Space; (D) otherwise fail closed. A new User is never defaulted into every Shared Space.
+
+**Switch lifecycle.** One controlled `switchActiveSpace(spaceId)`: verify accessibility → close editors/modals/search suggestions, disable add-mode → unsubscribe all current-Space listeners → mint a fresh `spaceSession` token → clear every Space-scoped slice (`places`, `trips`, `spaceCats`, members/nicknames/colours, `currentSpace`/`currentMembership`/directory/removed Members, referenced historical participants, markers, admin/proximity layers + caches, editor write queues) → reset data-bound filters (`who`/`tripId`/`cats`/`regions` cleared, `dateScope="month"`, `tab="visited"`) while keeping visual prefs (marker mode, pins, layout collapse, proximity radius) → activate the new Space, save the preference, show a loading/empty state, then resubscribe.
+
+**Stale-session protection.** A monotonic `spaceSession` (`{ spaceId, version }`, a new object per switch). Every current-Space subscription and every Space-bound async callback (Places search, nearby search, reverse geocode, admin cache writes, editor autosave queues) captures the session in force when it started; a callback whose captured session is no longer current does not apply its result. Every deferred write also captures its originating Space ID and targets it through a `*For(spaceId)` path helper, so a queued write from Space A can never land in Space B.
+
+**Shared Space creation** (`＋ 新共享地圖`): asks only for a name, then one transaction creates `spaces/{autoId}` (`type: "shared"`) and the creator's single active owner Membership, then switches to it. No second Member; no invitation UI (Phase 5). No Personal → Shared conversion.
+
+**Not in Phase 3:** Trip participant defaults (`Trip.participantIds`) — Phase 4; Friends/invites/mentions/member-management UI — Phase 5; production rules/migration/exposure — Phase 6. A future **"我的足跡" / My Footprints** view (a read-only cross-Space aggregate of Visits the User actually participated in) is a separate product surface, not a Space and not in the switcher; the Personal Space must not be confused with it. Existing `spaces/us` history is not moved or copied.
 
 ## Optional Phase 1 Space and Membership documents
 
@@ -29,7 +49,7 @@ spaces/{currentSpaceId}/members/{uid}
 
 The optional root Space currently supports `name`, `type`, `ownerId`, `createdBy`, and `createdAt`. A formal Membership supports `userId`, `role`, `status`, `displayNameSnapshot`, optional `photoURLSnapshot`, `joinedAt`, and optional `removedAt`.
 
-These documents are not created, updated, repaired, or required by normal application startup. Existing production data may omit them. When both formal areas are absent, the client constructs temporary compatible Members in memory from `spaces/{currentSpaceId}/meta/config.members` and nicknames. Existing content remains at its current paths and is not moved.
+These documents are not created, updated, or repaired by normal application startup, and are not required in production or in fixed-Space LOCAL modes. Existing production data may omit them. The one exception is Phase 3 LOCAL multi-Space mode, which creates a root Space document and a single active owner Membership when provisioning a Personal Space or creating a Shared Space (see above) — always transactional, never a repair, never `merge`. When both formal areas are absent, the client constructs temporary compatible Members in memory from `spaces/{currentSpaceId}/meta/config.members` and nicknames. Existing content remains at its current paths and is not moved.
 
 The normalized in-memory Member interface is:
 

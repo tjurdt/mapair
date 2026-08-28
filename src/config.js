@@ -40,13 +40,25 @@ const LOCAL_TEST_SPACES = {
   group: "test-space-group"
 };
 
-function resolveLocalTestSpaceId(search){
+function localTestSpaceToken(search){
   const values = new URLSearchParams(search).getAll("testSpace");
-  if (!values.length) return LOCAL_TEST_CONFIG.spaceId;
+  if (!values.length) return null;
   if (values.length !== 1 || !Object.hasOwn(LOCAL_TEST_SPACES, values[0])){
     throw new Error('testSpace must be exactly one of "baseline" or "group". Startup stopped.');
   }
-  return LOCAL_TEST_SPACES[values[0]];
+  return values[0];
+}
+
+// Strict LOCAL-only Phase 3 feature flag. Enables Personal Space provisioning,
+// Membership-based Space discovery, and the Space switcher. It never touches
+// production config and fails closed anywhere but LOCAL TEST.
+function resolveMultiSpace(search){
+  const values = new URLSearchParams(search).getAll("multiSpace");
+  if (!values.length) return false;
+  if (values.length !== 1 || values[0] !== "1"){
+    throw new Error('multiSpace must be exactly "1". Startup stopped.');
+  }
+  return true;
 }
 
 export function resolveRuntimeConfig(hostname = location.hostname, search = location.search){
@@ -55,10 +67,21 @@ export function resolveRuntimeConfig(hostname = location.hostname, search = loca
   if (values.length){
     if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
     if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
-    return { mode: "local", ...LOCAL_TEST_CONFIG, spaceId: resolveLocalTestSpaceId(search) };
+    const testSpace = localTestSpaceToken(search);
+    return {
+      mode: "local",
+      ...LOCAL_TEST_CONFIG,
+      spaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : LOCAL_TEST_CONFIG.spaceId,
+      explicitTestSpace: testSpace,
+      explicitTestSpaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : null,
+      multiSpace: resolveMultiSpace(search)
+    };
   }
   if (new URLSearchParams(search).getAll("testSpace").length){
     throw new Error("testSpace is only available in LOCAL TEST mode. Startup stopped.");
+  }
+  if (new URLSearchParams(search).getAll("multiSpace").length){
+    throw new Error("multiSpace is only available in LOCAL TEST mode. Startup stopped.");
   }
   if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
   return { mode: "production", ...PRODUCTION_CONFIG };

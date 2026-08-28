@@ -177,14 +177,37 @@ assert.equal(canonicalSpaceState.currentSpace.id, "test-space-canonical", "path-
 
 const mainSource = fs.readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 assert.equal((mainSource.match(/runtimeConfig\.spaceId/g) || []).length, 1, "runtime config spaceId should only initialize currentSpaceId");
-assert.match(mainSource, /const spaceDoc\s*=\s*\(\)\s*=>\s*doc\(db,\s*"spaces",\s*currentSpaceId\)/);
-assert.match(mainSource, /const membersCol\s*=\s*\(\)\s*=>\s*collection\(db,\s*"spaces",\s*currentSpaceId,\s*"members"\)/);
+assert.match(mainSource, /const spaceDoc\s*=\s*\(\)\s*=>\s*spaceDocFor\(currentSpaceId\)/);
+assert.match(mainSource, /const membersCol\s*=\s*\(\)\s*=>\s*membersColFor\(currentSpaceId\)/);
+assert.match(mainSource, /const spaceDocFor\s*=\s*spaceId\s*=>\s*doc\(db,\s*"spaces",\s*spaceId\)/, "explicit Space path helpers must be Space-ID-parameterised (§17)");
+assert.match(mainSource, /const membersColFor\s*=\s*spaceId\s*=>\s*collection\(db,\s*"spaces",\s*spaceId,\s*"members"\)/);
 assert.match(mainSource, /currentSpaceUnsubscribes\.set\("space",\s*onSnapshot\(spaceDoc\(\)/);
 assert.match(mainSource, /currentSpaceUnsubscribes\.set\("members",\s*onSnapshot\(membersCol\(\)/);
 assert.match(mainSource, /snapshot\.docs\.map\(member\s*=>\s*\(\{\s*\.\.\.member\.data\(\),\s*id:member\.id\s*\}\)\)/, "Firestore Membership document ID must overwrite stored id-like data");
-assert.doesNotMatch(mainSource, /setDoc\s*\(\s*spaceDoc\s*\(/, "startup/runtime must not create or update root Space documents");
-assert.doesNotMatch(mainSource, /setDoc\s*\(\s*memberDoc\s*\(/, "startup/runtime must not create or update Membership documents");
+assert.doesNotMatch(mainSource, /setDoc\s*\(\s*spaceDoc\s*\(/, "startup/runtime must not create or update root Space documents through the current-Space helper");
+assert.doesNotMatch(mainSource, /setDoc\s*\(\s*memberDoc\s*\(/, "startup/runtime must not create or update Membership documents through the current-Space helper");
 assert.doesNotMatch(mainSource, /addDoc\s*\(\s*membersCol\s*\(/, "startup/runtime must not create Membership documents");
+assert.doesNotMatch(mainSource, /setDoc\s*\(\s*spaceDocFor\s*\(/, "root Space documents are only ever created inside a Phase 3 transaction");
+assert.doesNotMatch(mainSource, /setDoc\s*\(\s*memberDocFor\s*\(/, "Membership documents are only ever created inside a Phase 3 transaction");
+
+/* Phase 3 — Personal Space / Shared Space creation is gated and transactional. */
+assert.match(mainSource, /function isMultiSpace\(\)\{\s*return isLocalTest\(\)\s*&&\s*runtimeConfig\?\.multiSpace\s*===\s*true;\s*\}/,
+  "Phase 3 is LOCAL-only and gated by runtimeConfig.multiSpace");
+assert.match(mainSource, /function startPhase3\(\)\{\s*\n?\s*if \(!isMultiSpace\(\)/, "startPhase3 must bail unless multiSpace is on");
+assert.match(mainSource, /async function ensurePersonalSpace\(uid\)\{[\s\S]*?runTransaction\(db,[\s\S]*?tx\.set\(spaceRef,/,
+  "Personal Space provisioning must use a Firestore transaction");
+assert.doesNotMatch(mainSource, /ensurePersonalSpace[\s\S]{0,400}merge\s*:\s*true/, "provisioning must never use merge:true to hide an ownership conflict");
+assert.match(mainSource, /async function createSharedSpace\(name\)\{[\s\S]*?runTransaction\(db,/, "Shared Space creation must be transactional");
+assert.match(mainSource, /switchActiveSpace\(spaceId, opts = \{\}\)\{\s*\n?\s*if \(!isMultiSpace\(\)\) return;/, "switchActiveSpace must be gated");
+assert.match(mainSource, /collectionGroup\(db, "members"\), where\("userId", "==", uid\), where\("status", "==", "active"\)/,
+  "discovery must use the target collection-group Membership query (§7)");
+
+/* Phase 3 — cross-Space write protection (§16, §17). */
+assert.match(mainSource, /function isStaleSpaceCallback\(session\)\{ return localFailure \|\| session !== spaceSession; \}/);
+assert.match(mainSource, /const editorSpaceId = currentSpaceId;/, "openEditor must capture its originating Space");
+assert.match(mainSource, /placesColFor\(editorSpaceId\)/);
+assert.match(mainSource, /addDoc\(tripsColFor\(tripSpaceId\)/);
+assert.match(mainSource, /spaceSession = nextSpaceSession\(spaceSession, spaceId\)/, "each switch mints a fresh Space session token");
 
 /* Phase 2 §3 — new-Visit participant defaults must fail closed. */
 assert.match(
