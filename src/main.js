@@ -22,6 +22,7 @@ import {
   personalSpaceResolution,
   readActiveSpacePreference,
   resolveSpaceMembershipPath,
+  spaceFoundationReady,
   spaceDisplayName,
   spaceTypeLabel,
   validateActiveSpacePreference,
@@ -247,6 +248,7 @@ let spaceFoundationReads = {
   spaceReady:false,
   membersReady:false,
   metaReady:false,
+  reconciled:false,
   formalReadFailed:false,
   spaceDocument:null,
   formalMemberships:[]
@@ -365,6 +367,7 @@ function recomputeReferencedParticipants(){
   const seen = new Set();
   const add = uid => { if (isUsableUid(uid) && !activeSet.has(uid)) seen.add(uid); };
   for (const place of Object.values(places)){
+    if (!hasVisitHistory(place)) continue;
     whoUids(place).forEach(add);
     placeVisits(place).forEach(v => visitWhoUids(place, v).forEach(add));
   }
@@ -638,8 +641,14 @@ function boot(){
       spaceSession = nextSpaceSession(spaceSession, "");
       spaceSwitchInFlight = false;
       searchReqSeq++;
+      clearTimeout(searchTimer);
+      closeAllModals();
+      cancelAddMode();
+      clearSearchSuggestions();
       teardownPhase3();
       unsubscribeCurrentSpaceListeners();
+      clearSpaceScopedState();
+      resetSpaceFoundationReads();
       user = u;
       u ? renderApp() : renderGate();
     },
@@ -683,7 +692,6 @@ async function renderApp(){
   removeProximityLayer();
   if (isMultiSpace()){
     // Phase 3: no active Space until Membership discovery + initial selection.
-    spaceSession = createSpaceSession("");
     currentSpaceId = "";
   }
   document.getElementById("app").innerHTML = `
@@ -815,8 +823,7 @@ async function renderApp(){
   if (isMultiSpace()){
     wireSpaceSwitcher();
     renderSpaceSwitcher();
-    const listEl = document.getElementById("list");
-    if (listEl) listEl.innerHTML = `<div class="empty">尋找你的地圖…</div>`;
+    showSpaceLoadingState();
     startPhase3();
   } else {
     subscribe();
@@ -826,6 +833,7 @@ async function renderApp(){
     renderMarkers();
   });
   document.getElementById("addBtn").onclick = e => {
+    if (!currentSpaceFoundationReady()) return;
     addMode = !addMode;
     e.target.classList.toggle("on", addMode);
     document.getElementById("map").style.cursor = addMode ? "crosshair" : "";
@@ -918,6 +926,7 @@ async function renderApp(){
 
 /* ---------- 設定頁(整合顯示/顏色/綽號) ---------- */
 function openSettings(){
+  if (!currentSpaceFoundationReady()) return;
   const settingsSpaceId = currentSpaceId;
   const settingsSession = spaceSession;
   const settingsLive = () => isCurrentSpaceSession(settingsSession, spaceSession);
@@ -1147,6 +1156,7 @@ async function initMap(){
   });
   map.addListener("click", async e => {
     if (!addMode) return;                              // 只有開啟新增模式才加點
+    if (!currentSpaceFoundationReady()) return;
     if (Date.now() - lastMarkerClick < 500) return;
     const lat=e.latLng.lat(), lng=e.latLng.lng();
     nearbyPicker(lat, lng);                            // 先列出附近地標供選
@@ -1225,6 +1235,7 @@ function resetSpaceFoundationReads(){
     spaceReady:false,
     membersReady:false,
     metaReady:false,
+    reconciled:false,
     formalReadFailed:false,
     spaceDocument:null,
     formalMemberships:[]
@@ -1280,6 +1291,8 @@ function reconcileSpaceMembershipFoundation(){
   membershipSource = foundation.membershipSource;
   ownershipValidation = foundation.ownership;
   memberDirectory = foundation.directory;
+  spaceFoundationReads.reconciled = true;
+  setSpaceEditingAvailable(true);
   reportSpaceMembershipDiagnostic(foundation);
 
   // Phase 2 §4: participant-dependent UI depends on formal Membership data.
@@ -1297,6 +1310,14 @@ function reconcileSpaceMembershipFoundation(){
     recomputeReferencedParticipants();
     refreshParticipantDependentUI();
   }
+}
+function currentSpaceFoundationReady(){
+  return spaceFoundationReady({
+    multiSpace:isMultiSpace(),
+    currentSpaceId,
+    session:spaceSession,
+    ...spaceFoundationReads
+  });
 }
 // Re-render the participant-dependent surfaces. Guarded so it is inert until the
 // app shell + map exist; creates no Firestore listeners or writes.
@@ -1780,13 +1801,24 @@ function resetFiltersForSpaceSwitch(){
 }
 
 function showSpaceLoadingState(){
+  setSpaceEditingAvailable(false);
   const list = document.getElementById("list");
   if (list) list.innerHTML = `<div class="empty">地圖載入中…</div>`;
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === "visited"));
   document.getElementById("searchWrap") && (document.getElementById("searchWrap").style.display = "block");
   if (document.getElementById("fl_trip")) refreshFilterUI();
   renderFilterChips();
-  renderMarkerLegend();
+  const legend = document.getElementById("maplegend");
+  if (legend){ legend.innerHTML = ""; legend.style.display = "none"; }
+}
+function setSpaceEditingAvailable(ready){
+  if (!isMultiSpace()) return;
+  const enabled = !!ready && currentSpaceFoundationReady();
+  const addButton = document.getElementById("addBtn");
+  const searchInput = document.getElementById("search");
+  if (addButton) addButton.disabled = !enabled;
+  if (searchInput) searchInput.disabled = !enabled;
+  if (!enabled) cancelAddMode();
 }
 
 function cancelAddMode(){
@@ -1992,6 +2024,11 @@ function effectiveMarkerColor(p){
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
+  if (!currentSpaceFoundationReady()){
+    const legend = document.getElementById("maplegend");
+    if (legend){ legend.innerHTML = ""; legend.style.display = "none"; }
+    return;
+  }
   renderMarkerLegend();
   restyleProximityLayer();
   if (!showPins) return;
@@ -2130,6 +2167,7 @@ async function ensureCounty(){
   if (geoSpaceId !== currentSpaceId) return geo;
   for (const p of Object.values(places)){
     if (geoSpaceId !== currentSpaceId) break;
+    if (!hasVisitHistory(p)) continue;
     if (p.countyCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "COUNTYCODE");
     if (code){ p.countyCode = code; updateDoc(placeDocFor(geoSpaceId, p.id), { countyCode: code }); }
@@ -2142,6 +2180,7 @@ async function ensureTown(){
   if (geoSpaceId !== currentSpaceId) return geo;
   for (const p of Object.values(places)){
     if (geoSpaceId !== currentSpaceId) break;
+    if (!hasVisitHistory(p)) continue;
     if (p.townCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "TOWNCODE");
     if (code){ p.townCode = code; updateDoc(placeDocFor(geoSpaceId, p.id), { townCode: code }); }
@@ -2160,6 +2199,7 @@ async function ensureVillage(){
   if (geoSpaceId === currentSpaceId){
     for (const p of Object.values(places)){
       if (geoSpaceId !== currentSpaceId) break;
+      if (!hasVisitHistory(p)) continue;
       if (p.villCode || !p.countyCode) continue;
       const gf = byCounty[p.countyCode]; if (!gf) continue;
       const code = pip(p.lat, p.lng, gf, "VILLCODE");
@@ -2510,6 +2550,7 @@ function refreshMapSurfaces(){
 }
 
 function toggleMapSurface(control){
+  if (!currentSpaceFoundationReady()) return;
   const action=control==="proximity" ? {type:"proximity"} : {type:"admin",level:control};
   const next=transitionMapSurfaceState({adminLevel,proximityEnabled},action);
   if(action.type==="proximity"){
@@ -2536,6 +2577,7 @@ function toggleMapSurface(control){
 let dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
+  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
   if (tab !== "visited" && tab !== "trips") tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
@@ -2715,6 +2757,7 @@ function findExistingPlace(seed){
   return null;
 }
 function openSeed(seed){
+  if (!currentSpaceFoundationReady()) return;
   // Explicitly searching/selecting a Place records a Visit. An existing Place —
   // including a legacy wishlist-only document detected by extId/name/location —
   // is reused and gains its first real Visit through this explicit action
@@ -2728,6 +2771,7 @@ function wireSearch(){
   const box = document.getElementById("results");
   input.oninput = () => {
     clearTimeout(searchTimer);
+    if (!currentSpaceFoundationReady()){ clearSearchSuggestions(); return; }
     const q = input.value.trim();
     if (q.length < 2){ box.style.display="none"; return; }
     searchTimer = setTimeout(async () => {
@@ -2791,6 +2835,7 @@ function parseAdmin(comps){
    6) 新增 / 編輯地點
    ============================================================ */
 async function nearbyPicker(lat, lng){
+  if (!currentSpaceFoundationReady()) return;
   const pickerSession = spaceSession;
   let results = [];
   try {
@@ -2845,6 +2890,7 @@ function persistPlaceEditorData(spaceId,id,data){
   return write;
 }
 function openEditor(id, seed, opts={}){
+  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
   const p = id ? places[id] : { categories:[], ...seed };
   const shared=placeSharedFields(p);
   // The editor is bound to the Space that was active when it opened. Every write
@@ -2985,6 +3031,7 @@ function openEditor(id, seed, opts={}){
     <div class="row"><button class="btn" id="f_done">完成</button>${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除地點</button>`:``}</div>
   `);
 
+  const editorModal = [...document.querySelectorAll(".modal-bg")].at(-1);
   const nameEl=document.getElementById("f_name"), visitWrap=document.getElementById("f_visitwrap");
   function collect(){
     const clean=visits.filter(v=>v.date).map(v=>{
@@ -3037,10 +3084,21 @@ function openEditor(id, seed, opts={}){
     return queued;
   }
   async function deletePlaceAndClose(){
+    if (!editorLive() || deleted) return;
     deleted = true;
-    try { if (editorLive() && docId) await deleteDoc(placeDocFor(editorSpaceId, docId)); }
+    try {
+      // If addDoc has not started, its queued callback sees the deletion flag
+      // and creates nothing. If it is already running, wait for it to publish
+      // docId, then drain queued writes for that exact originating document.
+      await persistQueue;
+      if (docId){
+        const pendingWrites = placeEditorWriteQueues.get(`${editorSpaceId}:${docId}`);
+        if (pendingWrites) await pendingWrites;
+        await deleteDoc(placeDocFor(editorSpaceId, docId));
+      }
+    }
     catch(e){ /* snapshot will reconcile */ }
-    closeModal();
+    editorModal?.remove();
   }
   function catOptions(selected){
     return `<option value="">未分類</option>`+spaceCats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("")+`<option value="__new__">＋新增分類…</option>`;
@@ -3144,7 +3202,7 @@ function openEditor(id, seed, opts={}){
   const rEl=document.getElementById("f_rating"),rVal=document.getElementById("f_ratingval");
   rEl.oninput=()=>{const v=parseFloat(rEl.value);rVal.textContent=v>0?("★ "+v):"未評分";}; rEl.addEventListener("change",persist);
   document.getElementById("f_review").addEventListener("blur",persist);
-  document.getElementById("f_done").onclick=async()=>{await persist();closeModal();};
+  document.getElementById("f_done").onclick=async()=>{await persist();editorModal?.remove();};
   const fdel=document.getElementById("f_del"); if(fdel)fdel.onclick=deletePlaceAndClose;
   if(!id&&collect().name) persist();
 }
@@ -3180,9 +3238,13 @@ function renderTrips(el){
     refreshFilterUI(); applyFilter();
   });
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
-  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => { ev.stopPropagation(); deleteDoc(tripDoc(b.dataset.del)); });
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    if (currentSpaceFoundationReady()) deleteDoc(tripDoc(b.dataset.del));
+  });
 }
 function editTrip(id, onDone){
+  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
   let docId = id || null, creating = false;
   const t = id ? trips[id] : {};
   let emoji = t.emoji || "";

@@ -264,3 +264,26 @@ export function isCurrentSpaceSession(captured, current){
   if (!captured || !current) return false;
   return captured.spaceId === current.spaceId && captured.version === current.version;
 }
+
+/* ------------------------------------------------------------
+   Current-Space editing readiness (Phase 3 Revised 3).
+
+   Fixed-Space modes preserve their legacy eager interaction. LOCAL
+   multi-Space mode waits until all three Membership-foundation reads
+   belong to the active session and have been reconciled into the Member
+   directory before any Space-bound editor can open.
+   ------------------------------------------------------------ */
+export function spaceFoundationReady({
+  multiSpace = false,
+  currentSpaceId = null,
+  session = null,
+  spaceReady = false,
+  membersReady = false,
+  metaReady = false,
+  reconciled = false
+} = {}){
+  if (!multiSpace) return true;
+  const id = usable(currentSpaceId);
+  return !!id && session?.spaceId === id &&
+    spaceReady && membersReady && metaReady && reconciled;
+}

@@ -13,6 +13,7 @@ import {
   personalSpaceResolution,
   resolveSpaceMembershipPath,
   readActiveSpacePreference,
+  spaceFoundationReady,
   spaceDisplayName,
   spaceTypeLabel,
   validateActiveSpacePreference,
@@ -209,6 +210,41 @@ assert.equal(chooseInitialActiveSpace({ accessibleSpaceIds: [] }).error, "no-per
   // and a B-session callback still applies
   const capturedByBWork = current;
   assert.equal(isCurrentSpaceSession(capturedByBWork, current), true);
+}
+
+/* 15b — logout/login never reuses a prior same-Space session version ------ */
+{
+  let current = createSpaceSession("");
+  current = nextSpaceSession(current, "space-A");
+  const capturedBeforeLogout = current;
+  current = nextSpaceSession(current, "");
+  current = nextSpaceSession(current, "space-A");
+  assert.equal(current.version, 4, "the page-lifetime counter remains monotonic across auth teardown");
+  assert.equal(isCurrentSpaceSession(capturedBeforeLogout, current), false,
+    "returning to the same Space cannot revive a pre-logout callback");
+}
+
+/* 15c — LOCAL multi-Space editing waits for reconciled foundation ---------- */
+{
+  const session = createSpaceSession("space-A");
+  const ready = {
+    multiSpace:true,
+    currentSpaceId:"space-A",
+    session,
+    spaceReady:true,
+    membersReady:true,
+    metaReady:true,
+    reconciled:true
+  };
+  assert.equal(spaceFoundationReady(ready), true);
+  assert.equal(spaceFoundationReady({ ...ready, membersReady:false }), false);
+  assert.equal(spaceFoundationReady({ ...ready, metaReady:false }), false);
+  assert.equal(spaceFoundationReady({ ...ready, reconciled:false }), false,
+    "snapshots alone are insufficient until the Member directory is reconciled");
+  assert.equal(spaceFoundationReady({ ...ready, session:{ ...session, spaceId:"space-B" } }), false,
+    "foundation data must belong to the current Space session");
+  assert.equal(spaceFoundationReady({ multiSpace:false }), true,
+    "fixed-Space production and legacy LOCAL behavior remains eager");
 }
 
 /* Labels never expose IDs ------------------------------------- */

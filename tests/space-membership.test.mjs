@@ -340,6 +340,66 @@ assert.match(mainSource, /settled\.finally\(\(\)=>\{ if\(placeEditorWriteQueues\
 /* ============================================================
    Part B — Wishlist removed as a product feature (§11–§25).
    ============================================================ */
+/* Phase 3 Revised 3: dormant data, auth/session lifecycle, creation deletion,
+   and Membership-foundation readiness. */
+const recomputeParticipantsFn = mainSource.match(/function recomputeReferencedParticipants\(\)\{([\s\S]*?)\n\}/);
+assert.ok(recomputeParticipantsFn, "recomputeReferencedParticipants must exist");
+assert.match(recomputeParticipantsFn[1], /for \(const place of Object\.values\(places\)\)\{\s*if \(!hasVisitHistory\(place\)\) continue;\s*whoUids\(place\)/,
+  "Visit-less Places must be skipped before any participant fields are read");
+for (const name of ["ensureCounty", "ensureTown", "ensureVillage"]){
+  const fn = mainSource.match(new RegExp(`async function ${name}\\(\\)\\{([\\s\\S]*?)\\n\\}`));
+  assert.ok(fn, `${name} must exist`);
+  assert.match(fn[1], /for \(const p of Object\.values\(places\)\)\{[\s\S]*?if \(!hasVisitHistory\(p\)\) continue;/,
+    `${name} must skip dormant Places before computing or writing cache fields`);
+}
+
+assert.equal((mainSource.match(/createSpaceSession\(""\)/g) || []).length, 1,
+  "createSpaceSession must only initialize the module-level session once");
+const renderAppFn = mainSource.match(/async function renderApp\(\)\{([\s\S]*?)\n\}/);
+assert.ok(renderAppFn, "renderApp must exist");
+assert.doesNotMatch(renderAppFn[1], /createSpaceSession\(/,
+  "renderApp must never reset the page-lifetime Space session version");
+const authLifecycleSteps = [
+  'spaceSession = nextSpaceSession(spaceSession, "")',
+  "searchReqSeq++",
+  "closeAllModals()",
+  "cancelAddMode()",
+  "clearSearchSuggestions()",
+  "teardownPhase3()",
+  "unsubscribeCurrentSpaceListeners()",
+  "user = u"
+];
+let previousAuthStep = -1;
+for (const step of authLifecycleSteps){
+  const index = authCb[1].indexOf(step);
+  assert.ok(index > previousAuthStep, `auth teardown step must be ordered: ${step}`);
+  previousAuthStep = index;
+}
+
+const revised3OpenEditorFn = mainSource.match(/function openEditor\(id, seed, opts=\{\}\)\{([\s\S]*?)\n\}/);
+assert.ok(revised3OpenEditorFn, "openEditor must exist for Revised 3 assertions");
+const deletePlaceFn = revised3OpenEditorFn[1].match(/async function deletePlaceAndClose\(\)\{([\s\S]*?)\n  \}/);
+assert.ok(deletePlaceFn, "deletePlaceAndClose must exist");
+assert.match(deletePlaceFn[1], /if \(!editorLive\(\) \|\| deleted\) return;\s*deleted = true;/,
+  "deletion must synchronously block later editor writes");
+assert.match(deletePlaceFn[1], /await persistQueue;[\s\S]*?placeEditorWriteQueues\.get\(`\$\{editorSpaceId\}:\$\{docId\}`\)[\s\S]*?await deleteDoc\(placeDocFor\(editorSpaceId, docId\)\)/,
+  "deletion must await creation and queued writes before deleting the exact originating-Space document");
+
+assert.match(mainSource, /function currentSpaceFoundationReady\(\)\{[\s\S]*?multiSpace:isMultiSpace\(\)[\s\S]*?session:spaceSession[\s\S]*?\.\.\.spaceFoundationReads/,
+  "readiness must be session-bound and delegated to the explicit policy");
+assert.match(mainSource, /spaceFoundationReads\.reconciled = true;\s*setSpaceEditingAvailable\(true\);/,
+  "editing becomes available only after Membership reconciliation completes");
+assert.match(mainSource, /function renderList\(\)\{\s*if \(!currentSpaceFoundationReady\(\)\)\{ showSpaceLoadingState\(\); return; \}/,
+  "loaded snapshots must stay non-interactive until foundation readiness");
+assert.match(revised3OpenEditorFn[1], /^\s*if \(!currentSpaceFoundationReady\(\)\)\{ showSpaceLoadingState\(\); return; \}/,
+  "Place editors cannot open before foundation readiness");
+const revised3OpenSeedFn = mainSource.match(/function openSeed\(seed\)\{([\s\S]*?)\n\}/);
+assert.ok(revised3OpenSeedFn, "openSeed must exist for Revised 3 assertions");
+assert.match(revised3OpenSeedFn[1], /^\s*if \(!currentSpaceFoundationReady\(\)\) return;/,
+  "search/add Visit creation cannot begin before foundation readiness");
+assert.match(mainSource, /function editTrip\(id, onDone\)\{\s*if \(!currentSpaceFoundationReady\(\)\)\{ showSpaceLoadingState\(\); return; \}/,
+  "Trip editor writes cannot begin before foundation readiness");
+
 const indexHtml = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 /* §13 — only 去過 | 行程 tabs remain; no 想去 tab. */
