@@ -270,11 +270,10 @@ const REGION_GEO = {
 };
 // Phase 2: participants are arbitrary Space Members. `who` (Visit + Place)
 // and Place `whoMode` remain as legacy serialization / compatibility fallbacks.
+// The legacy universe is `meta/config.members`; the legacy `whoMode` anchor is
+// always a record's own `createdBy`, never the current viewer.
 function legacyParticipantContext(){
-  return {
-    legacyMemberIds: Object.keys(members || {}),
-    currentUserId: user?.uid || ""
-  };
+  return { legacyMemberIds: Object.keys(members || {}) };
 }
 function activeMemberIds(){ return activeSpaceMembers().map(m => m.userId); }
 function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
@@ -332,6 +331,16 @@ function recomputeReferencedParticipants(){
     placeVisits(place).forEach(v => visitWhoUids(place, v).forEach(add));
   }
   referencedHistoricalIds = [...seen];
+}
+// Valid participant-filter values: active Members + historical participants
+// still referenced by loaded data (Phase 2 §3, §8).
+function participantFilterCandidateIds(){
+  return [...orderedActiveMemberIds(), ...referencedHistoricalIds];
+}
+function sanitizeParticipantFilter(){
+  if (filter.who !== "all" && !participantFilterCandidateIds().includes(filter.who)){
+    filter.who = "all";
+  }
 }
 function newVisitId(){
   try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
@@ -991,8 +1000,10 @@ function refreshFilterUI(){
   trip.value = filter.tripId;
   const who = document.getElementById("fl_who");
   // Active Members (self first, then by name) + only the historical participants
-  // that actually appear in loaded data (Phase 2 §8, §9).
-  const whoUidsList = [...orderedActiveMemberIds(), ...referencedHistoricalIds];
+  // that actually appear in loaded data (Phase 2 §8, §9). If the current
+  // selection is no longer a valid candidate, drop back to "all" (§3).
+  sanitizeParticipantFilter();
+  const whoUidsList = participantFilterCandidateIds();
   who.innerHTML = `<option value="all">所有同行者</option>` +
     whoUidsList.map(uid=>`<option value="${esc(uid)}">${esc(participantName(uid))}</option>`).join("");
   who.value = filter.who;
@@ -2230,7 +2241,14 @@ function openEditor(id, seed, opts={}){
   let wishlistCats = new Set((p.categories||[]).slice(0,1));
   let status = p.status || "visited";
   let level = shared.level;
-  const partCtx = { ...legacyParticipantContext(), createdBy:p.createdBy||user?.uid||"" };
+  // Legacy whoMode anchor: a NEW Place is genuinely created by the current
+  // User; an EXISTING Place uses only its explicit stored `createdBy` and never
+  // substitutes the viewer, so an old Place resolves/serializes the same for
+  // everyone (Phase 2 §2). deriveLegacyWhoMode stays fail-closed when empty.
+  const partCtx = {
+    ...legacyParticipantContext(),
+    createdBy: isUsableUid(p.createdBy) ? p.createdBy : (id ? "" : (user?.uid || ""))
+  };
   const activeMembersList = orderedActiveMembers();
   const activeIds = activeMembersList.map(m=>m.userId);
   const activeIdSet = new Set(activeIds);

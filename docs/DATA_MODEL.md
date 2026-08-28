@@ -103,10 +103,15 @@ this precedence:
    is authoritative. An explicit empty array (`participantIds: []`) is honoured
    and does not fall through.
 2. Otherwise, if the Visit has a usable legacy `who` array, use it.
-3. Otherwise, use the Place-level compatibility fallback. There, a usable Place
-   `who` array wins as the full arbitrary UID list; `whoMode` is interpreted
-   only when there is no usable `who`, and only for a genuine two-person legacy
-   universe whose anchor (`createdBy`) is one of the two.
+3. Otherwise, use the Place-level compatibility fallback. There, a usable
+   (non-empty) Place `who` array wins as the full arbitrary UID list; `whoMode`
+   is interpreted only when there is no usable `who`, and only for a genuine
+   two-person legacy universe whose anchor is the record's own `createdBy` (one
+   of the two — never the current viewer, so an old record resolves and
+   serializes the same for everyone). An explicit empty Place `who` with no
+   meaningful `whoMode` (e.g. a Wishlist selection cleared to nobody) resolves
+   to `[]` and is not silently repopulated with the creator on reload. Only a
+   record with no participant data at all falls back to its own `createdBy`.
 
 Malformed `participantIds` produces a structured diagnostic, never a crash, and
 falls back to compatibility without being silently normalized.

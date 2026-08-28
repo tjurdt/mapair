@@ -64,39 +64,45 @@ function describeValue(value){
    Place-level compatibility fallback (contract §1C, §1D, §5).
 
    Precedence:
-     A. a usable Place `who` array wins — the full arbitrary UID
-        array, never collapsed by a stale `whoMode`.
-     B. only when `who` is absent/unusable, interpret legacy
-        `whoMode`, and only for a genuine two-person legacy
-        universe whose anchor (`createdBy`) is one of the two.
-     C. otherwise fall back to the creator alone, or nothing.
+     A. a usable (non-empty) Place `who` array wins — the full
+        arbitrary UID array, never collapsed by a stale `whoMode`.
+     B. only when there is no usable `who`, interpret a genuine
+        legacy `whoMode`, and only for a two-person legacy universe
+        whose anchor (the Place's own `createdBy`, never the
+        reader's identity) is one of the two.
+     C. an explicit `who` array (including `[]`) with no meaningful
+        legacy `whoMode` is an explicit selection — honour it, do
+        not re-add the creator on reload.
+     D. no participant data at all -> the Place's own creator, or
+        nothing.
    ------------------------------------------------------------ */
 export function resolvePlaceCompatParticipants(place = {}, legacyContext = {}){
-  const { legacyMemberIds = [], currentUserId = "" } = legacyContext || {};
+  const { legacyMemberIds = [] } = legacyContext || {};
   const base = isObject(place) ? place : {};
 
   // A. usable `who` array — authoritative, arbitrary N members.
   const who = usableUidArray(base.who);
   if (who) return [...who];
 
-  const creator = isUsableUid(base.createdBy)
-    ? base.createdBy
-    : (isUsableUid(currentUserId) ? currentUserId : "");
+  const anchor = isUsableUid(base.createdBy) ? base.createdBy : "";
+  const universe = uniqueUids(legacyMemberIds);
+  const mode = base.whoMode;
 
   // B. legacy `whoMode` — genuine two-person legacy universe only.
-  const universe = uniqueUids(legacyMemberIds);
-  if (universe.length === 2){
-    const mode = base.whoMode;
+  if (universe.length === 2 && HISTORICAL_WHO_MODES.includes(mode)){
     if (mode === "both") return [...universe];
-    if ((mode === "me" || mode === "partner") && isUsableUid(creator) && universe.includes(creator)){
-      const other = universe.find(uid => uid !== creator) || "";
-      if (mode === "me") return [creator];
-      if (other) return [other];
+    if (anchor && universe.includes(anchor)){
+      const other = universe.find(uid => uid !== anchor) || "";
+      if (mode === "me") return [anchor];
+      if (mode === "partner" && other) return [other];
     }
   }
 
-  // C. safe default.
-  return isUsableUid(creator) ? [creator] : [];
+  // C. explicit empty selection — no usable `who`, no meaningful whoMode.
+  if (Array.isArray(base.who)) return [];
+
+  // D. no participant data at all.
+  return anchor ? [anchor] : [];
 }
 
 /* ------------------------------------------------------------

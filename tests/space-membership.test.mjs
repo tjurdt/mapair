@@ -215,4 +215,22 @@ assert.match(refreshFnMatch[1], /refreshFilterUI\(\);\s*renderList\(\);\s*render
 assert.doesNotMatch(refreshFnMatch[1], /onSnapshot|addDoc|setDoc|updateDoc|deleteDoc/,
   "participant UI refresh must not create Firestore listeners or writes");
 
+/* Phase 2 §2 — an EXISTING Place's legacy whoMode anchor is never the viewer. */
+assert.match(
+  mainSource,
+  /createdBy:\s*isUsableUid\(p\.createdBy\)\s*\?\s*p\.createdBy\s*:\s*\(id\s*\?\s*""\s*:\s*\(user\?\.uid\s*\|\|\s*""\)\)/,
+  "openEditor partCtx must use p.createdBy for an existing Place and never substitute the viewer"
+);
+assert.doesNotMatch(mainSource, /createdBy:\s*p\.createdBy\s*\|\|\s*user\?\.uid/,
+  "the permissive `p.createdBy || user.uid` anchor must be gone");
+const lpcMatch = mainSource.match(/function legacyParticipantContext\(\)\{[\s\S]*?\n\}/);
+assert.ok(lpcMatch, "legacyParticipantContext must exist");
+assert.doesNotMatch(lpcMatch[0], /currentUserId|user\?\.uid|user\.uid/,
+  "legacyParticipantContext must not carry the viewer as a whoMode anchor source");
+
+/* Phase 2 §3 — an invalid participant-filter selection resets to "all". */
+assert.match(mainSource, /function sanitizeParticipantFilter\(\)\{[\s\S]*?filter\.who\s*=\s*"all"/);
+assert.match(mainSource, /function refreshFilterUI\(\)\{[\s\S]*?sanitizeParticipantFilter\(\)/,
+  "refreshFilterUI must drop an out-of-candidate participant filter before rendering the select");
+
 console.log("space-membership assertions passed");

@@ -267,10 +267,44 @@ assert.deepEqual(
   "me/partner needs createdBy inside the two-person universe"
 );
 
-// empty `who` array is unusable -> falls through, not treated as an explicit empty set
+/* §2 — the me/partner anchor is the record's own createdBy, never the reader.
+   `currentUserId` in the context is ignored, so an old Place resolves the same
+   for every viewer. */
+assert.deepEqual(
+  resolvePlaceCompatParticipants({ whoMode: "partner" }, { legacyMemberIds: BASELINE_LEGACY, currentUserId: A }),
+  [],
+  "no createdBy -> no anchor -> explicit-empty / no-data, never the reader as 'me'"
+);
+assert.deepEqual(
+  resolvePlaceCompatParticipants({ whoMode: "partner", createdBy: A }, { legacyMemberIds: BASELINE_LEGACY, currentUserId: B }),
+  [B],
+  "anchor comes from createdBy regardless of who reads it"
+);
+
+/* §1 — explicit empty Place/Wishlist selection survives reload */
+assert.deepEqual(
+  resolvePlaceCompatParticipants({ who: [], whoMode: "", createdBy: A }, { legacyMemberIds: BASELINE_LEGACY }),
+  [],
+  "explicit empty who + no meaningful whoMode -> [] (does not re-add the creator)"
+);
+assert.deepEqual(
+  resolvePlaceCompatParticipants({ who: [] }, { legacyMemberIds: BASELINE_LEGACY }),
+  []
+);
 assert.deepEqual(
   resolvePlaceCompatParticipants({ who: [], whoMode: "both", createdBy: A }, { legacyMemberIds: BASELINE_LEGACY }),
-  [A, B]
+  [A, B],
+  "a genuine two-person whoMode still overrides an empty who"
+);
+// no `who` key at all + no whoMode -> the record's own creator (unchanged)
+assert.deepEqual(
+  resolvePlaceCompatParticipants({ createdBy: A }, { legacyMemberIds: BASELINE_LEGACY }),
+  [A]
+);
+assert.deepEqual(
+  resolvePlaceCompatParticipants({}, { legacyMemberIds: BASELINE_LEGACY }),
+  [],
+  "no participant data and no createdBy -> nothing"
 );
 
 /* ------------------------------------------------------------
