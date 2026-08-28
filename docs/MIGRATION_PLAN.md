@@ -159,3 +159,5 @@ Validation criteria:
 ## Work explicitly deferred
 
 The following may be valuable but are not part of this migration: moving Visits to a subcollection, schema versioning, data backfills, multi-member redesign, transaction semantics, offline support, new features, visual redesign, geographic-data replacement, or changing Firebase security rules. Address these only after the module migration is stable and as separately scoped work.
+
+The previously deferred multi-member redesign is now planned separately in [MULTI_USER_DESIGN.md](MULTI_USER_DESIGN.md) and [MULTI_USER_MIGRATION_PLAN.md](MULTI_USER_MIGRATION_PLAN.md); it remains outside the scope of this Vite and ES module migration.
