@@ -70,6 +70,7 @@ Extend the existing anonymized baseline later to at least three Users and multip
 - Visit cases containing only `who`, only `participantIds`, both equal, and a deliberately mismatched pair for failure testing;
 - a removed Member still referenced by historical Trip and Visit participant arrays;
 - direct, share-link, expired, revoked, and already accepted invitations;
+- invitation preview snapshots without granting Space reads, plus exact invite-to-Membership linkage cases;
 - accepted, pending, removed, and blocked Friendships;
 - two Users with overlapping Friendship but no shared Space, and shared Membership without Friendship.
 
@@ -77,7 +78,7 @@ All identities and content must be invented. Preserve the current two-user basel
 
 ### Security implications
 
-Document an adversarial rules-test matrix before rules work begins. Include unauthenticated access, non-Member access, removed-Member access, participant-only access, Friend-only access, owner/member writes, self-acceptance, arbitrary-UID invite abuse, replay, expiration, concurrent acceptance, listing share-link invites, and cross-Space path substitution.
+Document an adversarial rules-test matrix before rules work begins. Include unauthenticated access, non-Member access, removed-Member access, participant-only access, Friend-only access, User-profile enumeration, owner/member writes, zero/multiple/mismatched owners, invite preview without Space access, self-acceptance, unrelated-invite substitution, arbitrary-UID invite abuse, replay, expiration, concurrent acceptance, listing share-link invites, and cross-Space path substitution.
 
 ### Rollback strategy
 
@@ -101,6 +102,7 @@ Add the identity and permission-shaped documents around current data without cha
 - Add a root metadata document at `spaces/us`.
 - Add `spaces/us/members/{uid}` for the two current Users.
 - Use only `owner` and `member` roles and `active`/`removed` status.
+- Require exactly one active owner Membership whose UID agrees with `Space.ownerId`.
 - Keep `spaces/us/meta/config`, including its `members` and `nicknames` compatibility fields, unchanged.
 - Keep all Places, embedded Visits, Trips, and legacy participant fields unchanged.
 
@@ -122,11 +124,11 @@ The migration must preflight the exact two UIDs, refuse ambiguous ownership, rep
 
 ### Local fixture changes
 
-Add root User, Space, and Membership documents around the unchanged baseline Space. Test repeat execution, partial completion, unexpected existing metadata, missing current member data, swapped role input, and snapshot fallback after a User profile becomes unavailable.
+Add root User, Space, and Membership documents around the unchanged baseline Space. Test repeat execution, partial completion, unexpected existing metadata, missing current member data, swapped role input, zero owners, multiple owners, `ownerId` mismatch, and snapshot fallback after a User profile becomes unavailable. Test that each User can access their own minimal profile without making `users/{uid}` globally readable or listable.
 
 ### Security implications
 
-Formal Membership documents are not yet the deployed permission source of truth. Existing access behavior remains in effect. New documents must not be mistaken for secured multi-Space support. Test the target rule predicates in the Emulator, but do not deploy or expose new private Spaces yet.
+Formal Membership documents are not yet the deployed permission source of truth. Existing access behavior remains in effect. New documents must not be mistaken for secured multi-Space support. Phase 1 must not expose `users/{uid}` as an authenticated public directory: initial profile access is self-read/self-update only, and Space displays use Membership snapshots. Test the target profile and Membership rule predicates in the Emulator, but do not deploy or expose new private Spaces yet.
 
 ### Rollback strategy
 
@@ -136,6 +138,8 @@ Because current code does not depend on the new root/User/Membership documents, 
 
 - `spaces/us/places`, `trips`, and `meta/config` are byte-for-byte/logically unchanged.
 - The two Memberships have reviewed roles, active status, and useful display snapshots.
+- `spaces/us` has exactly one active owner Membership, and its UID equals `Space.ownerId`; every zero/multiple/mismatch fixture fails verification.
+- Users can read/update their own minimal profile without listing or arbitrarily reading other profiles.
 - Existing desktop and mobile baseline behavior is unchanged.
 - Re-running the migration produces no duplicates or destructive updates.
 - A dry run and audit can prove that only the expected root/User/Membership paths are targeted.
@@ -152,7 +156,7 @@ No required production backfill. Introduce a domain `participantIds` interface t
 
 - Replace `partnerUid`, `otherOf`, and `me`/`partner`/`both` domain assumptions with arbitrary Member lookup and selection.
 - Participant filters list named Members rather than “me/partner/both”.
-- Participant pickers support N active Members on desktop and mobile.
+- Participant pickers support N active Members on desktop and mobile and never offer removed Members for new selections.
 - Historical display can resolve removed Members referenced by old records.
 - Marker/legend presentation must handle arbitrary combinations without assigning special meaning to exactly two people.
 - Normal UI never displays raw UIDs or Membership IDs.
@@ -163,7 +167,7 @@ None required. Reads remain compatible with `visit.who` and Place-level projecti
 
 ### Local fixture changes
 
-Exercise one-, two-, three-, and many-Member Spaces; unknown and removed participants; empty arrays; legacy `whoMode`; equal dual fields; and deliberate dual-field divergence. Lock filtering, marker color, display-name resolution, editor defaults, full-array serialization, and compatibility projection behavior with automated tests where possible.
+Exercise one-, two-, three-, and many-Member Spaces; unknown and removed historical participants; attempted new selection of removed Members; empty arrays; legacy `whoMode`; equal dual fields; and deliberate dual-field divergence. Lock filtering, marker color, display-name resolution, editor defaults, full-array serialization, and compatibility projection behavior with automated tests where possible.
 
 ### Security implications
 
@@ -242,19 +246,21 @@ Add arbitrary default participants to Trips and sensible Visit-creation behavior
 
 - Add an N-Member participant selector to the Trip editor.
 - Preselect Trip defaults when creating a Visit in that Trip.
+- Compute new-Visit defaults as `Trip.participantIds` intersected with active Membership UIDs.
 - Keep each Visit independently editable.
 - For the first non-Trip Visit, default to the authenticated User.
-- Later non-Trip Visits may reuse that Space's last participant choice.
+- Later non-Trip Visits may reuse that Space's last participant choice only after intersecting it with active Membership UIDs; if empty, fall back to the authenticated User when active.
 - Never default to all Members merely because they belong to the Space.
+- Never silently re-add a removed Member to a picker or new Visit.
 - Explain defaults through normal labels; do not imply they affect access.
 
 ### Data migration
 
-Do not infer and backfill Trip participants from every historical Visit automatically; different Visits may legitimately differ. Existing Trips without `participantIds` use an empty/default-on-create behavior until a User explicitly saves defaults. Existing Visits remain unchanged.
+Do not infer and backfill Trip participants from every historical Visit automatically; different Visits may legitimately differ. Existing Trips without `participantIds` use an empty/default-on-create behavior until a User explicitly saves defaults. A removed Member may remain stored in a Trip default or historical Visit; sanitize only the effective defaults for new data and do not mutate the Trip automatically. Existing Visits remain unchanged.
 
 ### Local fixture changes
 
-Cover Trips with no defaults, one default, several defaults, removed historical defaults, and Visits that override the Trip. Verify editing Trip defaults does not rewrite Visits and editing a Visit does not rewrite its Trip. Test daily defaults independently in two Spaces and with large Member lists.
+Cover Trips with no defaults, one default, several defaults, removed historical defaults, and Visits that override the Trip. Verify that new Visit defaults are the intersection with active Members, removal does not rewrite the Trip, and editing a Visit does not rewrite its Trip. Test remembered daily defaults independently in two Spaces, including partially removed IDs, all IDs removed with active-current-User fallback, an inactive current User, and large Member lists.
 
 ### Security implications
 
@@ -266,9 +272,11 @@ Ignore Trip `participantIds` and return to the pre-default creation behavior. Th
 
 ### Acceptance criteria
 
-- New Trip Visits begin with the Trip defaults and can diverge independently.
+- New Trip Visits begin with only the active-Member intersection of Trip defaults and can diverge independently.
 - Existing Visits are never rewritten when Trip defaults change.
-- Daily defaults begin with the authenticated User and never select all large-Space Members automatically.
+- Removing a Member does not rewrite Trip defaults or history, and no new picker/default silently re-adds that Member.
+- Remembered daily defaults are intersected with active Members; an empty result falls back to the authenticated User only when active.
+- Daily defaults never select all large-Space Members automatically.
 - Last selections are Space-scoped and do not leak across Spaces.
 - Desktop and mobile participant selection remains usable for N Members.
 
@@ -278,7 +286,7 @@ Implement direct and share-link invitations and a separate canonical Friendship 
 
 ### Schema changes
 
-- Add `spaceInvites/{inviteId}` with Space, creator, optional target, role, lifecycle, expiration, and acceptance fields.
+- Add `spaceInvites/{inviteId}` with Space, creator, optional target, role, lifecycle, expiration, acceptance fields, and minimal `spaceNameSnapshot`/`inviterDisplayNameSnapshot` preview data. Add `inviterPhotoURLSnapshot` only if the approved preview UX needs it.
 - Add one canonical `friendships/{stablePairId}` document per pair.
 - Do not add a username index until uniqueness/discovery has its own approved design.
 - Initial invitation role is `member`; ownership transfer is separate.
@@ -287,7 +295,7 @@ Implement direct and share-link invitations and a separate canonical Friendship 
 
 - Let an owner invite an existing Friend directly.
 - Let an owner create, revoke, and view expiration of a secure share link.
-- Let an authenticated invitee preview minimal safe invite context and accept or reject.
+- Let an authenticated invitee preview only the invite's minimal display snapshots without reading the Space, then accept or reject.
 - Clearly distinguish “Friend” from “Member of this map”.
 - Support pending/accepted/revoked/expired outcomes and understandable retry errors.
 - Removing a Friend must leave all Space and historical data untouched.
@@ -298,11 +306,11 @@ None for existing Spaces or history. Do not infer Friendships from shared Member
 
 ### Local fixture changes
 
-Test direct target mismatch, unauthenticated acceptance, unknown User, non-Friend acceptance, expired/revoked/accepted replay, concurrent share-link acceptance, arbitrary target UID attempts, role escalation, changed `spaceId`, removed/rejoined Membership, inviter losing owner status, invite enumeration attempts, and Friendship removal with shared history.
+Test direct target mismatch, unauthenticated acceptance, unknown User, non-Friend acceptance, expired/revoked/accepted replay, concurrent share-link acceptance, arbitrary target UID attempts, role escalation, changed `spaceId`, unrelated-invite substitution, missing/forged invite-to-Membership linkage, removed/rejoined Membership, inviter losing owner status, invite enumeration attempts, and Friendship removal with shared history. Verify an authenticated exact-link holder can read only minimal preview snapshots—not Space data, Member lists, Places, Trips, or settings—and that snapshot text cannot redirect acceptance away from canonical `invite.spaceId`.
 
 ### Security implications
 
-Accepting an invitation must atomically create/reactivate only the authenticated User's own Membership and consume the exact invite. Client-side validation alone is insufficient. Prove a Firestore transaction/rules design with `getAfter()` and adversarial Emulator tests, or move acceptance to a trusted backend/Cloud Function. Share-link invite listing must be denied. No invitation or Friendship grants Space reads before active Membership exists.
+Accepting an invitation must atomically create/reactivate only the authenticated User's own Membership and consume the exact invite. A rule cannot allow the write merely because some invite exists: it must verify the exact invite-to-canonical-Space-to-`request.auth.uid`-to-Membership relationship. A `sourceInviteId`/`acceptedViaInviteId`-style field may be one implementation, but another equally provable mechanism is acceptable. Rules must also prove target matching, non-escalated role, pending/unexpired state, and same-transaction consumption with replay prevention. Client-side validation alone is insufficient. Prove the full transaction/rules design with `getAfter()` or an equally strong mechanism and adversarial Emulator tests, or require a trusted backend/Cloud Function. Exact capability lookup may expose only minimal preview snapshots; invite listing and pre-acceptance Space reads remain denied.
 
 ### Rollback strategy
 
@@ -312,7 +320,9 @@ Disable invite creation and acceptance. Revoke still-pending invites through an 
 
 - Direct invites can be accepted only by `targetUid`.
 - A share link is unguessable, expires, cannot be listed, and cannot be replayed.
+- Exact invite lookup exposes only display snapshots and never grants Space or Member-list/content reads before acceptance.
 - Acceptance cannot add another UID, change role to owner, or redirect Spaces.
+- Rules prove that the exact consumed invite authorizes the exact canonical Space and exact authenticated Membership; unrelated-invite and linkage-substitution tests fail.
 - Concurrent acceptance has one defined, secure result.
 - Friends are easier to invite, but non-Friends can join securely.
 - Friend removal changes no Membership, Trip, or Visit data.
@@ -332,7 +342,7 @@ Handle permission loss and listener errors without showing stale content. If the
 
 ### Data migration
 
-Before rule deployment, audit that every production-accessible Space has exactly one valid active owner and the expected active Memberships. For `spaces/us`, verify the two reviewed Memberships and root metadata without touching its history. Do not deploy rules that strand current Users or rely on incomplete documents.
+Before rule deployment, audit that every production-accessible Space has exactly one active owner Membership, that its UID equals `Space.ownerId`, and that expected active Memberships exist. Zero owners, multiple owners, removed owners, and `ownerId`/role mismatch are invalid and must block migration. For `spaces/us`, verify the two reviewed Memberships and root metadata without touching its history. Do not deploy rules that strand current Users or rely on incomplete documents.
 
 ### Local fixture changes
 
@@ -341,9 +351,10 @@ Run the full adversarial rules matrix against the Emulator:
 - unauthenticated, unrelated, Friend-only, participant-only, removed, member, and owner identities;
 - reads/writes for Space root, Members, meta/settings, Places/embedded Visits, and Trips;
 - own collection-group discovery versus Membership enumeration;
-- owner/member permission differences;
+- own-profile read/update versus arbitrary User-profile reads and collection enumeration;
+- owner/member permission differences plus zero-owner, multiple-owner, removed-owner, and `ownerId` mismatch fail-closed behavior;
 - membership creation/removal/reactivation and ownership consistency;
-- invitation creation, listing, acceptance, expiration, replay, and path/UID/role substitution;
+- invitation exact preview lookup without Space access; listing denial; acceptance linkage; expiration; replay; and invite/Space/UID/Membership/role substitution;
 - Personal Space second-Member constraints;
 - simultaneous removal and in-flight writes/listeners.
 
@@ -352,11 +363,12 @@ Run the full adversarial rules matrix against the Emulator:
 Target policy:
 
 - Active owners and members can read the Space and edit normal Place/Visit/Trip data in v0.2.
-- Only the owner manages Membership, ownership-sensitive settings, and deletion.
+- Only the owner manages Membership, ownership-sensitive settings, and deletion, and owner-sensitive operations require agreement between `Space.ownerId` and exactly one active owner Membership.
 - Removed Members cannot read Space content.
 - Current Members can resolve retained removed-Member snapshots for history.
 - Friendship, participant status, and pending invites grant no access.
 - Invitation acceptance is the only narrow non-owner Membership write and is constrained to the authenticated invitee under the accepted design.
+- Users can read/update their own minimal profiles; other-profile discovery and accepted-Friend profile access remain denied until explicitly designed.
 
 Deploying rules and indexes is a production operation outside documentation and requires explicit approval, backups/config review, staged verification, and a rollback artifact containing the prior rules.
 
@@ -368,7 +380,10 @@ Retain the immediately previous known-good ruleset and deployment instructions. 
 
 - Emulator rules tests cover all target paths and adversarial identities.
 - No Friend-, Trip-, Visit-, invite-, or removed-Member-only identity can access Space content.
+- Exact invite preview reads reveal only approved snapshot fields, and every invite-to-Membership linkage/replay/substitution attack fails.
 - Owner/member differences are enforced by rules, not only UI.
+- Every owner-sensitive operation fails closed unless exactly one active owner Membership agrees with `Space.ownerId`.
+- User profiles are self-readable/self-updatable without making the collection enumerable or arbitrary profiles readable.
 - Current `spaces/us` Users retain expected access after staged verification.
 - Collection-group discovery returns only the authenticated User's active Memberships.
 - The previous ruleset and feature-disable procedure are ready before deployment.
@@ -450,4 +465,3 @@ Before any production write, the implementation task must supply a reviewed runb
 | Wishlist participant target model | Removal of Place-level participant compatibility in Phase 7 |
 | Personal-to-shared conversion semantics | Any conversion UI |
 | Long-term location of `meta/config` settings and nickname overrides | Any settings migration; not required for foundation |
-

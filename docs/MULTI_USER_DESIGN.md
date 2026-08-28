@@ -160,6 +160,14 @@ Participants
 
 The selected UIDs become the default for new Visits in that Trip. Existing Visits remain unchanged if Trip defaults are edited.
 
+Trip defaults may retain removed Members because they are historical/default configuration, but they are not copied blindly into new data. For a new Visit, the effective default is:
+
+```text
+Trip.participantIds intersect active Membership UIDs
+```
+
+Removing a Member does not automatically mutate the Trip. The new-Visit picker shows the sanitized effective default and must never silently re-add a removed Member.
+
 ### Daily Visit defaults
 
 For a Visit without a Trip:
@@ -168,7 +176,7 @@ For a Visit without a Trip:
 - Later Visit creation may reuse the last participant choice in that Space as a local convenience.
 - The default must never silently select every Member of a large Space.
 
-The last selection must be scoped by Space. A choice made in one Space must not become the default in another.
+The last selection must be scoped by Space. A choice made in one Space must not become the default in another. Before reuse, intersect remembered UIDs with the Space's active Membership UIDs. If that produces an empty set, fall back to the authenticated User when that User is still an active Member. Participant pickers for new data must never silently restore a removed Member.
 
 ### Removing a Member or Friend
 
@@ -209,6 +217,18 @@ The Membership document ID is the User's UID. This makes lookups deterministic a
 | `createdAt` | Server timestamp for profile creation. |
 | `username` | Optional future handle; do not add until uniqueness and discovery are designed. |
 
+### User profile read privacy
+
+The initial `users/{uid}` policy is private and non-enumerable:
+
+- An authenticated User may read and update only their own minimal profile.
+- Space member display should primarily resolve through Membership snapshots, not arbitrary reads of other User profiles.
+- The `users` collection must not become a globally readable or listable directory of authenticated people.
+- Arbitrary User discovery is deferred until username and friend discovery have an explicit privacy, enumeration, abuse, and rules design.
+- If accepted Friends later need current profile data, that access requires its own explicit field contract and security rules; Friendship must not implicitly make the entire profile readable.
+
+Phase 1 profile creation therefore establishes identity records without granting authenticated Users general access to `users/{otherUid}`.
+
 ### Space fields
 
 | Field | Meaning |
@@ -235,7 +255,9 @@ The root Space document provides identity and ownership metadata. Existing categ
 
 Membership is the permission source of truth. Do not add `Space.participantIds` as an access mechanism. Space metadata may denormalize counts for display later, but such projections cannot grant access.
 
-Removed Membership documents are retained. The snapshot fields ensure historical participant rendering survives removal or later loss of the global User profile. Participant pickers for new data show only active Members; historical views resolve both active and removed Memberships referenced by the record.
+Removed Membership documents are retained. The snapshot fields ensure historical participant rendering survives removal or later loss of the global User profile. Historical Trip and Visit data may continue referencing removed Members, and historical views resolve both active and removed Memberships referenced by the record.
+
+New data is stricter: participant pickers and automatic defaults may select only active Members. Any Trip or remembered daily default must be intersected with the current active Membership UIDs before it is offered for a new Visit. This read-time sanitization does not mutate the historical Trip or remembered source merely because a Member was removed.
 
 ### Place, Visit, and Trip fields
 
@@ -325,21 +347,28 @@ Suggested fields are:
 | `expiresAt` | Required expiration timestamp. |
 | `acceptedBy` | UID that accepted, once accepted. |
 | `acceptedAt` | Server timestamp for acceptance. |
+| `spaceNameSnapshot` | Minimal display-only Space name for invite preview. |
+| `inviterDisplayNameSnapshot` | Minimal display-only inviter name for invite preview. |
+| `inviterPhotoURLSnapshot` | Optional display-only avatar snapshot when the preview UX justifies it. |
 
-Invite IDs must be cryptographically unguessable and should appear in the link only as the capability needed to locate the invitation. Links must not contain the Space's data. Expiration must be enforced by security rules or trusted backend time checks, not merely hidden by the UI.
+Invite IDs must be cryptographically unguessable and should appear in the link only as the capability needed to locate the invitation. A pending invite does not allow a non-Member to read `spaces/{spaceId}`, so its minimal snapshots provide the invitation preview. Exact invite lookup may expose that preview to an authenticated holder of the valid invite capability, while listing or querying share-link invites remains prohibited.
+
+Snapshot fields are display-only. They must never be trusted for permission decisions or for routing beyond the canonical `invite.spaceId`, and stale snapshot text cannot change what Space is joined. Do not copy Member lists, Places, Trips, settings, or any other Space content into the invitation. Expiration must be enforced by security rules or trusted backend time checks, not merely hidden by the UI.
 
 ### Secure acceptance contract
 
 Acceptance must create or reactivate only `spaces/{spaceId}/members/{request.auth.uid}`. A client must never be able to use an invitation to add an arbitrary UID, change another Membership, claim owner, or redirect the invite to another Space.
 
+A Membership create/reactivation rule is not secure merely because some usable invite exists somewhere. A backend-free design needs a rule-verifiable linkage among the exact invite document, its exact canonical `spaceId`, `request.auth.uid`, and the exact Membership being created or reactivated. A field such as `sourceInviteId`/`acceptedViaInviteId` on the Membership or transaction data may be one way to expose that linkage to rules, but this design does not prescribe that field if a safer verifiable mechanism is found.
+
 The preferred backend-free candidate is one Firestore transaction or atomic batch that:
 
 1. Reads the pending invite by exact ID.
-2. Verifies authentication, expiration, Space, offered role, and `targetUid` when present.
-3. Creates or reactivates the authenticated User's own `member` Membership.
-4. Changes the same invite to `accepted` with `acceptedBy` equal to the authenticated UID and a server timestamp.
+2. Verifies that this exact invite authorizes its canonical `spaceId`, is pending and unexpired, and matches `targetUid` when present.
+3. Creates or reactivates the exact `spaces/{invite.spaceId}/members/{request.auth.uid}` document as `member`, with an explicit rule-verifiable link back to that invite or an equivalent provable transaction relationship.
+4. Changes the same invite to `accepted` in the same atomic operation, with `acceptedBy` equal to `request.auth.uid` and a server timestamp.
 
-Rules would need to validate the complete before/after state, including both writes with `getAfter()`, prohibit listing share-link invites, and make a consumed/revoked/expired invite unusable. All of these properties require adversarial Emulator tests, including concurrent double acceptance.
+Rules must be able to prove the exact invite-to-Membership linkage, Space equality, joining UID, non-escalated role, pending/unexpired state, and same-transaction invite consumption. They must validate the complete before/after state, including both writes with `getAfter()` or an equally strong mechanism, prohibit listing share-link invites, and make a consumed/revoked/expired invite unusable. All of these properties require adversarial Emulator tests, including unrelated-invite substitution and concurrent double acceptance.
 
 Whether the deployed Firestore rules can enforce the entire atomic contract without unacceptable disclosure or race conditions is an explicit implementation decision point. If the rules cannot reliably validate one-time acceptance and Membership reactivation, acceptance must move to a callable Cloud Function or other trusted backend. Public invitation launch is blocked until one approach is proven; this document does not pretend that client-side checks alone are secure.
 
@@ -376,8 +405,11 @@ Firestore rules are not changed by this documentation task. The eventual rules m
 - Invite acceptance is a narrow exception to owner-managed Membership writes and may affect only the authenticated invitee's own Membership under the validated invitation contract.
 - Space creation must establish a matching active owner Membership and cannot create an owner for another UID.
 - Personal Space constraints must prevent a second active Member unless an explicit future conversion/share operation changes the Space to `shared`.
+- An authenticated User may read/update their own minimal User profile, but may not enumerate or arbitrarily read other User profiles.
 
-`Space.ownerId` and the active owner Membership duplicate an ownership fact for efficient checks. Ownership transfer, if later supported, must update both atomically. Space deletion is ownership-sensitive and may require trusted backend cleanup because deleting a Firestore document does not delete its subcollections.
+`Space.ownerId` and the owner Membership deliberately duplicate an ownership fact for efficient validation; Membership remains the source of Space access. A valid Space has exactly one active Membership with `role: owner`, and its UID must equal `Space.ownerId`.
+
+For every owner-sensitive operation, both facts must agree. Zero active owners, multiple active owners, a removed owner, or an `ownerId`/Membership-role mismatch is an invalid state that must fail closed. Clients, rules, and migrations must not guess which side is authoritative. Ownership transfer, if later supported, must update both facts atomically. Space deletion is ownership-sensitive and may require trusted backend cleanup because deleting a Firestore document does not delete its subcollections.
 
 ## Personal Space rules
 
@@ -400,7 +432,7 @@ Future multi-country geographic features must operate on the active Space's Plac
 
 These choices must be resolved and emulator-tested before the corresponding implementation phase can launch:
 
-1. **Invitation execution:** prove the `getAfter()` transaction/rules design or use a trusted backend/Cloud Function.
+1. **Invitation execution and linkage:** prove a rule-verifiable exact invite/Space/authenticated-UID/Membership transaction with same-operation invite consumption, or use a trusted backend/Cloud Function.
 2. **Personal Space provisioning:** choose a retry-safe Space ID and decide whether a client batch is sufficiently enforceable or a trusted backend is required.
 3. **Ownership lifecycle:** define ownership transfer, owner departure, account deletion, and recovery while keeping `ownerId` and Membership role consistent.
 4. **Membership reactivation audit:** decide whether `joinedAt` remains the original join time and whether later `rejoinedAt`/event history is needed.
@@ -409,4 +441,3 @@ These choices must be resolved and emulator-tested before the corresponding impl
 7. **Space discovery indexes and pagination:** validate the collection-group query and exact deployed index definitions at realistic membership counts.
 8. **Participant cutover:** define the release/version gate that makes `participantIds` authoritative and permits `who` dual-writing to end.
 9. **Personal-to-shared conversion:** define naming, consent, and Membership changes before exposing the operation.
-
