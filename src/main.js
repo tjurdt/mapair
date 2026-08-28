@@ -10,6 +10,19 @@ import {
   resolveSpaceMembershipFoundation
 } from "./space-membership.js";
 import {
+  classifyParticipants,
+  deriveLegacyWhoMode,
+  detectParticipantMismatch,
+  formatParticipantSummary,
+  isUsableUid,
+  nextVisitParticipantFields,
+  orderParticipantSelection,
+  participantColorIndex,
+  resolvePlaceCompatParticipants,
+  resolveVisitParticipants,
+  sanitizeParticipantsForNewSelection
+} from "./participants.js";
+import {
   MAP_SURFACE_Z_INDEX,
   isVisitReorderAvailable,
   layoutViewState,
@@ -185,7 +198,6 @@ let selectedRegionMaskCache = { identity:"", maskIndex:null };
 let proximitySeedCount = 0, proximityRadiusTimer = null;
 const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
-const nameFor = uid => nicknames[uid] || members[uid] || (uid===(user&&user.uid) ? "我" : "對方");
 function catColor(c){ return catColors[c] || CAT_PALETTE[Math.max(0, spaceCats.indexOf(c)) % CAT_PALETTE.length]; }
 function textOn(hex){
   const h=(hex||"#888").replace("#",""); if(h.length<6) return "#152230";
@@ -256,28 +268,79 @@ const REGION_GEO = {
   countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
   townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
 };
-const partnerUid = () => Object.keys(members).find(u => u !== (user && user.uid)) || null;
-const otherOf = uid => Object.keys(members).find(u => u !== uid) || null;
-// 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.who 為準
-function whoUids(p){
-  const creator = p.createdBy, other = otherOf(creator);
-  if (p.whoMode === "both") return [creator, other].filter(Boolean);
-  if (p.whoMode === "me")   return [creator].filter(Boolean);
-  if (p.whoMode === "partner") return [other].filter(Boolean);
-  return (p.who && p.who.length) ? p.who : (creator ? [creator] : []);
+// Phase 2: participants are arbitrary Space Members. `who` (Visit + Place)
+// and Place `whoMode` remain as legacy serialization / compatibility fallbacks.
+// The legacy universe is `meta/config.members`; the legacy `whoMode` anchor is
+// always a record's own `createdBy`, never the current viewer.
+function legacyParticipantContext(){
+  return { legacyMemberIds: Object.keys(members || {}) };
 }
-function whoModeOf(p){
-  if (p.whoMode) return p.whoMode;
-  const w = p.who||[], creator = p.createdBy, other = otherOf(creator);
-  if (creator && w.includes(creator) && other && w.includes(other)) return "both";
-  if (other && w.includes(other) && !(creator && w.includes(creator))) return "partner";
-  return "me";
+function activeMemberIds(){ return activeSpaceMembers().map(m => m.userId); }
+function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
+// Active Members ordered for display: the authenticated User first, then the
+// rest by display name (Phase 2 §9).
+function orderedActiveMembers(){
+  const selfUid = user?.uid || "";
+  return activeSpaceMembers().slice().sort((a,b) => {
+    if (a.userId === selfUid) return -1;
+    if (b.userId === selfUid) return 1;
+    return String(a.displayName||"").localeCompare(String(b.displayName||""));
+  });
 }
-function legacyWhoModeForPlace(p,w){
-  const creator=p?.createdBy||user?.uid, other=otherOf(creator), arr=Array.isArray(w)?w:[];
-  if(creator&&arr.includes(creator)&&other&&arr.includes(other)) return "both";
-  if(other&&arr.includes(other)&&!arr.includes(creator)) return "partner";
-  return "me";
+function orderedActiveMemberIds(){ return orderedActiveMembers().map(m => m.userId); }
+// Human name for a participant UID. Never exposes a raw UID.
+//  - authenticated User      -> "真實名稱（我）" (or "我" when no name is known)
+//  - active Member           -> display name
+//  - known removed Member    -> "真實名稱（已離開）"
+//  - unknown historical UID  -> "未知成員"
+function participantName(uid){
+  const member = memberById(uid);
+  const isSelf = !!uid && !!user && uid === user.uid;
+  let name = "";
+  if (member && member.displayName && member.displayName !== "Member") name = member.displayName;
+  else if (isSelf) name = nicknames[uid] || members[uid] || "";
+  if (!name){
+    if (isSelf) return "我";
+    return member ? "成員" : "未知成員";
+  }
+  if (isSelf) return `${name}（我）`;
+  if (member && member.status === "removed") return `${name}（已離開）`;
+  return name;
+}
+function participantSummaryText(ids){
+  return formatParticipantSummary(ids, participantName, { empty:"未記錄" });
+}
+// 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.participantIds 為準
+function whoUids(p){ return resolvePlaceCompatParticipants(p, legacyParticipantContext()); }
+// New-Visit / new-record default: the authenticated User, but ONLY when that
+// User is an active valid Member. Fail closed otherwise (Phase 2 §3).
+function defaultParticipants(){
+  const uid = user?.uid || "";
+  return isActiveMember(uid) ? [uid] : [];
+}
+// Historical (removed / unknown) participant UIDs referenced by currently
+// loaded Place / Visit data. Recomputed on data or Membership change so the
+// filter and legend can resolve them without listing every removed Membership.
+let referencedHistoricalIds = [];
+function recomputeReferencedParticipants(){
+  const activeSet = new Set(activeMemberIds());
+  const seen = new Set();
+  const add = uid => { if (isUsableUid(uid) && !activeSet.has(uid)) seen.add(uid); };
+  for (const place of Object.values(places)){
+    whoUids(place).forEach(add);
+    placeVisits(place).forEach(v => visitWhoUids(place, v).forEach(add));
+  }
+  referencedHistoricalIds = [...seen];
+}
+// Valid participant-filter values: active Members + historical participants
+// still referenced by loaded data (Phase 2 §3, §8).
+function participantFilterCandidateIds(){
+  return [...orderedActiveMemberIds(), ...referencedHistoricalIds];
+}
+function sanitizeParticipantFilter(){
+  if (filter.who !== "all" && !participantFilterCandidateIds().includes(filter.who)){
+    filter.who = "all";
+  }
 }
 function newVisitId(){
   try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
@@ -286,17 +349,20 @@ function newVisitId(){
 function normalizedVisit(p,v,i=0){
   const fallbackCat=(p.categories||[])[0]||"";
   const kind=v?.kind || ((v?.endDate && v.endDate>v.date) ? "stay" : "visit");
-  const legacyWho=whoUids(p);
-  return {
+  const out={
     id:v?.id || `legacy_${i}`,
     kind,
     date:v?.date||"",
     endDate:v?.endDate||"",
     tripId:v?.tripId||"",
     category:v?.category || (v?.categories||[])[0] || fallbackCat,
-    who:(Array.isArray(v?.who) && v.who.length) ? [...v.who] : [...legacyWho],
     ...(Number.isFinite(Number(v?.order)) ? {order:Number(v.order)} : {})
   };
+  // Preserve the raw participant representation exactly; never synthesize or
+  // collapse it during normalization (APPROVED PHASE 2 CONTRACT §1, §8).
+  if (v && Object.hasOwn(v, "participantIds")) out.participantIds = Array.isArray(v.participantIds) ? [...v.participantIds] : v.participantIds;
+  if (v && Object.hasOwn(v, "who")) out.who = Array.isArray(v.who) ? [...v.who] : v.who;
+  return out;
 }
 // 一個 place 是共享地點；visits 是獨立造訪事件。舊資料會即時以相容格式讀取。
 function placeVisits(p){
@@ -305,26 +371,8 @@ function placeVisits(p){
   return [];
 }
 function visitCategory(p,v){ return v?.category || (p.categories||[])[0] || ""; }
-function visitWhoUids(p,v){ return (Array.isArray(v?.who) && v.who.length) ? v.who : whoUids(p); }
-function visitWhoMode(p,v){
-  const w=visitWhoUids(p,v), pu=partnerUid();
-  if(user && w.includes(user.uid) && pu && w.includes(pu)) return "both";
-  if(user && w.includes(user.uid)) return "me";
-  if(pu && w.includes(pu)) return "partner";
-  return w.length>1 ? "both" : "me";
-}
-function whoUidsFromMode(mode){
-  const pu=partnerUid();
-  if(mode==="both") return [user?.uid,pu].filter(Boolean);
-  if(mode==="partner") return pu?[pu]:[];
-  return user?.uid?[user.uid]:[];
-}
-function visitWhoText(p,v){
-  const mode=visitWhoMode(p,v), pu=partnerUid();
-  if(mode==="both") return "一起";
-  if(mode==="partner") return pu?nameFor(pu):"對方";
-  return user?nameFor(user.uid):"我";
-}
+function visitWhoUids(p,v){ return resolveVisitParticipants(v, p, legacyParticipantContext()).participantIds; }
+function visitWhoText(p,v){ return participantSummaryText(visitWhoUids(p,v)); }
 function latestVisit(p){
   return placeVisits(p).filter(v=>v.date).slice().sort((a,b)=>{
     const d=a.date.localeCompare(b.date); if(d) return d;
@@ -389,9 +437,7 @@ function passFilter(p){
     const hasVisitConstraint=filter.who!=="all" || filter.tripId!=="all" || !!filter.from || !!filter.to || !!filter.cats.size;
     return !hasVisitConstraint || vv.some(v=>visitPassFilter(p,v));
   }
-  if (filter.who !== "all"){
-    const w=whoUids(p); if (whoModeOf(p)!=="both" && !w.includes(filter.who)) return false;
-  }
+  if (filter.who !== "all" && !whoUids(p).includes(filter.who)) return false;
   if (filter.cats.size && !(p.categories||[]).some(c=>filter.cats.has(c))) return false;
   const tr=placeTrips(p);
   if (filter.tripId === "daily" && tr.length) return false;
@@ -953,8 +999,13 @@ function refreshFilterUI(){
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
   const who = document.getElementById("fl_who");
-  who.innerHTML = `<option value="all">兩人合併</option>` +
-    Object.keys(members).map(u=>`<option value="${u}">${esc(nameFor(u))}</option>`).join("");
+  // Active Members (self first, then by name) + only the historical participants
+  // that actually appear in loaded data (Phase 2 §8, §9). If the current
+  // selection is no longer a valid candidate, drop back to "all" (§3).
+  sanitizeParticipantFilter();
+  const whoUidsList = participantFilterCandidateIds();
+  who.innerHTML = `<option value="all">所有同行者</option>` +
+    whoUidsList.map(uid=>`<option value="${esc(uid)}">${esc(participantName(uid))}</option>`).join("");
   who.value = filter.who;
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
@@ -1056,6 +1107,9 @@ function subscribe(){
   currentSpaceUnsubscribes.set("places", onSnapshot(query(placesCol(), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
+    recomputeReferencedParticipants();
+    auditParticipantData();
+    refreshFilterUI();
     renderList(); renderMarkers();
     refreshMapSurfaces();
   }, error => handleFirestoreError("places", error)));
@@ -1098,6 +1152,8 @@ function resetSpaceFoundationReads(){
   ownershipValidation = null;
   memberDirectory = createMemberDirectory([]);
   lastLocalMembershipDiagnostic = "";
+  lastMembershipRenderSignature = "";
+  referencedHistoricalIds = [];
 }
 function unsubscribeCurrentSpaceListeners(){
   for (const unsubscribe of currentSpaceUnsubscribes.values()){
@@ -1121,6 +1177,7 @@ function handleOptionalFoundationReadError(area, readKey, error){
   }
   reconcileSpaceMembershipFoundation();
 }
+let lastMembershipRenderSignature = "";
 function reconcileSpaceMembershipFoundation(){
   if (!spaceFoundationReads.spaceReady || !spaceFoundationReads.membersReady || !spaceFoundationReads.metaReady) return;
   const foundation = resolveSpaceMembershipFoundation({
@@ -1139,6 +1196,30 @@ function reconcileSpaceMembershipFoundation(){
   ownershipValidation = foundation.ownership;
   memberDirectory = foundation.directory;
   reportSpaceMembershipDiagnostic(foundation);
+
+  // Phase 2 §4: participant-dependent UI depends on formal Membership data.
+  // Whenever the resolved directory / active / removed Members / names change,
+  // refresh that UI once — regardless of whether this listener arrived before
+  // or after meta/places/trips. A signature guard prevents render loops.
+  const signature = JSON.stringify({
+    source:foundation.membershipSource,
+    active:foundation.activeMembers.map(m=>`${m.userId}:${m.displayName}`),
+    removed:foundation.removedMembers.map(m=>`${m.userId}:${m.displayName}`),
+    current:foundation.currentMembership?.userId || null
+  });
+  if (signature !== lastMembershipRenderSignature){
+    lastMembershipRenderSignature = signature;
+    recomputeReferencedParticipants();
+    refreshParticipantDependentUI();
+  }
+}
+// Re-render the participant-dependent surfaces. Guarded so it is inert until the
+// app shell + map exist; creates no Firestore listeners or writes.
+function refreshParticipantDependentUI(){
+  if (!document.getElementById("app") || !document.getElementById("fl_trip")) return;
+  refreshFilterUI();
+  renderList();
+  renderMarkers();
 }
 function reportSpaceMembershipDiagnostic(foundation){
   const diagnostic = {
@@ -1166,6 +1247,30 @@ function reportSpaceMembershipDiagnostic(foundation){
     console.warn("The authenticated User has a removed formal Membership. Phase 1 records this as inaccessible but does not enforce authorization in the UI.");
   }
 }
+const loggedParticipantWarnings = new Set();
+// LOCAL TEST only: surface Visits whose `who` and `participantIds` disagree or
+// whose `participantIds` is malformed. Diagnostic only — nothing is normalized
+// or written (APPROVED PHASE 2 CONTRACT §2).
+function auditParticipantData(){
+  if (!isLocalTest()) return;
+  for (const p of Object.values(places)){
+    for (const v of (Array.isArray(p.visits) ? p.visits : [])){
+      const key = `${p.id}:${v?.id||""}`;
+      const mismatch = detectParticipantMismatch(v);
+      if (mismatch?.mismatch && !loggedParticipantWarnings.has(`mismatch:${key}`)){
+        loggedParticipantWarnings.add(`mismatch:${key}`);
+        console.warn("Mapair LOCAL TEST participant mismatch", { place:p.id, visit:v?.id, who:mismatch.who, participantIds:mismatch.participantIds });
+      }
+      const issues = resolveVisitParticipants(v, p, legacyParticipantContext()).issues;
+      for (const issue of issues){
+        const issueKey = `${issue.code}:${key}`;
+        if (loggedParticipantWarnings.has(issueKey)) continue;
+        loggedParticipantWarnings.add(issueKey);
+        console.warn("Mapair LOCAL TEST participant data issue", { place:p.id, visit:v?.id, ...issue });
+      }
+    }
+  }
+}
 const spaceDoc   = () => doc(db, "spaces", currentSpaceId);
 const membersCol = () => collection(db, "spaces", currentSpaceId, "members");
 const memberDoc  = uid => doc(db, "spaces", currentSpaceId, "members", uid);
@@ -1176,18 +1281,21 @@ const tripsCol   = () => collection(db, "spaces", currentSpaceId, "trips");
 const tripDoc    = id => doc(db, "spaces", currentSpaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
-function whoColor(p){
-  const m = whoModeOf(p);
-  if (m === "both") return "#b25b6b";
-  if (m === "partner") return "#d98b3f";
-  return "#3f7d78";
+// Participant marker colouring for arbitrary Member sets: each UID maps to a
+// stable palette colour by deterministic hash (independent of Member count or
+// order); any multi-person Visit shares one "group" colour; exactly two people
+// carries no special meaning (Phase 2 §7).
+const PARTICIPANT_GROUP_COLOR = "#b25b6b";
+const PARTICIPANT_NONE_COLOR = "#9aa5ad";
+function participantColor(uid){ return CAT_PALETTE[participantColorIndex(uid, CAT_PALETTE.length)]; }
+function participantsColor(ids){
+  const c = classifyParticipants(ids);
+  if (c.kind === "none") return PARTICIPANT_NONE_COLOR;
+  if (c.kind === "group") return PARTICIPANT_GROUP_COLOR;
+  return participantColor(c.ids[0]);
 }
-function visitWhoColor(p,v){
-  const m=visitWhoMode(p,v);
-  if(m==="both") return "#b25b6b";
-  if(m==="partner") return "#d98b3f";
-  return "#3f7d78";
-}
+function whoColor(p){ return participantsColor(whoUids(p)); }
+function visitWhoColor(p,v){ return participantsColor(visitWhoUids(p,v)); }
 function ratingColor(r){ return lerpHex("#e9d8c0","#8f4f18",(Math.max(1,Math.min(5,r))-1)/4); }
 const VISIT_DATE_RAINBOW=["#d94b4b","#e98a32","#e0bd34","#4a9f63","#3f78b5","#7756b3"];
 function dayDiff(a,b){ return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); }
@@ -1339,7 +1447,11 @@ function markerLegendBody(){
   }
   let rows=[];
   if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
-  else if (markerMode === "who") rows = [["#3f7d78", nameFor(user.uid)], ["#d98b3f", partnerUid()?nameFor(partnerUid()):"對方"], ["#b25b6b","一起"]];
+  else if (markerMode === "who"){
+    const uids=[...orderedActiveMemberIds(), ...referencedHistoricalIds];
+    rows = uids.map(uid=>[participantColor(uid), participantName(uid)]);
+    if (uids.length>=2) rows.push([PARTICIPANT_GROUP_COLOR,"多人同行"]);
+  }
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.map(c=>[catColor(c), c]);
   else if (markerMode === "trip") rows = Object.values(trips).map(t=>[t.color||"#3f7d78", (t.emoji?t.emoji+" ":"")+t.name]);
@@ -1870,7 +1982,7 @@ function movePlace(id, dir){
 }
 function cardHTML(p){
   const cat=(p.categories||[])[0], col=cat?catColor(cat):"#9aa5ad";
-  const mode=whoModeOf(p), whoTxt=mode==="both"?"一起":mode==="partner"?nameFor(otherOf(p.createdBy)):nameFor(p.createdBy||user.uid);
+  const whoTxt=participantSummaryText(whoUids(p));
   const tags=[
     cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
@@ -1949,7 +2061,7 @@ async function moveVisitOccurrence(key,date,action){
   const byPlace=new Map();
   reordered.forEach((o,pos)=>{
     const p=o.p;
-    if(!byPlace.has(p.id)) byPlace.set(p.id,placeVisits(p).map(v=>({...v})));
+    if(!byPlace.has(p.id)) byPlace.set(p.id,placeVisits(p).map(v=>persistableVisit(p,v)));
     const vv=byPlace.get(p.id); if(vv[o.visitIndex]) vv[o.visitIndex].order=pos+1;
   });
   [...byPlace.entries()].forEach(([id,vv])=>{ if(places[id]) places[id].visits=vv; });
@@ -1957,15 +2069,32 @@ async function moveVisitOccurrence(key,date,action){
   await Promise.all([...byPlace.entries()].map(([id,vv])=>updateDoc(placeDoc(id),{visits:vv,...visitLegacyFields(vv,places[id])})));
 }
 
+// Serialize a normalized Visit for a whole-array rewrite without disturbing its
+// raw participant representation (APPROVED PHASE 2 CONTRACT §8). A Visit that
+// carried neither field keeps today's behaviour of materialising `who`.
+function persistableVisit(p,v){
+  const fields=nextVisitParticipantFields({ raw:v, edited:false, resolvedIds:visitWhoUids(p,v) });
+  const out={ ...v };
+  delete out.participantIds; delete out.who;
+  if (Object.hasOwn(fields,"participantIds")) out.participantIds=fields.participantIds;
+  if (Object.hasOwn(fields,"who")) out.who=fields.who;
+  return out;
+}
 function visitLegacyFields(vv,p=null){
   const base=p||{}, clean=vv.filter(v=>v.date).map((v,i)=>normalizedVisit(base,v,i));
   const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-  const who=latest?.who?.length?[...latest.who]:whoUids(base);
-  return { visitedOn:latest?latest.date:"", tripId:latest?.tripId||"", categories:latest?.category?[latest.category]:(base.categories||[]), who, whoMode:legacyWhoModeForPlace(base,who) };
+  const who=latest ? visitWhoUids(base,latest) : whoUids(base);
+  return {
+    visitedOn:latest?latest.date:"",
+    tripId:latest?.tripId||"",
+    categories:latest?.category?[latest.category]:(base.categories||[]),
+    who,
+    whoMode:deriveLegacyWhoMode(who, { ...legacyParticipantContext(), createdBy:base.createdBy })
+  };
 }
 async function deleteVisitOccurrence(key){
   const [pid,idxRaw]=key.split(":"),p=places[pid],idx=+idxRaw; if(!p) return;
-  const vv=placeVisits(p).map(v=>({...v})); if(idx<0||idx>=vv.length) return;
+  const vv=placeVisits(p).map(v=>persistableVisit(p,v)); if(idx<0||idx>=vv.length) return;
   vv.splice(idx,1);
   if(!vv.length){
     await updateDoc(placeDoc(pid),{visits:[],status:"wishlist",visitedOn:"",tripId:""});
@@ -2112,26 +2241,107 @@ function openEditor(id, seed, opts={}){
   let wishlistCats = new Set((p.categories||[]).slice(0,1));
   let status = p.status || "visited";
   let level = shared.level;
-  const pu = partnerUid();
-  let whoSel = id ? whoModeOf(p) : (pu ? "both" : "me");
+  // Legacy whoMode anchor: a NEW Place is genuinely created by the current
+  // User; an EXISTING Place uses only its explicit stored `createdBy` and never
+  // substitutes the viewer, so an old Place resolves/serializes the same for
+  // everyone (Phase 2 §2). deriveLegacyWhoMode stays fail-closed when empty.
+  const partCtx = {
+    ...legacyParticipantContext(),
+    createdBy: isUsableUid(p.createdBy) ? p.createdBy : (id ? "" : (user?.uid || ""))
+  };
+  const activeMembersList = orderedActiveMembers();
+  const activeIds = activeMembersList.map(m=>m.userId);
+  const activeIdSet = new Set(activeIds);
   const filterTrip = specificTripId();
   const defaultDate = defaultDateForNewVisit();
-  const defaultWho = () => whoUidsFromMode(pu?"both":"me");
-  let visits = placeVisits(p).map((v,i)=>({ ...normalizedVisit(p,v,i), id:(v.id&& !String(v.id).startsWith("legacy_"))?v.id:newVisitId() }));
+  // Every NEW-Visit participant seed is intersected with active valid
+  // Memberships — a removed Member is never copied into new data merely because
+  // a previous Visit had them (CONTRACT §3). A new/explicitly-edited Visit
+  // writes `participantIds` and `who` identically.
+  const newWorkingVisit = (base, selected) => ({
+    ...base,
+    _raw:{},
+    _selected:orderParticipantSelection(sanitizeParticipantsForNewSelection(selected, activeIds), activeIds),
+    _participantsEdited:true,
+    _mismatch:null
+  });
+  const loadWorkingVisit = (rawVisit, i) => {
+    const norm = normalizedVisit(p, rawVisit, i);
+    const id = (norm.id && !String(norm.id).startsWith("legacy_")) ? norm.id : newVisitId();
+    const resolved = resolveVisitParticipants(norm, p, partCtx).participantIds;
+    return {
+      ...norm,
+      id,
+      _raw:{
+        ...(Object.hasOwn(norm,"participantIds") ? { participantIds:norm.participantIds } : {}),
+        ...(Object.hasOwn(norm,"who") ? { who:norm.who } : {})
+      },
+      // Active Members + retained historical participants. Historical entries
+      // stay until the user explicitly removes them (one-way, §1).
+      _selected:orderParticipantSelection(resolved, activeIds),
+      _participantsEdited:false,
+      _mismatch:detectParticipantMismatch(norm)
+    };
+  };
+  let visits = placeVisits(p).map(loadWorkingVisit);
   let focusIndex = Number.isFinite(Number(opts.focusVisitIndex)) ? Number(opts.focusVisitIndex) : -1;
   if (!id && status==="visited" && !visits.length){
     const presetCat=filter.cats.size===1?[...filter.cats][0]:"";
-    visits.push({id:newVisitId(),kind:"visit",date:defaultDate,endDate:"",tripId:filterTrip||"",category:presetCat,who:defaultWho()}); focusIndex=0;
+    visits.push(newWorkingVisit({id:newVisitId(),kind:"visit",date:defaultDate,endDate:"",tripId:filterTrip||"",category:presetCat}, defaultParticipants())); focusIndex=0;
   }
   if (id && opts.addVisit){
     status="visited";
     const prev=latestVisit(p), cat=prev?visitCategory(p,prev):((p.categories||[])[0]||"");
+    const prevSeed=prev?visitWhoUids(p,prev):[];
     const k=level==="住宿"?"stay":"visit";
-    visits.push({id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat,who:prev?.who?.length?[...prev.who]:defaultWho()});
+    visits.push(newWorkingVisit({id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat}, prevSeed.length?prevSeed:defaultParticipants()));
     focusIndex=visits.length-1;
   }
+  // Wishlist Place-level participants (CONTRACT §1C: `who` + legacy `whoMode`).
+  // Historical participants here are also one-way removable (§1).
+  let wishlistParticipants = orderParticipantSelection(
+    id ? resolvePlaceCompatParticipants(p, partCtx) : defaultParticipants(),
+    activeIds
+  );
 
   const visitedHasHistory = () => visits.some(v=>v.date);
+  // Arbitrary-Member participant picker. Active Members are toggle chips.
+  // Historical (removed / unknown) participants already on the record render as
+  // a chip with an explicit "×": they are preserved until removed, the removal
+  // is one-way, and they are never offered as a re-addable candidate (§1, §2).
+  function participantPickHTML(selectedIds, opts={}){
+    const sel=[...new Set(selectedIds||[])];
+    const selSet=new Set(sel);
+    const attr=`${opts.id?` id="${opts.id}"`:""} class="pick partpick${opts.cls?` ${opts.cls}`:""}"`;
+    const historical=sel.filter(uid=>!activeIdSet.has(uid));
+    if(!activeMembersList.length && !historical.length){
+      return `<div${attr}><span style="font-size:12px;color:var(--ink-soft)">尚無可選成員</span></div>`;
+    }
+    const active=activeMembersList.map(m=>
+      `<span class="chip ${selSet.has(m.userId)?'on':''}" data-uid="${esc(m.userId)}" role="button" tabindex="0">${esc(participantName(m.userId))}</span>`
+    ).join("");
+    const removed=historical.map(uid=>
+      `<span class="chip histchip" title="歷史參與者：可移除，但無法重新加入">${esc(participantName(uid))} <b class="histx" data-hist-uid="${esc(uid)}" role="button" tabindex="0" aria-label="移除">×</b></span>`
+    ).join("");
+    return `<div${attr}>${active}${removed}</div>`;
+  }
+  function wireParticipantPick(container, getSelected, setSelected){
+    if(!container) return;
+    const commit = next => setSelected(orderParticipantSelection(next, activeIds));
+    container.querySelectorAll(".chip[data-uid]").forEach(chip=>{
+      const toggle=()=>{
+        const uid=chip.dataset.uid, cur=getSelected();
+        commit(cur.includes(uid) ? cur.filter(x=>x!==uid) : [...cur, uid]);
+      };
+      chip.onclick=toggle;
+      chip.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } };
+    });
+    container.querySelectorAll(".histx[data-hist-uid]").forEach(x=>{
+      const remove=e=>{ e.stopPropagation(); commit(getSelected().filter(y=>y!==x.dataset.histUid)); };
+      x.onclick=remove;
+      x.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); remove(e); } };
+    });
+  }
   modal(`
     <h2 style="margin-bottom:3px">${esc(p.name||"新地點")}</h2>
     <div class="admin" style="margin-bottom:10px">改動會自動儲存${opts.addVisit?" · 本次已帶入上一次的設定，可直接修改":""}</div>
@@ -2151,11 +2361,7 @@ function openEditor(id, seed, opts={}){
         <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${wishlistCats.has(c)?'on':''}" data-c="${esc(c)}" style="${wishlistCats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
       </div>
       <div class="field" id="f_wishwho" style="margin-bottom:0"><label>預計誰去</label>
-        <div class="seg" id="f_who">
-          <button data-w="me" class="${whoSel==='me'?'on-v':''}">我</button>
-          ${pu?`<button data-w="partner" class="${whoSel==='partner'?'on-v':''}">${esc(nameFor(pu))}</button>`:""}
-          ${pu?`<button data-w="both" class="${whoSel==='both'?'on-v':''}">一起</button>`:""}
-        </div>
+        ${participantPickHTML(wishlistParticipants, {id:"f_who"})}
       </div>
     </div>
 
@@ -2185,19 +2391,32 @@ function openEditor(id, seed, opts={}){
   function collect(){
     const clean=visits.filter(v=>v.date).map(v=>{
       const kind=v.kind==="stay"?"stay":"visit";
-      const out={id:v.id||newVisitId(),kind,date:v.date,tripId:v.tripId||"",category:v.category||"",who:(Array.isArray(v.who)&&v.who.length)?[...v.who]:defaultWho()};
+      const out={id:v.id||newVisitId(),kind,date:v.date,tripId:v.tripId||"",category:v.category||""};
       if(kind==="stay") out.endDate=(v.endDate&&v.endDate>v.date)?v.endDate:addDays(v.date,1);
       else out.endDate="";
       if(Number.isFinite(Number(v.order))) out.order=Number(v.order);
+      // Preserve the raw participant representation for untouched Visits; write
+      // both fields identically only on an explicit participant edit / new Visit
+      // (APPROVED PHASE 2 CONTRACT §3, §8).
+      const parts=nextVisitParticipantFields({
+        raw:v._raw||{},
+        edited:!!v._participantsEdited,
+        selectedIds:v._selected||[],
+        resolvedIds:v._selected||[]
+      });
+      if(Object.hasOwn(parts,"participantIds")) out.participantIds=parts.participantIds;
+      if(Object.hasOwn(parts,"who")) out.who=parts.who;
       return out;
     });
     const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-    const summaryWho=status==="visited"?(latest?.who||defaultWho()):whoUidsFromMode(whoSel);
+    const summaryWho=status==="visited"
+      ? (latest ? resolveVisitParticipants(latest, p, partCtx).participantIds : defaultParticipants())
+      : [...wishlistParticipants];
     const rv=parseFloat(document.getElementById("f_rating").value);
     const latestCat=latest?.category||"";
     return {
       name:nameEl.value.trim(),lat:p.lat,lng:p.lng,source:p.source||"google",extId:p.extId||null,admin:p.admin||{},
-      status, categories:status==="visited"?(latestCat?[latestCat]:[]):[...wishlistCats], level, whoMode:legacyWhoModeForPlace(p,summaryWho), who:summaryWho,
+      status, categories:status==="visited"?(latestCat?[latestCat]:[]):[...wishlistCats], level, whoMode:deriveLegacyWhoMode(summaryWho, partCtx), who:summaryWho,
       visits:status==="visited"?clean:[], visitedOn:status==="visited"?(latest?.date||""):"", tripId:status==="visited"?(latest?.tripId||""):"",
       rating:rv>0?rv:null, review:document.getElementById("f_review").value.trim()
     };
@@ -2221,17 +2440,13 @@ function openEditor(id, seed, opts={}){
   function tripOptions(selected){
     return `<option value="">日常</option>`+Object.values(trips).map(t=>`<option value="${t.id}" ${selected===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')+`<option value="__new__">＋新增旅程…</option>`;
   }
-  function whoOptions(v){
-    const m=visitWhoMode(p,v);
-    return `<option value="me" ${m==='me'?'selected':''}>我</option>`+
-      (pu?`<option value="partner" ${m==='partner'?'selected':''}>${esc(nameFor(pu))}</option><option value="both" ${m==='both'?'selected':''}>一起</option>`:"");
-  }
   function renderVisits(){
     const box=document.getElementById("f_visits"); if(!box) return;
     if(!visits.length){ box.innerHTML=`<div style="font-size:12px;color:var(--ink-soft);padding:4px 2px 8px">尚無造訪紀錄。</div>`; return; }
     box.innerHTML=visits.map((v,i)=>{
       const stay=visitKind(v)==="stay", co=stay?(v.endDate&&v.endDate>v.date?v.endDate:addDays(v.date,1)):"";
       const nights=stay?Math.max(1,dayDiff(v.date||co,co)):0;
+      const conflict=v._mismatch?.mismatch && !v._participantsEdited;
       return `<div class="visitrow ${i===focusIndex?'focus':''}" data-i="${i}">
         ${i===focusIndex?`<span class="visitbadge">本次</span>`:""}
         <div class="visitmain ${stay?'stay':''}">
@@ -2243,12 +2458,21 @@ function openEditor(id, seed, opts={}){
         <div class="visitextra">
           <label class="visitmini"><span>做什麼</span><select class="v_cat">${catOptions(v.category||'')}</select></label>
           <label class="visitmini"><span>旅程</span><select class="v_trip">${tripOptions(v.tripId||'')}</select></label>
-          <label class="visitmini"><span>同行</span><select class="v_who">${whoOptions(v)}</select></label>
+        </div>
+        <div class="visitparts">
+          <span>同行</span>
+          ${participantPickHTML(v._selected||[], {cls:"v_who"})}
+          ${conflict?`<div class="visitwarn">同行者資料需確認（who 與 participantIds 不一致，顯示以 participantIds 為準；重新選擇即可更新）</div>`:""}
         </div>
       </div>`;
     }).join("");
     box.querySelectorAll(".visitrow").forEach(row=>{
-      const i=+row.dataset.i, d=row.querySelector(".v_date"), cat=row.querySelector(".v_cat"), trip=row.querySelector(".v_trip"), who=row.querySelector(".v_who"), end=row.querySelector(".v_end");
+      const i=+row.dataset.i, d=row.querySelector(".v_date"), cat=row.querySelector(".v_cat"), trip=row.querySelector(".v_trip"), end=row.querySelector(".v_end");
+      wireParticipantPick(
+        row.querySelector(".v_who"),
+        ()=>visits[i]._selected||[],
+        next=>{ visits[i]._selected=next; visits[i]._participantsEdited=true; focusIndex=i; renderVisits(); persist(); }
+      );
       d.onchange=()=>{
         visits[i].date=d.value;
         if(visitKind(visits[i])==="stay" && (!visits[i].endDate||visits[i].endDate<=d.value)) visits[i].endDate=addDays(d.value,1);
@@ -2270,7 +2494,6 @@ function openEditor(id, seed, opts={}){
         }
         visits[i].tripId=trip.value; focusIndex=i; persist();
       };
-      who.onchange=()=>{ visits[i].who=whoUidsFromMode(who.value); focusIndex=i; persist(); };
       if(end) end.onchange=()=>{
         visits[i].kind="stay";
         visits[i].endDate=end.value&&end.value>visits[i].date?end.value:addDays(visits[i].date,1); focusIndex=i; renderVisits(); persist();
@@ -2288,7 +2511,11 @@ function openEditor(id, seed, opts={}){
   function addVisit(){
     const prev=visits.filter(v=>v.date).slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
     const d=defaultDateForNewVisit(), k=level==="住宿"?"stay":"visit";
-    visits.push({id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:prev?.category||latestVisitCategory(p)||"",who:prev?.who?.length?[...prev.who]:defaultWho()});
+    const seedParticipants=prev?sanitizeParticipantsForNewSelection(prev._selected||[], activeIds):[];
+    visits.push(newWorkingVisit(
+      {id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:prev?.category||latestVisitCategory(p)||""},
+      seedParticipants.length?seedParticipants:defaultParticipants()
+    ));
     status="visited"; focusIndex=visits.length-1; visitWrap.style.display="block"; wishSection.style.display="none"; renderVisits(); persist();
   }
 
@@ -2301,7 +2528,11 @@ function openEditor(id, seed, opts={}){
     visitWrap.style.display=status==="wishlist"?"none":"block"; wishSection.style.display=status==="wishlist"?"block":"none";
     if(status==="visited"&&!visits.length){
       const d=defaultDateForNewVisit(),k=level==="住宿"?"stay":"visit";
-      visits.push({id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:[...wishlistCats][0]||"",who:whoUidsFromMode(whoSel)}); focusIndex=0; renderVisits();
+      const seed=sanitizeParticipantsForNewSelection(wishlistParticipants, activeIds);
+      visits.push(newWorkingVisit(
+        {id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:[...wishlistCats][0]||""},
+        seed.length?seed:defaultParticipants()
+      )); focusIndex=0; renderVisits();
     }
     persist();
   });
@@ -2322,13 +2553,23 @@ function openEditor(id, seed, opts={}){
     level=b.dataset.l;
     document.querySelectorAll("#f_level button").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";}); b.classList.add("on");b.style.background=levelColors[level];b.style.color="#fff";
     if(level==="住宿" && status==="visited"){
-      if(!visits.length){ const d=defaultDateForNewVisit(); visits.push({id:newVisitId(),kind:"stay",date:d,endDate:addDays(d,1),tripId:filterTrip||"",category:"",who:defaultWho()}); focusIndex=0; }
+      if(!visits.length){ const d=defaultDateForNewVisit(); visits.push(newWorkingVisit({id:newVisitId(),kind:"stay",date:d,endDate:addDays(d,1),tripId:filterTrip||"",category:""}, defaultParticipants())); focusIndex=0; }
       const i=focusIndex>=0?focusIndex:visits.length-1;
       if(visits[i]){ visits[i].kind="stay"; visits[i].endDate=(visits[i].endDate&&visits[i].endDate>visits[i].date)?visits[i].endDate:addDays(visits[i].date||defaultDateForNewVisit(),1); if(!visits[i].category&&spaceCats.includes("住宿"))visits[i].category="住宿"; focusIndex=i; renderVisits(); }
     }
     persist();
   });
-  document.querySelectorAll("#f_who button").forEach(b=>b.onclick=()=>{whoSel=b.dataset.w;document.querySelectorAll("#f_who button").forEach(x=>x.className="");b.className="on-v";persist();});
+  function renderWishlistParticipants(){
+    const host=document.getElementById("f_who");
+    if(!host) return;
+    host.outerHTML=participantPickHTML(wishlistParticipants, {id:"f_who"});
+    wireParticipantPick(
+      document.getElementById("f_who"),
+      ()=>wishlistParticipants,
+      next=>{ wishlistParticipants=next; renderWishlistParticipants(); persist(); }
+    );
+  }
+  renderWishlistParticipants();
   nameEl.addEventListener("change",persist); nameEl.addEventListener("blur",persist);
   const rEl=document.getElementById("f_rating"),rVal=document.getElementById("f_ratingval");
   rEl.oninput=()=>{const v=parseFloat(rEl.value);rVal.textContent=v>0?("★ "+v):"未評分";}; rEl.addEventListener("change",persist);

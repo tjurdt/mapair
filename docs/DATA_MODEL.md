@@ -14,7 +14,9 @@ spaces/{spaceId}/meta/config
 
 The application adds Firestore document IDs as in-memory `id` fields after reading documents.
 
-The active application Space remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production and `test-space-baseline` in LOCAL TEST). There is no Space discovery, switching, or local active-Space preference yet.
+The active application Space remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production and `test-space-baseline` in LOCAL TEST). There is no production Space discovery, switching, or local active-Space preference yet.
+
+LOCAL TEST additionally accepts a strict development/test harness parameter, `?firebaseEnv=local&testSpace=group`, which selects `test-space-group` from a fixed two-entry allowlist (`baseline` → `test-space-baseline`, `group` → `test-space-group`). It is localhost-only, rejects unknown or duplicate values, fails closed in production, and never accepts an arbitrary Firestore Space ID. It is not a Space switcher.
 
 ## Optional Phase 1 Space and Membership documents
 
@@ -85,10 +87,61 @@ A Visit is one dated occurrence at a Place. Multiple Visits can refer to the sam
 | `endDate` | Checkout date for a stay; empty for an ordinary Visit. |
 | `tripId` | Referenced Trip document ID, or an empty string for daily life. |
 | `category` | One category/purpose for this occurrence. |
-| `who` | Array of participant UIDs. |
+| `participantIds` | Array of participant UIDs. The modern authoritative participant field (Phase 2). |
+| `who` | Array of participant UIDs. Legacy participant field, still written as a mirror for mixed-client compatibility. |
 | `order` | Optional numeric ordering among ordinary Visits on the same day. |
 
 Category, Trip, and participants are canonical at Visit level for visited history. Rating, review, depth, identity, and coordinates remain canonical at Place level.
+
+### Visit participant resolution (Phase 2)
+
+Participants are arbitrary active or removed Space Members, not a fixed
+`me` / `partner` / `both` model. The domain resolves a Visit's participants in
+this precedence:
+
+1. If the Visit has its own `participantIds` and it is a valid UID array, that
+   is authoritative. An explicit empty array (`participantIds: []`) is honoured
+   and does not fall through.
+2. Otherwise, if the Visit has a usable legacy `who` array, use it.
+3. Otherwise, use the Place-level compatibility fallback. There, a usable
+   (non-empty) Place `who` array wins as the full arbitrary UID list; `whoMode`
+   is interpreted only when there is no usable `who`, and only for a genuine
+   two-person legacy universe whose anchor is the record's own `createdBy` (one
+   of the two — never the current viewer, so an old record resolves and
+   serializes the same for everyone). An explicit empty Place `who` with no
+   meaningful `whoMode` (e.g. a Wishlist selection cleared to nobody) resolves
+   to `[]` and is not silently repopulated with the creator on reload. Only a
+   record with no participant data at all falls back to its own `createdBy`.
+
+Malformed `participantIds` produces a structured diagnostic, never a crash, and
+falls back to compatibility without being silently normalized.
+
+When a Visit carries both `participantIds` and `who` and they disagree, the
+disagreement is a detectable, reported condition (`同行者資料需確認` in the
+editor; a `console.warn` in LOCAL TEST). Domain, display, and filtering use
+`participantIds`. Unrelated edits (date, category, Trip, rating, review) must
+preserve both original arrays verbatim; only an explicit participant selection
+reconciles them, writing `participantIds` and `who` identically. A new Visit
+writes both fields identically from creation. Historical Visits are never bulk
+migrated.
+
+### Historical (removed / unknown) participants
+
+A participant UID on an existing record that is not an active Member is a
+*historical* participant. It stays on the record through unrelated edits, and is
+never offered as an unchecked candidate that could be re-added. The user may
+explicitly remove it; that removal is **one-way** and counts as a participant
+edit (it reconciles `participantIds` and `who` to the remaining selection). New
+data never gains a historical UID: every new-Visit participant seed is
+intersected with active valid Memberships first.
+
+The UI distinguishes a **known removed Member** (`真實名稱（已離開）`, resolved
+from the retained Membership snapshot) from an **unknown historical UID**
+(`未知成員`). A raw UID is never displayed. The authenticated User shows as
+`真實名稱（我）` where a name is known.
+
+The pure resolution, mismatch, sanitisation, ordering, serialization,
+deterministic colour, and legacy `whoMode` helpers live in `src/participants.js`.
 
 ## Stay semantics
 
@@ -131,17 +184,26 @@ Trips do not own Places or Visit arrays. Membership is determined by `visit.trip
 
 ## Visitor and companion logic
 
-The shared meta document contains a `members` object keyed by UID. The current UI assumes the authenticated user and at most one other member. `nicknames` can override member display names.
+The shared meta document contains a `members` object keyed by UID; `nicknames`
+can override member display names. Phase 2 removed the two-person assumption
+from the domain and UI: participant filters, pickers, marker colouring, legend,
+and name resolution all operate on arbitrary active Space Members resolved
+through the Membership foundation (`src/space-membership.js`), and removed
+Members are still resolved for historical display. There is no `partnerUid()` /
+`otherOf()` / `me` / `partner` / `both` logic in the domain any more.
 
-For current Visits, `visit.who` is authoritative when it is a non-empty array. UI modes are derived relative to the authenticated user:
+Participant pickers and automatic defaults offer only active Members. A
+historical (removed / unknown) participant already on a record is preserved
+through unrelated edits, is shown with an explicit remove control, and once
+removed cannot be re-added — see **Historical (removed / unknown) participants**
+above. `meta/config.members` is still the two-person legacy universe used only
+to serialize a compatible `whoMode` (see below).
 
-- `me`: includes the current UID.
-- `partner`: includes the other member UID but not the current UID.
-- `both`: includes both UIDs; arrays with more than one unknown participant also fall back to this display mode.
+The authenticated User's new-data default is fail-closed: it is selected only
+when that User is an active valid Member, otherwise the default is empty.
 
-When `visit.who` is absent or empty, participant logic falls back to the Place-level compatibility representation.
-
-The new generic Space Member helpers support arbitrary active and removed Members and historical lookup without `partnerUid()`/`otherOf()`. They are a parallel Phase 1 foundation only. Existing participant editing, filtering, labels, and compatibility projections remain on the two-person logic until Phase 2.
+For the Visit-level resolution precedence, see **Visit participant resolution
+(Phase 2)** above.
 
 ## Legacy compatibility fields
 
@@ -152,10 +214,10 @@ The current application preserves a prior Place-level representation. These fiel
 | `visitedOn` | Latest Visit date. If `visits` is absent/empty, it creates one normalized legacy Visit. |
 | `tripId` | Latest Visit's Trip ID; used when constructing a legacy Visit and by Place-level marker fallback. |
 | `categories` | Latest Visit category for visited Places; wishlist category remains current Place-level data. Its first value is the Visit category fallback. |
-| `who` | Latest Visit participants for visited Places; current Place-level participant data for wishlist Places. |
-| `whoMode` | `me`, `partner`, or `both` summary interpreted relative to `createdBy` and the other member. |
+| `who` | Latest Visit participants for visited Places; current Place-level participant data for wishlist Places. Full arbitrary-Member UID array (no longer capped at two). |
+| `whoMode` | Legacy serialization only. Emitted as `me` / `partner` / `both` **only** when the legacy `meta/config.members` universe has exactly two distinct Members, `createdBy` is an explicit usable UID inside that universe, and the participant set exactly matches one historical meaning; otherwise `""` (no fallback anchor). Never read for domain, filter, marker, or UI behavior. |
 
-Visit normalization also accepts legacy `visit.categories[0]`, missing Visit IDs, missing `kind`, missing `who`, string/number `order`, and Place records with only `visitedOn`.
+Visit normalization also accepts legacy `visit.categories[0]`, missing Visit IDs, missing `kind`, missing `who`, string/number `order`, and Place records with only `visitedOn`. Normalization preserves a Visit's raw `participantIds` / `who` exactly and never synthesizes or collapses them.
 
 Whenever current Visit history is saved, reordered, or partially deleted, the latest Visit is projected back into `visitedOn`, `tripId`, `categories`, `who`, and `whoMode`. This mirroring and all read fallbacks are required compatibility behavior and must not be removed accidentally.
 
