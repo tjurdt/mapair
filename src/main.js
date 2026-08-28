@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc,
-         getDoc, onSnapshot, query, where, orderBy, arrayUnion, serverTimestamp, runTransaction, connectFirestoreEmulator }
+         getDoc, onSnapshot, query, where, orderBy, arrayUnion, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
 import {
@@ -72,6 +72,12 @@ import {
   selectRegionMaskCandidates,
   writeProximityPreferences
 } from "./proximity-geometry.js";
+import { createNoSpaceRepository } from "./no-space/repository.js";
+import { averageSubmittedRating } from "./no-space/contributions.js";
+import { normalizeDayOrder, reorderDayVisitIds } from "./no-space/day-order.js";
+import { canDeleteTrip, canDeleteVisit, retainCurrentParticipant } from "./no-space/policies.js";
+import { visitParticipantsFromTrip } from "./no-space/trips.js";
+import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visits.js";
 
 /* ============================================================
    1) 設定
@@ -79,6 +85,7 @@ import {
 let runtimeConfig = null, localFailure = false;
 
 function isLocalTest(){ return runtimeConfig?.mode === "local"; }
+function isNoSpace(){ return isLocalTest() && runtimeConfig?.noSpace === true; }
 function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
 const LOCAL_TEST_IDENTITIES = Object.freeze({
   a: Object.freeze({ uid:"test-user-a", email:"test-user-a@example.invalid", name:"測試使用者甲" }),
@@ -218,6 +225,11 @@ const phase3 = {
 };
 let searchReqSeq = 0;     // Google autocomplete request sequence (§5)
 function isMultiSpace(){ return isLocalTest() && runtimeConfig?.multiSpace === true; }
+let noSpaceRepository = null;
+const noSpaceState = {
+  visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{},
+  placeUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
+};
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], tripLine = null, sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
@@ -693,10 +705,13 @@ async function renderApp(){
   if (isMultiSpace()){
     // Phase 3: no active Space until Membership discovery + initial selection.
     currentSpaceId = "";
+  } else if (isNoSpace()){
+    currentSpaceId = `no-space:${user.uid}`;
+    spaceSession = nextSpaceSession(spaceSession, currentSpaceId);
   }
   document.getElementById("app").innerHTML = `
     <header>
-      <span class="title">我們去過的地方</span>
+      <span class="title">${isNoSpace() ? "我的足跡" : "我們去過的地方"}</span>
       ${localBadge()}
       ${isMultiSpace() ? `<div class="spaceswitch" id="spaceSwitch">
         <button class="spaceswitchbtn" id="spaceSwitchBtn" aria-haspopup="true" aria-expanded="false"><span id="spaceSwitchName">${esc(PERSONAL_SPACE_NAME)}</span> <span class="spaceswitchcaret">▾</span></button>
@@ -825,6 +840,8 @@ async function renderApp(){
     renderSpaceSwitcher();
     showSpaceLoadingState();
     startPhase3();
+  } else if (isNoSpace()){
+    subscribeNoSpace();
   } else {
     subscribe();
   }
@@ -927,6 +944,7 @@ async function renderApp(){
 /* ---------- 設定頁(整合顯示/顏色/綽號) ---------- */
 function openSettings(){
   if (!currentSpaceFoundationReady()) return;
+  if (isNoSpace()){ openNoSpaceSettings(); return; }
   const settingsSpaceId = currentSpaceId;
   const settingsSession = spaceSession;
   const settingsLive = () => isCurrentSpaceSession(settingsSession, spaceSession);
@@ -1230,6 +1248,179 @@ function subscribe(){
   setDoc(metaDocFor(metaSpaceId), { members: { [user.uid]: me() } }, { merge:true })
     .catch(e => isLocalTest() ? failLocal("initial member write", e) : undefined);
 }
+
+function openNoSpaceSettings(){
+  const markerOpts = [["cat","活動"],["level","我的足跡深度"],["who","參與者"],["trip","旅程"],["rating","我的評分"],["dateFirst","首次造訪"],["dateLast","最近造訪"]];
+  modal(`
+    <h2 style="margin-bottom:14px">設定</h2>
+    <div class="sethead">顯示</div>
+    <div class="srow"><span>顯示地點標記</span><input type="checkbox" id="ns_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
+    <div class="srow"><span>標記顏色</span><select id="ns_markermode" class="sselect">${markerOpts.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
+    <div class="sethead">個人資料</div>
+    <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
+    <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
+  `);
+  const mode = document.getElementById("ns_markermode");
+  mode.value = markerMode;
+  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
+  mode.onchange = event => { markerMode=event.target.value; renderMarkers(); };
+  document.getElementById("ns_done").onclick = async() => {
+    const repo = noSpaceRepository, session = spaceSession, uid = user.uid;
+    if (repo && noSpaceSessionIsCurrent(session,uid)){
+      await repo.updateOwnProfile({ displayName:document.getElementById("ns_name").value, photoURL:user.photoURL || "" });
+    }
+    closeModal();
+  };
+}
+
+function noSpaceSessionIsCurrent(session, uid){
+  return !localFailure && isNoSpace() && user?.uid === uid && session === spaceSession;
+}
+
+function resetNoSpaceState(){
+  for (const group of [noSpaceState.placeUnsubs, noSpaceState.contributionUnsubs, noSpaceState.profileUnsubs]){
+    for (const unsubscribe of group.values()) try { unsubscribe(); } catch(e) {}
+    group.clear();
+  }
+  noSpaceState.visits = {};
+  noSpaceState.places = {};
+  noSpaceState.trips = {};
+  noSpaceState.contributions = {};
+  noSpaceState.dayOrders = {};
+  noSpaceState.profiles = {};
+  noSpaceRepository = null;
+}
+
+function subscribeNoSpace(){
+  unsubscribeCurrentSpaceListeners();
+  resetNoSpaceState();
+  resetSpaceFoundationReads();
+  const session = spaceSession;
+  const uid = user.uid;
+  const current = () => noSpaceSessionIsCurrent(session, uid);
+  const error = area => problem => { if (current()) handleFirestoreError(`No-Space ${area}`, problem); };
+  noSpaceRepository = createNoSpaceRepository({
+    db,
+    uid,
+    firestore:{ addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch }
+  });
+
+  // No-Space has no Membership foundation. Participation is the shared editing
+  // relationship, and these synthetic ready flags only let the existing shell
+  // reuse its loading/interaction guards.
+  spaceFoundationReads = {
+    spaceReady:true, membersReady:true, metaReady:true, reconciled:true,
+    formalReadFailed:false, spaceDocument:null, formalMemberships:[]
+  };
+  currentSpace = { id:currentSpaceId, type:"no-space", name:"我的足跡" };
+  currentMembership = { userId:uid, status:"active", valid:true };
+  membershipSource = "no-space";
+  setSpaceEditingAvailable(true);
+
+  currentSpaceUnsubscribes.set("no-space-visits", noSpaceRepository.listenVisibleVisits(snapshot => {
+    if (!current()) return;
+    noSpaceState.visits = {};
+    snapshot.forEach(item => noSpaceState.visits[item.id] = { id:item.id, ...item.data() });
+    syncNoSpaceReferenceListeners(session, uid);
+    refreshNoSpaceProjection();
+  }, error("visits")));
+  currentSpaceUnsubscribes.set("no-space-trips", noSpaceRepository.listenVisibleTrips(snapshot => {
+    if (!current()) return;
+    noSpaceState.trips = {};
+    snapshot.forEach(item => noSpaceState.trips[item.id] = { id:item.id, ...item.data() });
+    syncNoSpaceReferenceListeners(session, uid);
+    refreshNoSpaceProjection();
+  }, error("trips")));
+  currentSpaceUnsubscribes.set("no-space-day-orders", noSpaceRepository.listenDayOrders(snapshot => {
+    if (!current()) return;
+    noSpaceState.dayOrders = {};
+    snapshot.forEach(item => noSpaceState.dayOrders[item.id] = { id:item.id, ...item.data() });
+    refreshNoSpaceProjection();
+  }, error("day orders")));
+  syncNoSpaceReferenceListeners(session, uid);
+}
+
+function syncNoSpaceReferenceGroup(group, desiredIds, subscribe, onRemove){
+  for (const [id, unsubscribe] of group){
+    if (desiredIds.has(id)) continue;
+    try { unsubscribe(); } catch(e) {}
+    group.delete(id);
+    onRemove(id);
+  }
+  for (const id of desiredIds){
+    if (!group.has(id)) group.set(id, subscribe(id));
+  }
+}
+
+function syncNoSpaceReferenceListeners(session, uid){
+  if (!noSpaceSessionIsCurrent(session, uid) || !noSpaceRepository) return;
+  const visitsList = Object.values(noSpaceState.visits);
+  const tripsList = Object.values(noSpaceState.trips);
+  const placeIds = new Set(visitsList.map(visit => visit.placeId).filter(Boolean));
+  const visitIds = new Set(visitsList.map(visit => visit.id));
+  const profileIds = new Set(knownParticipantUserIds(uid, visitsList, tripsList));
+  const guard = callback => (...args) => { if (noSpaceSessionIsCurrent(session, uid)) callback(...args); };
+  const error = area => guard(problem => handleFirestoreError(`No-Space ${area}`, problem));
+
+  syncNoSpaceReferenceGroup(noSpaceState.placeUnsubs, placeIds, placeId =>
+    noSpaceRepository.listenPlace(placeId, guard(snapshot => {
+      if (snapshot.exists()) noSpaceState.places[placeId] = { id:placeId, ...snapshot.data() };
+      else delete noSpaceState.places[placeId];
+      refreshNoSpaceProjection();
+    }), error(`Place ${placeId}`)), id => delete noSpaceState.places[id]);
+
+  syncNoSpaceReferenceGroup(noSpaceState.contributionUnsubs, visitIds, visitId =>
+    noSpaceRepository.listenContributions(visitId, guard(snapshot => {
+      const contributions = {};
+      snapshot.forEach(item => contributions[item.id] = { id:item.id, ...item.data() });
+      noSpaceState.contributions[visitId] = contributions;
+      refreshNoSpaceProjection();
+    }), error(`contributions ${visitId}`)), id => delete noSpaceState.contributions[id]);
+
+  syncNoSpaceReferenceGroup(noSpaceState.profileUnsubs, profileIds, profileUid =>
+    noSpaceRepository.listenUser(profileUid, guard(snapshot => {
+      noSpaceState.profiles[profileUid] = snapshot.exists()
+        ? { id:profileUid, ...snapshot.data() }
+        : { id:profileUid, displayName:profileUid === uid ? me() : "Participant" };
+      refreshNoSpaceProjection();
+    }), error(`User ${profileUid}`)), id => delete noSpaceState.profiles[id]);
+}
+
+function refreshNoSpaceProjection(){
+  if (!isNoSpace() || !user || !noSpaceRepository) return;
+  const visitList = Object.values(noSpaceState.visits);
+  places = projectNoSpaceRuntime({
+    currentUserId:user.uid,
+    visits:visitList,
+    placesById:noSpaceState.places,
+    contributionsByVisitId:noSpaceState.contributions,
+    dayOrdersByDate:noSpaceState.dayOrders
+  });
+  trips = Object.fromEntries(Object.values(noSpaceState.trips).map(trip => [trip.id, {
+    ...trip,
+    participantIds:[...(trip.participantUserIds || [])]
+  }]));
+  spaceCats = [...new Set(visitList.map(visit => visit.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
+  spaceMembers = profileIds.map(uid => ({
+    userId:uid,
+    role:null,
+    status:"active",
+    displayName:noSpaceState.profiles[uid]?.displayName || (uid === user.uid ? me() : "Participant"),
+    photoURL:noSpaceState.profiles[uid]?.photoURL || "",
+    source:"no-space",
+    valid:true,
+    issues:[]
+  }));
+  memberDirectory = createMemberDirectory(spaceMembers);
+  members = Object.fromEntries(spaceMembers.map(member => [member.userId, member.displayName]));
+  recomputeReferencedParticipants();
+  if (!document.getElementById("fl_trip")) return;
+  refreshFilterUI();
+  renderList();
+  renderMarkers();
+  refreshMapSurfaces();
+}
 function resetSpaceFoundationReads(){
   spaceFoundationReads = {
     spaceReady:false,
@@ -1312,6 +1503,7 @@ function reconcileSpaceMembershipFoundation(){
   }
 }
 function currentSpaceFoundationReady(){
+  if (isNoSpace()) return !!user && !!noSpaceRepository && spaceSession.spaceId === currentSpaceId;
   return spaceFoundationReady({
     multiSpace:isMultiSpace(),
     currentSpaceId,
@@ -1762,6 +1954,7 @@ function switchActiveSpace(spaceId, opts = {}){
 }
 
 function clearSpaceScopedState(){
+  resetNoSpaceState();
   places = {}; trips = {}; spaceCats = [];
   members = {}; nicknames = {}; catColors = {};
   levelColors = { ...LEVEL_COLORS };
@@ -1999,6 +2192,9 @@ function markerColorForVisit(p,v){
   if (markerMode === "cat"){
     const c=visitCategory(p,v); if(c) return catColor(c);
   }
+  const personal=isNoSpace()?v?._contributions?.[user?.uid]||{}:{};
+  if (markerMode === "level" && personal.level) return levelColors[personal.level] || markerColor(p);
+  if (markerMode === "rating" && personal.rating) return ratingColor(personal.rating);
   if (markerMode === "who") return visitWhoColor(p,v);
   if (markerMode === "trip" && v?.tripId && trips[v.tripId]?.color) return trips[v.tripId].color;
   return markerColor(p);
@@ -2159,51 +2355,61 @@ function pip(lat, lng, features, codeProp){
 // 造訪深度:沒設 level 的地點預設當作「旅遊」。
 function effLevel(p){ return p.level || "旅遊"; }
 
+function updatePlaceGeographyCache(originContextId, placeId, fields){
+  if (originContextId !== currentSpaceId) return Promise.resolve();
+  if (isNoSpace()) return noSpaceRepository?.updatePlaceCache(placeId, fields) || Promise.resolve();
+  return updateDoc(placeDocFor(originContextId, placeId), fields);
+}
+
 // 確保每個地點都有該級的行政區代碼(算一次就寫回 Firestore 快取)。快取寫回
 // 綁定啟動時的 Space;若期間切換 Space 就停止寫入 (§17)。
 async function ensureCounty(){
   const geoSpaceId = currentSpaceId;
+  const geoSession = spaceSession;
   const geo = await loadGeo("geo/county.json");
-  if (geoSpaceId !== currentSpaceId) return geo;
+  if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) return geo;
   for (const p of Object.values(places)){
-    if (geoSpaceId !== currentSpaceId) break;
+    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
     if (!hasVisitHistory(p)) continue;
     if (p.countyCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "COUNTYCODE");
-    if (code){ p.countyCode = code; updateDoc(placeDocFor(geoSpaceId, p.id), { countyCode: code }); }
+    if (code){ p.countyCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { countyCode: code }); }
   }
   return geo;
 }
 async function ensureTown(){
   const geoSpaceId = currentSpaceId;
+  const geoSession = spaceSession;
   const geo = await loadGeo("geo/town.json");
-  if (geoSpaceId !== currentSpaceId) return geo;
+  if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) return geo;
   for (const p of Object.values(places)){
-    if (geoSpaceId !== currentSpaceId) break;
+    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
     if (!hasVisitHistory(p)) continue;
     if (p.townCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "TOWNCODE");
-    if (code){ p.townCode = code; updateDoc(placeDocFor(geoSpaceId, p.id), { townCode: code }); }
+    if (code){ p.townCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { townCode: code }); }
   }
   return geo;
 }
 async function ensureVillage(){
   const geoSpaceId = currentSpaceId;
+  const geoSession = spaceSession;
   const county = await ensureCounty();                       // 先確保 countyCode
   const codes = county.features.map(f => f.properties.COUNTYCODE);
   const byCounty = {}; let feats = [];
   for (const c of codes){
+    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
     let geo; try { geo = await loadGeo("geo/village/" + c + ".json"); } catch(e){ continue; }
     byCounty[c] = geo.features; feats = feats.concat(geo.features);
   }
-  if (geoSpaceId === currentSpaceId){
+  if (geoSpaceId === currentSpaceId && isCurrentSpaceSession(geoSession,spaceSession)){
     for (const p of Object.values(places)){
-      if (geoSpaceId !== currentSpaceId) break;
+      if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
       if (!hasVisitHistory(p)) continue;
       if (p.villCode || !p.countyCode) continue;
       const gf = byCounty[p.countyCode]; if (!gf) continue;
       const code = pip(p.lat, p.lng, gf, "VILLCODE");
-      if (code){ p.villCode = code; updateDoc(placeDocFor(geoSpaceId, p.id), { villCode: code }); }
+      if (code){ p.villCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { villCode: code }); }
     }
   }
   return { type:"FeatureCollection", features: feats };
@@ -2626,19 +2832,20 @@ function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
   const whoTxt=visitWhoText(p,v);
   const t=v.tripId?trips[v.tripId]:null, stay=visitKind(v)==="stay", nights=stayNights(v);
+  const personalRating=isNoSpace()?v?._contributions?.[user?.uid]?.rating:p.rating;
   const tags=[
     stay?`<span class="ptag" style="background:#e6efe9">住宿 ${nights}晚 · ${esc(v.date)} → ${esc(stayCheckout(v)||v.date)}</span>`:"",
     cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
     `<span class="ptag" style="background:#efe9df">${esc(whoTxt)}</span>`,
     t?`<span class="ptag" style="background:${(t.color||'#3f7d78')}22">${t.emoji||'🧭'} ${esc(t.name)}</span>`:`<span class="ptag" style="background:#f2f0eb">日常</span>`,
-    p.rating?`<span class="ptag" style="background:#f3e7d3">★${p.rating}</span>`:""
+    personalRating?`<span class="ptag" style="background:#f3e7d3">★${personalRating}</span>`:""
   ].filter(Boolean).join("");
   const key=`${p.id}:${o.visitIndex}`;
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="移動造訪位置" title="移動到指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
-    <button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button></div></div>`;
+    ${!isNoSpace() || canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):levelColors["住宿"];
@@ -2686,6 +2893,20 @@ async function moveVisitOccurrence(key,date,action){
   const i=candidates.findIndex(o=>o.p.id===pid && o.visitIndex===idx);
   const j=resolveVisitMoveTarget(action,i,candidates.length);
   if(i<0 || j<0 || i===j) return;
+  if (isNoSpace()){
+    const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
+    const stored=noSpaceState.dayOrders[date]?.visitIds || [];
+    const normalized=normalizeDayOrder(date,Object.values(noSpaceState.visits),stored);
+    const candidateIds=candidates.map(item=>item.v.id);
+    const reorderedCandidates=reorderDayVisitIds(candidateIds,candidates[i].v.id,j);
+    let nextIndex=0;
+    const candidateSet=new Set(candidateIds);
+    const next=normalized.map(id=>candidateSet.has(id)?reorderedCandidates[nextIndex++]:id);
+    noSpaceState.dayOrders[date]={id:date,visitIds:next};
+    refreshNoSpaceProjection();
+    if(repo && noSpaceSessionIsCurrent(session,uid)) await repo.setDayOrder(date,next);
+    return;
+  }
   const reordered=reorderWithinSlots(regular,movable,i,j);
   const byPlace=new Map();
   reordered.forEach((o,pos)=>{
@@ -2725,6 +2946,13 @@ function visitLegacyFields(vv,p=null){
 async function deleteVisitOccurrence(key){
   const opSpaceId=currentSpaceId;
   const [pid,idxRaw]=key.split(":"),p=places[pid],idx=+idxRaw; if(!p) return;
+  if (isNoSpace()){
+    const visit=placeVisits(p)[idx];
+    if (!visit || !canDeleteVisit(user.uid, visit._shared || visit)) return;
+    const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
+    if (repo && noSpaceSessionIsCurrent(session,uid)) await repo.deleteVisit(visit.id,visit._shared||visit);
+    return;
+  }
   const vv=placeVisits(p).map(v=>persistableVisit(p,v)); if(idx<0||idx>=vv.length) return;
   vv.splice(idx,1);
   if(opSpaceId!==currentSpaceId) return;
@@ -2889,8 +3117,147 @@ function persistPlaceEditorData(spaceId,id,data){
   settled.finally(()=>{ if(placeEditorWriteQueues.get(key)===settled) placeEditorWriteQueues.delete(key); });
   return write;
 }
+
+function openNoSpaceVisitEditor(id, seed, opts={}){
+  const repo=noSpaceRepository, editorSession=spaceSession, editorUid=user.uid;
+  if (!repo || !noSpaceSessionIsCurrent(editorSession,editorUid)) return;
+  const runtimePlace=id?places[id]:null;
+  const existingVisits=runtimePlace?placeVisits(runtimePlace):[];
+  const focusIndex=Number.isFinite(Number(opts.focusVisitIndex))?Number(opts.focusVisitIndex):0;
+  const existingVisit=!opts.addVisit&&id?existingVisits[focusIndex]||existingVisits[0]||null:null;
+  const rawVisit=existingVisit?existingVisit._shared || noSpaceState.visits[existingVisit.id] || existingVisit:null;
+  const creating=!rawVisit;
+  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || [editorUid],editorUid);
+  let selectedPlaceId=rawVisit?.placeId || id || "";
+  const initialPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId] || runtimePlace:seed || {};
+  const initialTripId=rawVisit?.tripId || specificTripId() || "";
+  if (creating && initialTripId && trips[initialTripId]) selected=visitParticipantsFromTrip(trips[initialTripId],editorUid);
+  const contributions=rawVisit?noSpaceState.contributions[rawVisit.id] || {}:{};
+  const mine=contributions[editorUid] || {};
+  const others=Object.entries(contributions).filter(([uid])=>uid!==editorUid);
+  const average=averageSubmittedRating(Object.values(contributions));
+  const live=()=>noSpaceSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
+  const memberList=orderedActiveMembers();
+  const placeOptions=Object.values(noSpaceState.places).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(place=>
+    `<option value="${esc(place.id)}" ${place.id===selectedPlaceId?'selected':''}>${esc(place.name||"未命名地點")}</option>`
+  ).join("");
+  const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(trip=>
+    `<option value="${esc(trip.id)}" ${trip.id===initialTripId?'selected':''}>${esc((trip.emoji?trip.emoji+" ":"")+(trip.name||""))}</option>`
+  ).join("");
+  const contributionRows=others.length?others.map(([uid,value])=>`
+    <div class="card compact" style="margin-bottom:8px">
+      <div class="cname">${esc(participantName(uid))}${value.rating?` · ★ ${value.rating}`:" · 尚未評分"}</div>
+      <div class="admin">${esc(value.memory||"尚未留下回憶")}</div>
+    </div>`).join(""):`<div class="admin">其他參與者尚未留下評分或回憶。</div>`;
+
+  modal(`
+    <h2 style="margin-bottom:3px">${creating?"新增造訪":"編輯造訪"}</h2>
+    <div class="admin" style="margin-bottom:12px">日期加上你自己的當日順序；不使用時鐘時間。</div>
+    <div class="editor-section">
+      <div class="editor-section-head"><div><div class="editor-section-title">共同記錄</div><div class="editor-section-note">參與這次經驗的人都能調整這些事實。</div></div></div>
+      <div class="field"><label>地點</label><select id="ns_place"><option value="__new__" ${selectedPlaceId?'':'selected'}>新增地點</option>${placeOptions}</select></div>
+      <div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱"></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
+        <div class="field" style="flex:1"><label>活動</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
+      </div>
+      <div class="field"><label>參與者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
+      <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${tripOptions}</select></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>類型</label><select id="ns_kind"><option value="visit" ${rawVisit?.kind==='stay'?'':'selected'}>一般造訪</option><option value="stay" ${rawVisit?.kind==='stay'?'selected':''}>住宿</option></select></div>
+        <div class="field" id="ns_end_wrap" style="flex:1"><label>退房日期</label><input type="date" id="ns_end_date" value="${rawVisit?.endDate||addDays(rawVisit?.date||defaultDateForNewVisit(),1)}"></div>
+      </div>
+    </div>
+    <div class="editor-section">
+      <div class="editor-section-head"><div><div class="editor-section-title">我的內容</div><div class="editor-section-note">只會更新你自己的內容。</div></div></div>
+      <div class="field"><label>我的足跡深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===(mine.level||"旅遊")?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
+      <div class="field"><label>我的評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
+      <div class="field"><label>我的回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="記下你自己的回憶">${esc(mine.memory||"")}</textarea></div>
+      <div class="admin">參與者平均：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）</div>
+    </div>
+    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">其他參與者的內容</div></div>${contributionRows}</div>`:""}
+    <div class="row"><button class="btn" id="ns_save">完成</button>${rawVisit&&canDeleteVisit(editorUid,rawVisit)?`<button class="danger" id="ns_delete">刪除這次造訪</button>`:""}</div>
+  `);
+  const g=id=>document.getElementById(id);
+  const endWrap=g("ns_end_wrap");
+  const refreshStay=()=>{ endWrap.style.display=g("ns_kind").value==="stay"?"block":"none"; };
+  refreshStay();
+  g("ns_kind").onchange=refreshStay;
+  g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
+  g("ns_place").onchange=()=>{
+    selectedPlaceId=g("ns_place").value==="__new__"?"":g("ns_place").value;
+    if(selectedPlaceId) g("ns_place_name").value=noSpaceState.places[selectedPlaceId]?.name||"";
+  };
+  g("ns_trip").onchange=()=>{
+    if(!creating||!g("ns_trip").value||!trips[g("ns_trip").value]) return;
+    selected=visitParticipantsFromTrip(trips[g("ns_trip").value],editorUid);
+    g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>chip.classList.toggle("on",selected.includes(chip.dataset.uid)));
+  };
+  g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>{
+    const toggle=()=>{
+      const uid=chip.dataset.uid;
+      if(uid===editorUid) return;
+      selected=selected.includes(uid)?selected.filter(item=>item!==uid):[...selected,uid];
+      selected=retainCurrentParticipant(selected,editorUid);
+      chip.classList.toggle("on",selected.includes(uid));
+    };
+    chip.onclick=toggle;
+    chip.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); toggle(); } };
+  });
+  g("ns_save").onclick=async()=>{
+    if(!live()) return;
+    const name=g("ns_place_name").value.trim(), date=g("ns_date").value;
+    if(!name||!date){ alert("請填寫地點名稱與日期。"); return; }
+    const kind=g("ns_kind").value;
+    const targetPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId]:seed||initialPlace;
+    const shared={
+      placeId:selectedPlaceId,
+      placeName:name,
+      date,
+      category:g("ns_category").value.trim(),
+      participantUserIds:retainCurrentParticipant(selected,editorUid),
+      tripId:g("ns_trip").value||null,
+      kind,
+      endDate:kind==="stay"?g("ns_end_date").value:"",
+      createdBy:rawVisit?.createdBy||editorUid
+    };
+    const personal={
+      rating:Number(g("ns_rating").value)>0?Number(g("ns_rating").value):null,
+      memory:g("ns_memory").value,
+      level:g("ns_level").value
+    };
+    let savedVisitId=rawVisit?.id||"";
+    try{
+      if(rawVisit){
+        if(selectedPlaceId===rawVisit.placeId&&targetPlace) await repo.updatePlace(selectedPlaceId,{...targetPlace,name});
+        await repo.updateVisit(rawVisit.id,shared);
+      }else if(selectedPlaceId){
+        const ref=await repo.createVisit(shared); savedVisitId=ref.id;
+      }else{
+        const created=await repo.createPlaceAndVisit({...(targetPlace||{}),name},shared);
+        savedVisitId=created.visitId;
+      }
+      if(!live()) return;
+      await repo.setContribution(savedVisitId,personal);
+      if(creating){
+        const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
+        const order=normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]);
+        await repo.setDayOrder(date,order);
+      }
+      if(live()) closeModal();
+    }catch(error){ if(live()) alert(`無法儲存造訪：${error.message}`); }
+  };
+  const deleteButton=g("ns_delete");
+  if(deleteButton) deleteButton.onclick=async()=>{
+    if(!live()||!canDeleteVisit(editorUid,rawVisit)) return;
+    await repo.deleteVisit(rawVisit.id,rawVisit);
+    if(live()) closeModal();
+  };
+}
+
 function openEditor(id, seed, opts={}){
   if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
+  if (isNoSpace()){ openNoSpaceVisitEditor(id,seed,opts); return; }
   const p = id ? places[id] : { categories:[], ...seed };
   const shared=placeSharedFields(p);
   // The editor is bound to the Space that was active when it opened. Every write
@@ -3227,7 +3594,7 @@ function renderTrips(el){
         </div>
         <span style="width:12px;height:12px;border-radius:3px;background:${t.color||'#3f7d78'}"></span>
         <button class="btn mini grey" data-edit="${t.id}">編輯</button>
-        <button class="delx" data-del="${t.id}" title="刪除">✕</button>
+        ${!isNoSpace() || canDeleteTrip(user?.uid,t) ? `<button class="delx" data-del="${t.id}" title="刪除">✕</button>` : ""}
       </div>`).join("") : `<div class="empty">還沒有旅程。建立一個,再到地點的「哪趟旅程」把地點歸進來。</div>`);
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
@@ -3240,11 +3607,67 @@ function renderTrips(el){
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
-    if (currentSpaceFoundationReady()) deleteDoc(tripDoc(b.dataset.del));
+    if (!currentSpaceFoundationReady()) return;
+    if (isNoSpace()){
+      const trip=noSpaceState.trips[b.dataset.del];
+      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id,trip);
+    } else deleteDoc(tripDoc(b.dataset.del));
   });
 }
+
+function openNoSpaceTripEditor(id,onDone){
+  const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
+  if(!repo||!noSpaceSessionIsCurrent(session,uid)) return;
+  const trip=id?noSpaceState.trips[id]||trips[id]:null;
+  let selected=retainCurrentParticipant(trip?.participantUserIds||[uid],uid);
+  const live=()=>repo===noSpaceRepository&&noSpaceSessionIsCurrent(session,uid);
+  modal(`
+    <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
+    <div class="admin" style="margin-bottom:12px">參與者是新造訪的預設值；既有造訪不會被改寫。</div>
+    <div class="field"><label>名稱</label><input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行"></div>
+    <div class="field"><label>圖示</label><input id="nst_emoji" value="${esc(trip?.emoji||"")}" maxlength="8" placeholder="🧳"></div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>開始日期</label><input type="date" id="nst_start" value="${trip?.startDate||""}"></div>
+      <div class="field" style="flex:1"><label>結束日期</label><input type="date" id="nst_end" value="${trip?.endDate||""}"></div>
+    </div>
+    <div class="field"><label>新造訪的預設參與者</label><div class="pick partpick" id="nst_participants">${orderedActiveMembers().map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===uid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
+    <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
+  `);
+  const g=id=>document.getElementById(id);
+  g("nst_participants").querySelectorAll("[data-uid]").forEach(chip=>{
+    const toggle=()=>{
+      const participantUid=chip.dataset.uid;
+      if(participantUid===uid) return;
+      selected=selected.includes(participantUid)?selected.filter(item=>item!==participantUid):[...selected,participantUid];
+      selected=retainCurrentParticipant(selected,uid);
+      chip.classList.toggle("on",selected.includes(participantUid));
+    };
+    chip.onclick=toggle;
+    chip.onkeydown=event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();toggle();}};
+  });
+  const collect=()=>({
+    name:g("nst_name").value.trim(), emoji:g("nst_emoji").value.trim(),
+    startDate:g("nst_start").value, endDate:g("nst_end").value,
+    participantUserIds:retainCurrentParticipant(selected,uid), createdBy:trip?.createdBy||uid
+  });
+  g("nst_save").onclick=async()=>{
+    if(!live()) return;
+    const data=collect(); if(!data.name){alert("請填寫旅程名稱。");return;}
+    try{
+      let savedId=id;
+      if(trip) await repo.updateTrip(trip.id,data);
+      else { const ref=await repo.createTrip(data); savedId=ref.id; }
+      if(live()&&onDone) onDone({id:savedId,...data});
+      if(live()) closeModal();
+    }catch(error){if(live())alert(`無法儲存旅程：${error.message}`);}
+  };
+  const del=g("nst_delete");
+  if(del) del.onclick=async()=>{if(live()&&canDeleteTrip(uid,trip)){await repo.deleteTrip(trip.id,trip);if(live())closeModal();}};
+}
+
 function editTrip(id, onDone){
   if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
+  if (isNoSpace()){ openNoSpaceTripEditor(id,onDone); return; }
   let docId = id || null, creating = false;
   const t = id ? trips[id] : {};
   let emoji = t.emoji || "";

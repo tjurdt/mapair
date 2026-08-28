@@ -1,5 +1,7 @@
 # Mapair Product
 
+> In LOCAL-only No-Space Phase A (`?firebaseEnv=local&noSpace=1`), the primary object is Visit and the product title is “我的足跡”; Space is hidden completely. Shared facts and personal contributions/day order are separated as documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). The deployed/default product described below remains legacy-compatible.
+
 ## Purpose
 
 Mapair is a shared geographic memory and travel-history application. It lets a shared space record places its members have visited, repeated visits, accommodation stays, and trips. The primary experience combines a map with a filterable chronological list.
@@ -44,7 +46,7 @@ A Trip is a named and optionally emoji-labeled date range with a color. Visits b
 
 The shared space records authenticated members and optional nicknames. Each Visit records which members participated (arbitrary N members, plus one-way-removable historical participants). Space membership determines who may edit.
 
-A future read-only "我的足跡 / My Footprints" cross-Space aggregate of a user's own Visits is a separate reserved concept — it is not the Personal Space and is not implemented here.
+In the legacy Space runtime, “我的足跡 / My Footprints” was reserved as a future cross-Space aggregate and is not the Personal Space. No-Space Phase A now uses that product title for the participant-scoped top-level Visit view, behind its separate LOCAL-only gate.
 
 ### Map and regions
 

@@ -98,6 +98,34 @@ assert.throws(
   /multiSpace must be exactly/
 );
 
+/* No-Space Phase A flag (LOCAL only, exact, mutually exclusive) */
+{
+  const config = resolveRuntimeConfig("localhost", "?firebaseEnv=local&noSpace=1");
+  assert.equal(config.mode, "local");
+  assert.equal(config.noSpace, true);
+  assert.equal(config.multiSpace, false);
+}
+assert.throws(
+  () => resolveRuntimeConfig("mapair.example.com", "?noSpace=1"),
+  /only available in LOCAL TEST/
+);
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?noSpace=1"),
+  /only available in LOCAL TEST/
+);
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&noSpace=2"),
+  /noSpace must be exactly/
+);
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&noSpace=1&noSpace=1"),
+  /noSpace must be exactly/
+);
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&multiSpace=1&noSpace=1"),
+  /cannot be enabled together/
+);
+
 /* Existing LOCAL TEST guards remain */
 assert.throws(
   () => resolveRuntimeConfig("mapair.example.com", "?firebaseEnv=local"),

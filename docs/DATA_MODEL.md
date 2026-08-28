@@ -1,5 +1,7 @@
 # Current Data Model
 
+> This file remains the deployed-compatible **legacy Space model**. The parallel LOCAL-only No-Space Phase A model is documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). No production data has been migrated or deleted.
+
 This document records the deployed-compatible data model implemented by the current application. Phase 1 additionally supports read-only, additive root Space and Membership documents when present, but it does not require them, migrate existing data, or implement the complete target model.
 
 ## Storage layout
@@ -46,7 +48,7 @@ Phase 3 is gated behind `?firebaseEnv=local&multiSpace=1` (localhost only, exact
 
 **Shared Space creation** (`＋ 新共享地圖`): asks only for a name, then one transaction creates `spaces/{autoId}` (`type: "shared"`) and the creator's single active owner Membership, then switches to it. No second Member; no invitation UI (Phase 5). No Personal → Shared conversion.
 
-**Not in Phase 3:** Trip participant defaults (`Trip.participantIds`) — Phase 4; Friends/invites/mentions/member-management UI — Phase 5; production rules/migration/exposure — Phase 6. A future **"我的足跡" / My Footprints** view (a read-only cross-Space aggregate of Visits the User actually participated in) is a separate product surface, not a Space and not in the switcher; the Personal Space must not be confused with it. Existing `spaces/us` history is not moved or copied.
+**Not in Phase 3:** Trip participant defaults (`Trip.participantIds`) — Phase 4; Friends/invites/mentions/member-management UI — Phase 5; production rules/migration/exposure — Phase 6. In the legacy Space plan, **"我的足跡" / My Footprints** was reserved as a separate cross-Space surface and not a Personal Space. No-Space Phase A now implements the participant-scoped top-level Visit view under that title through a distinct LOCAL-only gate; it still does not move or copy `spaces/us` history.
 
 ## Optional Phase 1 Space and Membership documents
 

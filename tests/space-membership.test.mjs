@@ -407,7 +407,8 @@ assert.doesNotMatch(mainSource, /data-t="wishlist"/, "the 想去 tab must be gon
 assert.doesNotMatch(mainSource, /想去/, "no 想去 label anywhere in runtime source (§13)");
 assert.match(mainSource, /<button class="tab" data-t="visited">去過<\/button>\s*\n\s*<button class="tab" data-t="trips">行程<\/button>/,
   "exactly the 去過 and 行程 tabs remain (§13)");
-assert.doesNotMatch(mainSource, /我的足跡/, "去過 must NOT be renamed to 我的足跡 — that name is reserved for a future cross-Space aggregate (§13)");
+assert.match(mainSource, /<span class="title">\$\{isNoSpace\(\) \? "我的足跡" : "我們去過的地方"\}<\/span>/,
+  "legacy Space mode must retain its original title while the explicit No-Space gate uses 我的足跡 (§13)");
 assert.match(mainSource, /if \(tab !== "visited" && tab !== "trips"\) tab = "visited"/,
   "renderList must coerce any unknown tab (e.g. a stale 'wishlist') back to 'visited' (§13)");
 
