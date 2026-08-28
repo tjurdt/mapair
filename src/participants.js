@@ -61,29 +61,42 @@ function describeValue(value){
 }
 
 /* ------------------------------------------------------------
-   Place-level compatibility fallback (contract §1C, §1D).
+   Place-level compatibility fallback (contract §1C, §1D, §5).
 
-   Mirrors the historical two-person logic. `whoMode` is honoured
-   only as genuinely legacy data and only within a two-person
-   legacy universe (`legacyMemberIds`).
+   Precedence:
+     A. a usable Place `who` array wins — the full arbitrary UID
+        array, never collapsed by a stale `whoMode`.
+     B. only when `who` is absent/unusable, interpret legacy
+        `whoMode`, and only for a genuine two-person legacy
+        universe whose anchor (`createdBy`) is one of the two.
+     C. otherwise fall back to the creator alone, or nothing.
    ------------------------------------------------------------ */
 export function resolvePlaceCompatParticipants(place = {}, legacyContext = {}){
   const { legacyMemberIds = [], currentUserId = "" } = legacyContext || {};
   const base = isObject(place) ? place : {};
+
+  // A. usable `who` array — authoritative, arbitrary N members.
+  const who = usableUidArray(base.who);
+  if (who) return [...who];
+
   const creator = isUsableUid(base.createdBy)
     ? base.createdBy
     : (isUsableUid(currentUserId) ? currentUserId : "");
+
+  // B. legacy `whoMode` — genuine two-person legacy universe only.
   const universe = uniqueUids(legacyMemberIds);
-  const other = universe.find(uid => uid !== creator) || "";
-  const mode = base.whoMode;
+  if (universe.length === 2){
+    const mode = base.whoMode;
+    if (mode === "both") return [...universe];
+    if ((mode === "me" || mode === "partner") && isUsableUid(creator) && universe.includes(creator)){
+      const other = universe.find(uid => uid !== creator) || "";
+      if (mode === "me") return [creator];
+      if (other) return [other];
+    }
+  }
 
-  if (mode === "both") return [creator, other].filter(Boolean);
-  if (mode === "me") return [creator].filter(Boolean);
-  if (mode === "partner") return [other].filter(Boolean);
-
-  const who = usableUidArray(base.who);
-  if (who) return [...who];
-  return creator ? [creator] : [];
+  // C. safe default.
+  return isUsableUid(creator) ? [creator] : [];
 }
 
 /* ------------------------------------------------------------
@@ -180,8 +193,10 @@ export function sanitizeParticipantsForNewSelection(ids = [], activeMemberIds = 
 }
 
 /* Split a resolved participant list into the parts a picker can
-   toggle (active Members) and the read-only historical remainder
-   (removed / unknown Members already on the record). */
+   toggle (active Members) and the historical remainder (removed /
+   unknown Members already on the record). Historical participants
+   are preserved until explicitly removed, but are never offered as
+   an unchecked candidate that can be re-added. */
 export function partitionResolvedParticipants(resolvedIds = [], activeMemberIds = []){
   const active = new Set((activeMemberIds || []).filter(isUsableUid));
   const ids = uniqueUids(resolvedIds);
@@ -191,14 +206,17 @@ export function partitionResolvedParticipants(resolvedIds = [], activeMemberIds 
   };
 }
 
-/* Build the effective new selection from checked active Members
-   plus historical Members already attached to the record (which a
-   picker cannot re-add but must not drop). Active order first. */
-export function composeParticipantSelection({ checkedActiveIds = [], activeMemberOrder = [], historicalIds = [] } = {}){
-  const checked = new Set(uniqueUids(checkedActiveIds));
-  const ordered = uniqueUids(activeMemberOrder).filter(id => checked.has(id));
-  const extraChecked = uniqueUids(checkedActiveIds).filter(id => !ordered.includes(id));
-  return uniqueUids([...ordered, ...extraChecked, ...historicalIds]);
+/* Order a working selection: active Members first (in the given
+   Member order), then any retained historical participants in their
+   existing order. This does NOT add or drop anyone — a historical
+   participant only leaves the selection when the user removes it. */
+export function orderParticipantSelection(selectedIds = [], activeMemberOrder = []){
+  const ids = uniqueUids(selectedIds);
+  const sel = new Set(ids);
+  const active = uniqueUids(activeMemberOrder).filter(id => sel.has(id));
+  const activeSet = new Set(active);
+  const historical = ids.filter(id => !activeSet.has(id));
+  return [...active, ...historical];
 }
 
 /* ------------------------------------------------------------
@@ -254,9 +272,12 @@ export function deriveLegacyWhoMode(participantIds = [], legacyContext = {}){
   const universe = uniqueUids(legacyMemberIds);
   if (universe.length !== 2) return "";
 
-  const creator = isUsableUid(createdBy) && universe.includes(createdBy) ? createdBy : universe[0];
+  // `createdBy` must be an explicit, usable UID inside the two-person
+  // universe. No fallback to universe[0] — an ambiguous anchor yields "".
+  if (!isUsableUid(createdBy) || !universe.includes(createdBy)) return "";
+  const creator = createdBy;
   const other = universe.find(uid => uid !== creator) || "";
-  if (!creator || !other) return "";
+  if (!other) return "";
 
   const ids = uniqueUids(participantIds);
   if (!ids.every(uid => uid === creator || uid === other)) return "";
@@ -292,6 +313,26 @@ export function classifyParticipants(ids = []){
   if (!list.length) return { kind: "none", ids: list };
   if (list.length === 1) return { kind: "solo", ids: list };
   return { kind: "group", ids: list };
+}
+
+/* Deterministic UID -> palette index (contract §7).
+
+   A stable FNV-1a-style string hash mapped into the palette. The
+   same UID always lands on the same index regardless of how many
+   other Members exist or their order; no external dependency. */
+function hashUid(uid){
+  const s = String(uid);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+export function participantColorIndex(uid, paletteSize){
+  const size = Number.isInteger(paletteSize) && paletteSize > 0 ? paletteSize : 1;
+  if (!isUsableUid(uid)) return 0;
+  return hashUid(uid.trim()) % size;
 }
 
 export const LEGACY_WHO_MODES = HISTORICAL_WHO_MODES;

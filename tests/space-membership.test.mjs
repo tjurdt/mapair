@@ -186,4 +186,33 @@ assert.doesNotMatch(mainSource, /setDoc\s*\(\s*spaceDoc\s*\(/, "startup/runtime 
 assert.doesNotMatch(mainSource, /setDoc\s*\(\s*memberDoc\s*\(/, "startup/runtime must not create or update Membership documents");
 assert.doesNotMatch(mainSource, /addDoc\s*\(\s*membersCol\s*\(/, "startup/runtime must not create Membership documents");
 
+/* Phase 2 §3 — new-Visit participant defaults must fail closed. */
+assert.match(
+  mainSource,
+  /function defaultParticipants\(\)\{[^}]*isActiveMember\(uid\)\s*\?\s*\[uid\]\s*:\s*\[\][^}]*\}/,
+  "defaultParticipants must select the authenticated User only when active, else fail closed"
+);
+assert.doesNotMatch(
+  mainSource,
+  /return\s+sanitized\.length\s*\?\s*sanitized\s*:\s*\[uid\]/,
+  "defaultParticipants must not fall back to [uid] when the User is not an active Member"
+);
+assert.match(
+  mainSource,
+  /newWorkingVisit\s*=\s*\(base,\s*selected\)\s*=>\s*\(\{[\s\S]*?sanitizeParticipantsForNewSelection\(selected,\s*activeIds\)/,
+  "every new working Visit must intersect its participant seed with active Members"
+);
+
+/* Phase 2 §4 — the Membership listener refreshes participant-dependent UI,
+   guarded and without new listeners/writes. */
+assert.match(mainSource, /function reconcileSpaceMembershipFoundation\(\)\{[\s\S]*?refreshParticipantDependentUI\(\)/,
+  "reconcileSpaceMembershipFoundation must refresh participant-dependent UI when the directory changes");
+assert.match(mainSource, /lastMembershipRenderSignature/,
+  "a signature guard must prevent render loops on unchanged Membership snapshots");
+const refreshFnMatch = mainSource.match(/function refreshParticipantDependentUI\(\)\{([\s\S]*?)\n\}/);
+assert.ok(refreshFnMatch, "refreshParticipantDependentUI must exist");
+assert.match(refreshFnMatch[1], /refreshFilterUI\(\);\s*renderList\(\);\s*renderMarkers\(\)/);
+assert.doesNotMatch(refreshFnMatch[1], /onSnapshot|addDoc|setDoc|updateDoc|deleteDoc/,
+  "participant UI refresh must not create Firestore listeners or writes");
+
 console.log("space-membership assertions passed");

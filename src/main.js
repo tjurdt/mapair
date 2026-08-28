@@ -11,12 +11,13 @@ import {
 } from "./space-membership.js";
 import {
   classifyParticipants,
-  composeParticipantSelection,
   deriveLegacyWhoMode,
   detectParticipantMismatch,
   formatParticipantSummary,
+  isUsableUid,
   nextVisitParticipantFields,
-  partitionResolvedParticipants,
+  orderParticipantSelection,
+  participantColorIndex,
   resolvePlaceCompatParticipants,
   resolveVisitParticipants,
   sanitizeParticipantsForNewSelection
@@ -276,20 +277,61 @@ function legacyParticipantContext(){
   };
 }
 function activeMemberIds(){ return activeSpaceMembers().map(m => m.userId); }
+function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
+// Active Members ordered for display: the authenticated User first, then the
+// rest by display name (Phase 2 §9).
+function orderedActiveMembers(){
+  const selfUid = user?.uid || "";
+  return activeSpaceMembers().slice().sort((a,b) => {
+    if (a.userId === selfUid) return -1;
+    if (b.userId === selfUid) return 1;
+    return String(a.displayName||"").localeCompare(String(b.displayName||""));
+  });
+}
+function orderedActiveMemberIds(){ return orderedActiveMembers().map(m => m.userId); }
+// Human name for a participant UID. Never exposes a raw UID.
+//  - authenticated User      -> "真實名稱（我）" (or "我" when no name is known)
+//  - active Member           -> display name
+//  - known removed Member    -> "真實名稱（已離開）"
+//  - unknown historical UID  -> "未知成員"
 function participantName(uid){
-  if (uid && user && uid === user.uid) return nicknames[uid] || members[uid] || "我";
-  return memberDisplayName(uid);
+  const member = memberById(uid);
+  const isSelf = !!uid && !!user && uid === user.uid;
+  let name = "";
+  if (member && member.displayName && member.displayName !== "Member") name = member.displayName;
+  else if (isSelf) name = nicknames[uid] || members[uid] || "";
+  if (!name){
+    if (isSelf) return "我";
+    return member ? "成員" : "未知成員";
+  }
+  if (isSelf) return `${name}（我）`;
+  if (member && member.status === "removed") return `${name}（已離開）`;
+  return name;
 }
 function participantSummaryText(ids){
   return formatParticipantSummary(ids, participantName, { empty:"未記錄" });
 }
 // 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.participantIds 為準
 function whoUids(p){ return resolvePlaceCompatParticipants(p, legacyParticipantContext()); }
+// New-Visit / new-record default: the authenticated User, but ONLY when that
+// User is an active valid Member. Fail closed otherwise (Phase 2 §3).
 function defaultParticipants(){
   const uid = user?.uid || "";
-  if (!uid) return [];
-  const sanitized = sanitizeParticipantsForNewSelection([uid], activeMemberIds());
-  return sanitized.length ? sanitized : [uid];
+  return isActiveMember(uid) ? [uid] : [];
+}
+// Historical (removed / unknown) participant UIDs referenced by currently
+// loaded Place / Visit data. Recomputed on data or Membership change so the
+// filter and legend can resolve them without listing every removed Membership.
+let referencedHistoricalIds = [];
+function recomputeReferencedParticipants(){
+  const activeSet = new Set(activeMemberIds());
+  const seen = new Set();
+  const add = uid => { if (isUsableUid(uid) && !activeSet.has(uid)) seen.add(uid); };
+  for (const place of Object.values(places)){
+    whoUids(place).forEach(add);
+    placeVisits(place).forEach(v => visitWhoUids(place, v).forEach(add));
+  }
+  referencedHistoricalIds = [...seen];
 }
 function newVisitId(){
   try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
@@ -948,11 +990,11 @@ function refreshFilterUI(){
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
   const who = document.getElementById("fl_who");
-  const activeOpts = activeSpaceMembers()
-    .map(m=>`<option value="${esc(m.userId)}">${esc(participantName(m.userId))}</option>`).join("");
-  const removedOpts = removedSpaceMembers
-    .map(m=>`<option value="${esc(m.userId)}">${esc(participantName(m.userId))}（已移除）</option>`).join("");
-  who.innerHTML = `<option value="all">所有同行者</option>` + activeOpts + removedOpts;
+  // Active Members (self first, then by name) + only the historical participants
+  // that actually appear in loaded data (Phase 2 §8, §9).
+  const whoUidsList = [...orderedActiveMemberIds(), ...referencedHistoricalIds];
+  who.innerHTML = `<option value="all">所有同行者</option>` +
+    whoUidsList.map(uid=>`<option value="${esc(uid)}">${esc(participantName(uid))}</option>`).join("");
   who.value = filter.who;
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
@@ -1054,7 +1096,9 @@ function subscribe(){
   currentSpaceUnsubscribes.set("places", onSnapshot(query(placesCol(), orderBy("createdAt","desc")), snap => {
     if (localFailure) return;
     places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
+    recomputeReferencedParticipants();
     auditParticipantData();
+    refreshFilterUI();
     renderList(); renderMarkers();
     refreshMapSurfaces();
   }, error => handleFirestoreError("places", error)));
@@ -1097,6 +1141,8 @@ function resetSpaceFoundationReads(){
   ownershipValidation = null;
   memberDirectory = createMemberDirectory([]);
   lastLocalMembershipDiagnostic = "";
+  lastMembershipRenderSignature = "";
+  referencedHistoricalIds = [];
 }
 function unsubscribeCurrentSpaceListeners(){
   for (const unsubscribe of currentSpaceUnsubscribes.values()){
@@ -1120,6 +1166,7 @@ function handleOptionalFoundationReadError(area, readKey, error){
   }
   reconcileSpaceMembershipFoundation();
 }
+let lastMembershipRenderSignature = "";
 function reconcileSpaceMembershipFoundation(){
   if (!spaceFoundationReads.spaceReady || !spaceFoundationReads.membersReady || !spaceFoundationReads.metaReady) return;
   const foundation = resolveSpaceMembershipFoundation({
@@ -1138,6 +1185,30 @@ function reconcileSpaceMembershipFoundation(){
   ownershipValidation = foundation.ownership;
   memberDirectory = foundation.directory;
   reportSpaceMembershipDiagnostic(foundation);
+
+  // Phase 2 §4: participant-dependent UI depends on formal Membership data.
+  // Whenever the resolved directory / active / removed Members / names change,
+  // refresh that UI once — regardless of whether this listener arrived before
+  // or after meta/places/trips. A signature guard prevents render loops.
+  const signature = JSON.stringify({
+    source:foundation.membershipSource,
+    active:foundation.activeMembers.map(m=>`${m.userId}:${m.displayName}`),
+    removed:foundation.removedMembers.map(m=>`${m.userId}:${m.displayName}`),
+    current:foundation.currentMembership?.userId || null
+  });
+  if (signature !== lastMembershipRenderSignature){
+    lastMembershipRenderSignature = signature;
+    recomputeReferencedParticipants();
+    refreshParticipantDependentUI();
+  }
+}
+// Re-render the participant-dependent surfaces. Guarded so it is inert until the
+// app shell + map exist; creates no Firestore listeners or writes.
+function refreshParticipantDependentUI(){
+  if (!document.getElementById("app") || !document.getElementById("fl_trip")) return;
+  refreshFilterUI();
+  renderList();
+  renderMarkers();
 }
 function reportSpaceMembershipDiagnostic(foundation){
   const diagnostic = {
@@ -1199,22 +1270,18 @@ const tripsCol   = () => collection(db, "spaces", currentSpaceId, "trips");
 const tripDoc    = id => doc(db, "spaces", currentSpaceId, "trips", id);
 
 /* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
-// Participant marker colouring for arbitrary Member sets: each active Member
-// gets a stable palette colour, any multi-person Visit shares one "group"
-// colour. Exactly two people carries no special meaning.
+// Participant marker colouring for arbitrary Member sets: each UID maps to a
+// stable palette colour by deterministic hash (independent of Member count or
+// order); any multi-person Visit shares one "group" colour; exactly two people
+// carries no special meaning (Phase 2 §7).
 const PARTICIPANT_GROUP_COLOR = "#b25b6b";
-const PARTICIPANT_SOLO_FALLBACK = "#3f7d78";
 const PARTICIPANT_NONE_COLOR = "#9aa5ad";
-function participantColorMap(){
-  const map = {};
-  activeSpaceMembers().forEach((m,i)=>{ map[m.userId] = CAT_PALETTE[i % CAT_PALETTE.length]; });
-  return map;
-}
+function participantColor(uid){ return CAT_PALETTE[participantColorIndex(uid, CAT_PALETTE.length)]; }
 function participantsColor(ids){
   const c = classifyParticipants(ids);
   if (c.kind === "none") return PARTICIPANT_NONE_COLOR;
   if (c.kind === "group") return PARTICIPANT_GROUP_COLOR;
-  return participantColorMap()[c.ids[0]] || PARTICIPANT_SOLO_FALLBACK;
+  return participantColor(c.ids[0]);
 }
 function whoColor(p){ return participantsColor(whoUids(p)); }
 function visitWhoColor(p,v){ return participantsColor(visitWhoUids(p,v)); }
@@ -1370,9 +1437,9 @@ function markerLegendBody(){
   let rows=[];
   if (markerMode === "status") rows = [[getCSS("--visited"),"去過"],[getCSS("--wish"),"想去"]];
   else if (markerMode === "who"){
-    const cm=participantColorMap();
-    rows = activeSpaceMembers().map(m=>[cm[m.userId]||PARTICIPANT_SOLO_FALLBACK, participantName(m.userId)]);
-    if (rows.length>=2) rows.push([PARTICIPANT_GROUP_COLOR,"多人同行"]);
+    const uids=[...orderedActiveMemberIds(), ...referencedHistoricalIds];
+    rows = uids.map(uid=>[participantColor(uid), participantName(uid)]);
+    if (uids.length>=2) rows.push([PARTICIPANT_GROUP_COLOR,"多人同行"]);
   }
   else if (markerMode === "level") rows = LEVEL_ORDER.slice().reverse().map(l=>[levelColors[l], l]);
   else if (markerMode === "cat") rows = spaceCats.map(c=>[catColor(c), c]);
@@ -2164,19 +2231,19 @@ function openEditor(id, seed, opts={}){
   let status = p.status || "visited";
   let level = shared.level;
   const partCtx = { ...legacyParticipantContext(), createdBy:p.createdBy||user?.uid||"" };
-  const activeIds = activeMemberIds();
-  const activeMembersList = activeSpaceMembers();
+  const activeMembersList = orderedActiveMembers();
+  const activeIds = activeMembersList.map(m=>m.userId);
+  const activeIdSet = new Set(activeIds);
   const filterTrip = specificTripId();
   const defaultDate = defaultDateForNewVisit();
-  // A brand-new Visit / a Visit whose participants the user explicitly picks
-  // writes `participantIds` and `who` identically (CONTRACT §3).
-  // `selected` is already an active-Member list chosen by the caller
-  // (defaultParticipants / a sanitized previous selection).
+  // Every NEW-Visit participant seed is intersected with active valid
+  // Memberships — a removed Member is never copied into new data merely because
+  // a previous Visit had them (CONTRACT §3). A new/explicitly-edited Visit
+  // writes `participantIds` and `who` identically.
   const newWorkingVisit = (base, selected) => ({
     ...base,
     _raw:{},
-    _selected:[...new Set((selected||[]).filter(Boolean))],
-    _historical:[],
+    _selected:orderParticipantSelection(sanitizeParticipantsForNewSelection(selected, activeIds), activeIds),
     _participantsEdited:true,
     _mismatch:null
   });
@@ -2184,7 +2251,6 @@ function openEditor(id, seed, opts={}){
     const norm = normalizedVisit(p, rawVisit, i);
     const id = (norm.id && !String(norm.id).startsWith("legacy_")) ? norm.id : newVisitId();
     const resolved = resolveVisitParticipants(norm, p, partCtx).participantIds;
-    const { historical } = partitionResolvedParticipants(resolved, activeIds);
     return {
       ...norm,
       id,
@@ -2192,8 +2258,9 @@ function openEditor(id, seed, opts={}){
         ...(Object.hasOwn(norm,"participantIds") ? { participantIds:norm.participantIds } : {}),
         ...(Object.hasOwn(norm,"who") ? { who:norm.who } : {})
       },
-      _selected:resolved,
-      _historical:historical,
+      // Active Members + retained historical participants. Historical entries
+      // stay until the user explicitly removes them (one-way, §1).
+      _selected:orderParticipantSelection(resolved, activeIds),
       _participantsEdited:false,
       _mismatch:detectParticipantMismatch(norm)
     };
@@ -2207,52 +2274,54 @@ function openEditor(id, seed, opts={}){
   if (id && opts.addVisit){
     status="visited";
     const prev=latestVisit(p), cat=prev?visitCategory(p,prev):((p.categories||[])[0]||"");
-    const prevParticipants=prev?visitWhoUids(p,prev):defaultParticipants();
+    const prevSeed=prev?visitWhoUids(p,prev):[];
     const k=level==="住宿"?"stay":"visit";
-    visits.push(newWorkingVisit({id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat}, prevParticipants.length?prevParticipants:defaultParticipants()));
+    visits.push(newWorkingVisit({id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat}, prevSeed.length?prevSeed:defaultParticipants()));
     focusIndex=visits.length-1;
   }
   // Wishlist Place-level participants (CONTRACT §1C: `who` + legacy `whoMode`).
-  let wishlistParticipants = id
-    ? resolvePlaceCompatParticipants(p, partCtx)
-    : defaultParticipants();
-  let wishlistHistorical = partitionResolvedParticipants(wishlistParticipants, activeIds).historical;
+  // Historical participants here are also one-way removable (§1).
+  let wishlistParticipants = orderParticipantSelection(
+    id ? resolvePlaceCompatParticipants(p, partCtx) : defaultParticipants(),
+    activeIds
+  );
 
   const visitedHasHistory = () => visits.some(v=>v.date);
-  // Arbitrary-Member participant picker. Active Members are toggle chips;
-  // removed / unknown Members already on the record are shown read-only and are
-  // never offered for a new selection (design: never silently re-add a removed
-  // Member).
-  function participantPickHTML(selectedIds, historicalIds, opts={}){
-    const sel=new Set(selectedIds);
+  // Arbitrary-Member participant picker. Active Members are toggle chips.
+  // Historical (removed / unknown) participants already on the record render as
+  // a chip with an explicit "×": they are preserved until removed, the removal
+  // is one-way, and they are never offered as a re-addable candidate (§1, §2).
+  function participantPickHTML(selectedIds, opts={}){
+    const sel=[...new Set(selectedIds||[])];
+    const selSet=new Set(sel);
     const attr=`${opts.id?` id="${opts.id}"`:""} class="pick partpick${opts.cls?` ${opts.cls}`:""}"`;
-    if(!activeMembersList.length && !historicalIds.length){
+    const historical=sel.filter(uid=>!activeIdSet.has(uid));
+    if(!activeMembersList.length && !historical.length){
       return `<div${attr}><span style="font-size:12px;color:var(--ink-soft)">尚無可選成員</span></div>`;
     }
     const active=activeMembersList.map(m=>
-      `<span class="chip ${sel.has(m.userId)?'on':''}" data-uid="${esc(m.userId)}" role="button" tabindex="0">${esc(participantName(m.userId))}</span>`
+      `<span class="chip ${selSet.has(m.userId)?'on':''}" data-uid="${esc(m.userId)}" role="button" tabindex="0">${esc(participantName(m.userId))}</span>`
     ).join("");
-    const removed=historicalIds.map(uid=>
-      `<span class="chip" data-removed="1" title="已離開這張地圖，僅保留歷史" style="opacity:.55;cursor:not-allowed">${esc(participantName(uid))}（已移除）</span>`
+    const removed=historical.map(uid=>
+      `<span class="chip histchip" title="歷史參與者：可移除，但無法重新加入">${esc(participantName(uid))} <b class="histx" data-hist-uid="${esc(uid)}" role="button" tabindex="0" aria-label="移除">×</b></span>`
     ).join("");
     return `<div${attr}>${active}${removed}</div>`;
   }
-  function wireParticipantPick(container, getSelected, setSelected, historicalIds){
+  function wireParticipantPick(container, getSelected, setSelected){
     if(!container) return;
+    const commit = next => setSelected(orderParticipantSelection(next, activeIds));
     container.querySelectorAll(".chip[data-uid]").forEach(chip=>{
       const toggle=()=>{
-        const uid=chip.dataset.uid;
-        const current=new Set(getSelected());
-        current.has(uid) ? current.delete(uid) : current.add(uid);
-        const next=composeParticipantSelection({
-          checkedActiveIds:[...current].filter(x=>activeIds.includes(x)),
-          activeMemberOrder:activeIds,
-          historicalIds
-        });
-        setSelected(next);
+        const uid=chip.dataset.uid, cur=getSelected();
+        commit(cur.includes(uid) ? cur.filter(x=>x!==uid) : [...cur, uid]);
       };
       chip.onclick=toggle;
       chip.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } };
+    });
+    container.querySelectorAll(".histx[data-hist-uid]").forEach(x=>{
+      const remove=e=>{ e.stopPropagation(); commit(getSelected().filter(y=>y!==x.dataset.histUid)); };
+      x.onclick=remove;
+      x.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); remove(e); } };
     });
   }
   modal(`
@@ -2274,7 +2343,7 @@ function openEditor(id, seed, opts={}){
         <div class="pick" id="f_cats">${spaceCats.map(c=>`<span class="chip ${wishlistCats.has(c)?'on':''}" data-c="${esc(c)}" style="${wishlistCats.has(c)?`background:${catColor(c)};color:${textOn(catColor(c))};border-color:${catColor(c)}`:''}">${esc(c)}</span>`).join("")}<span class="chip addcat" id="f_addcat">＋自訂</span></div>
       </div>
       <div class="field" id="f_wishwho" style="margin-bottom:0"><label>預計誰去</label>
-        ${participantPickHTML(wishlistParticipants, wishlistHistorical, {id:"f_who"})}
+        ${participantPickHTML(wishlistParticipants, {id:"f_who"})}
       </div>
     </div>
 
@@ -2374,7 +2443,7 @@ function openEditor(id, seed, opts={}){
         </div>
         <div class="visitparts">
           <span>同行</span>
-          ${participantPickHTML(v._selected||[], v._historical||[], {cls:"v_who"})}
+          ${participantPickHTML(v._selected||[], {cls:"v_who"})}
           ${conflict?`<div class="visitwarn">同行者資料需確認（who 與 participantIds 不一致，顯示以 participantIds 為準；重新選擇即可更新）</div>`:""}
         </div>
       </div>`;
@@ -2384,8 +2453,7 @@ function openEditor(id, seed, opts={}){
       wireParticipantPick(
         row.querySelector(".v_who"),
         ()=>visits[i]._selected||[],
-        next=>{ visits[i]._selected=next; visits[i]._participantsEdited=true; focusIndex=i; renderVisits(); persist(); },
-        visits[i]._historical||[]
+        next=>{ visits[i]._selected=next; visits[i]._participantsEdited=true; focusIndex=i; renderVisits(); persist(); }
       );
       d.onchange=()=>{
         visits[i].date=d.value;
@@ -2476,12 +2544,11 @@ function openEditor(id, seed, opts={}){
   function renderWishlistParticipants(){
     const host=document.getElementById("f_who");
     if(!host) return;
-    host.outerHTML=participantPickHTML(wishlistParticipants, wishlistHistorical, {id:"f_who"});
+    host.outerHTML=participantPickHTML(wishlistParticipants, {id:"f_who"});
     wireParticipantPick(
       document.getElementById("f_who"),
       ()=>wishlistParticipants,
-      next=>{ wishlistParticipants=next; renderWishlistParticipants(); persist(); },
-      wishlistHistorical
+      next=>{ wishlistParticipants=next; renderWishlistParticipants(); persist(); }
     );
   }
   renderWishlistParticipants();
