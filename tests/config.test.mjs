@@ -51,6 +51,53 @@ assert.throws(
   /only available in LOCAL TEST/
 );
 
+/* Phase 3 multiSpace flag (LOCAL only) */
+{
+  const config = resolveRuntimeConfig("localhost", "?firebaseEnv=local&multiSpace=1");
+  assert.equal(config.mode, "local");
+  assert.equal(config.multiSpace, true);
+  assert.equal(config.explicitTestSpace, null);
+}
+{
+  const config = resolveRuntimeConfig("localhost", "?firebaseEnv=local");
+  assert.equal(config.multiSpace, false, "off by default");
+}
+{
+  const config = resolveRuntimeConfig("127.0.0.1", "?firebaseEnv=local&multiSpace=1&testSpace=group");
+  assert.equal(config.multiSpace, true);
+  assert.equal(config.explicitTestSpace, "group");
+  assert.equal(config.explicitTestSpaceId, "test-space-group");
+  assert.equal(config.spaceId, "test-space-group");
+}
+/* production + multiSpace=1 -> throws */
+assert.throws(
+  () => resolveRuntimeConfig("mapair.example.com", "?multiSpace=1"),
+  /only available in LOCAL TEST/
+);
+assert.throws(
+  () => resolveRuntimeConfig("mapair.example.com", "?firebaseEnv=local&multiSpace=1"),
+  /allowed only on localhost/
+);
+/* localhost + multiSpace=1 without firebaseEnv=local -> throws */
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?multiSpace=1"),
+  /only available in LOCAL TEST/
+);
+/* duplicate multiSpace -> throws */
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&multiSpace=1&multiSpace=1"),
+  /multiSpace must be exactly/
+);
+/* unknown multiSpace value -> throws */
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&multiSpace=2"),
+  /multiSpace must be exactly/
+);
+assert.throws(
+  () => resolveRuntimeConfig("localhost", "?firebaseEnv=local&multiSpace=true"),
+  /multiSpace must be exactly/
+);
+
 /* Existing LOCAL TEST guards remain */
 assert.throws(
   () => resolveRuntimeConfig("mapair.example.com", "?firebaseEnv=local"),

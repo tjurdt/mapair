@@ -194,7 +194,7 @@ Introduce many Spaces per User, automatic Personal Space provisioning, active-Sp
 - Create a root Space and active owner Membership for each Personal Space.
 - Reuse the same `places`, `trips`, and `meta/config` paths beneath every Space.
 - Query active Memberships through `collectionGroup("members")` and fetch corresponding Space metadata.
-- Add the required collection-group index for `userId` and `status` if Emulator/deployed query validation requires it.
+- Add the required collection-group index for `userId` and `status` if Emulator/deployed query validation requires it. Implementation note: the Firestore Emulator serves the `where("userId","==").where("status","==")` collection-group query unindexed, so the LOCAL Phase 3 build runs without one; `firestore.indexes.json` in the repo declares the `members` `(userId, status)` composite index for the eventual Phase 6 deployment and is not deployed by this phase.
 - Do not initially add a duplicated `users/{uid}/spaces` index.
 
 ### UI changes
@@ -209,7 +209,7 @@ Introduce many Spaces per User, automatic Personal Space provisioning, active-Sp
 
 ### Data migration
 
-Give each of the two existing Users a new empty Personal Space through an explicit, idempotent operation. Do not copy shared Places, Trips, Visits, or settings out of `spaces/us`. Other new Users receive their Personal Space through the provisioning path after it has passed partial-failure tests.
+Give each User a new empty Personal Space through an explicit, idempotent operation. Do not copy shared Places, Trips, Visits, or settings out of `spaces/us`. Implementation note: the LOCAL Phase 3 build provisions on first sign-in via one client Firestore transaction (create-if-absent root + single owner Membership; refuses to overwrite a Shared Space or foreign-owner document; never `merge`); it reuses an already-valid Personal Space discovered under any ID rather than the deterministic one, and fails closed on more than one. A production backfill of Personal Spaces for existing `spaces/us` Users, if wanted, remains a separate approved operation and is not performed here.
 
 ### Local fixture changes
 

@@ -1,0 +1,14 @@
+{
+  "//": "Collection-group index for Phase 3 Space discovery. The Firestore Emulator serves the query unindexed; this declaration is for the eventual (separately approved) Phase 6 deployment. Do NOT deploy from here.",
+  "indexes": [
+    {
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
