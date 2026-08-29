@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
+import { externalPlaceDocumentId } from "../src/no-space/places.js";
 
 const projectId="demo-mapair-no-space-rules";
 const rules=await readFile(new URL("../firestore.no-space.rules",import.meta.url),"utf8");
 const testEnv=await initializeTestEnvironment({projectId,firestore:{rules,host:"127.0.0.1",port:8085}});
 const A="test-user-a",B="test-user-b",OUTSIDER="test-user-z";
+const PRIVATE_PLACE_ID=externalPlaceDocumentId({source:"google",extId:"ChIJ-private-review"});
 const baseVisit={placeId:"place-1",date:"2026-08-29",category:"咖啡",participantUserIds:[A,B],tripId:null,kind:"visit",endDate:"",createdBy:A};
 const baseTrip={name:"夏日旅行",emoji:"🧭",startDate:"2026-08-29",endDate:"2026-08-30",color:"#3f7d78",participantUserIds:[A,B],createdBy:A};
 
@@ -18,6 +20,11 @@ try{
     await setDoc(doc(db,"visits/visit-1/contributions/a"),{rating:4.5,memory:"A"});
     await setDoc(doc(db,"trips/trip-1"),baseTrip);
     await setDoc(doc(db,"places/place-1"),{name:"Cafe",lat:25,lng:121,source:"map",extId:null,admin:{}});
+    await setDoc(doc(db,`places/${PRIVATE_PLACE_ID}`),{name:"Known Google Place",lat:25,lng:121,source:"google",extId:"ChIJ-private-review",admin:{}});
+    await setDoc(doc(db,`places/${PRIVATE_PLACE_ID}/legacyImports/space-us`),{
+      rating:4.5,review:"private shared memory",level:"旅遊",sourceSpace:"us",sourcePlaceId:"legacy-google",
+      participantUserIds:[A,B]
+    });
     await setDoc(doc(db,"users/a"),{displayName:"A"});
   });
   const dbA=testEnv.authenticatedContext(A).firestore();
@@ -50,7 +57,10 @@ try{
   await assertFails(updateDoc(doc(dbB,"trips/trip-1"),{participantUserIds:[A]}));
   await assertFails(getDoc(doc(dbOut,"trips/trip-1")));
   await assertFails(setDoc(doc(dbA,"migrations/no-space-v1"),{status:"complete"}));
-  await assertFails(setDoc(doc(dbA,"places/place-1/legacyImports/space-us"),{review:"tamper"}));
+  await assertSucceeds(getDoc(doc(dbA,`places/${PRIVATE_PLACE_ID}/legacyImports/space-us`)));
+  await assertSucceeds(getDoc(doc(dbB,`places/${PRIVATE_PLACE_ID}/legacyImports/space-us`)));
+  await assertFails(getDoc(doc(dbOut,`places/${PRIVATE_PLACE_ID}/legacyImports/space-us`)));
+  await assertFails(setDoc(doc(dbA,`places/${PRIVATE_PLACE_ID}/legacyImports/space-us`),{review:"tamper"}));
   await assertSucceeds(getDoc(doc(dbA,"appConfig/defaults")));
 
   const visible=query(collection(dbA,"visits"),where("participantUserIds","array-contains",A));

@@ -1370,6 +1370,14 @@ function syncNoSpaceReferenceListeners(session, uid){
   const profileIds = new Set(knownParticipantUserIds(uid, visitsList, tripsList));
   const guard = callback => (...args) => { if (noSpaceSessionIsCurrent(session, uid)) callback(...args); };
   const error = area => guard(problem => handleFirestoreError(`No-Space ${area}`, problem));
+  const legacyImportError = placeId => guard(problem => {
+    if(problem?.code === "permission-denied"){
+      delete noSpaceState.legacyImports[placeId];
+      refreshNoSpaceProjection();
+      return;
+    }
+    handleFirestoreError(`No-Space legacy record ${placeId}`,problem);
+  });
 
   syncNoSpaceReferenceGroup(noSpaceState.placeUnsubs, placeIds, placeId =>
     noSpaceRepository.listenPlace(placeId, guard(snapshot => {
@@ -1383,7 +1391,7 @@ function syncNoSpaceReferenceListeners(session, uid){
       if (snapshot.exists()) noSpaceState.legacyImports[placeId] = snapshot.data();
       else delete noSpaceState.legacyImports[placeId];
       refreshNoSpaceProjection();
-    }), error(`legacy record ${placeId}`)), id => delete noSpaceState.legacyImports[id]);
+    }), legacyImportError(placeId)), id => delete noSpaceState.legacyImports[id]);
 
   syncNoSpaceReferenceGroup(noSpaceState.contributionUnsubs, visitIds, visitId =>
     noSpaceRepository.listenContributions(visitId, guard(snapshot => {

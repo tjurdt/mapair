@@ -111,7 +111,7 @@ service cloud.firestore {
       allow delete: if false;
 
       match /legacyImports/{importId} {
-        allow get: if signedIn();
+        allow get: if participant(resource.data);
         allow list, create, update, delete: if false;
       }
     }
