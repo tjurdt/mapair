@@ -73,6 +73,7 @@ import {
   selectRegionMaskCandidates,
   writeProximityPreferences
 } from "./proximity-geometry.js";
+import { aggregatePlaceVisitAreaMetrics } from "./visit-area-metrics.js";
 import { createNoSpaceRepository } from "./no-space/repository.js";
 import { averageSubmittedRating, participantContributions } from "./no-space/contributions.js";
 import { normalizeDayOrder, reorderDayVisitIds } from "./no-space/day-order.js";
@@ -250,6 +251,7 @@ let selectedRegionMaskCache = { identity:"", maskIndex:null };
 let proximitySeedCount = 0, proximityRadiusTimer = null;
 const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
+const MAP_AREA_METRIC_OPTIONS = [["level","造訪深度"],["count","地標數"],["first","最早造訪日期"],["last","最後造訪日期"],["categoryMode","造訪目的（眾數）"]];
 function catColor(c){ return catColors[c] || CAT_PALETTE[Math.max(0, spaceCats.indexOf(c)) % CAT_PALETTE.length]; }
 function textOn(hex){
   const h=(hex||"#888").replace("#",""); if(h.length<6) return "#152230";
@@ -952,7 +954,7 @@ function openSettings(){
   const settingsSession = spaceSession;
   const settingsLive = () => isCurrentSpaceSession(settingsSession, spaceSession);
   const markerOpts = [["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"],["dateFirst","造訪日期（最早一次）"],["dateLast","造訪日期（最後一次）"]];
-  const metricOpts = [["level","造訪深度"],["count","地標數"],["first","初次造訪"],["last","最後造訪"]];
+  const metricOpts = MAP_AREA_METRIC_OPTIONS;
   const sw = (val,attrs) => `<input type="color" ${attrs} value="${val}" style="width:40px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px">`;
   const colorItem = (label,val,attrs) => `<div class="colitem"><span>${esc(label)}</span>${sw(val,attrs)}</div>`;
   modal(`
@@ -991,7 +993,7 @@ function openSettings(){
   g("s_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
   g("s_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
   g("s_alpha").oninput = e => { choroAlpha = (+e.target.value)/100; refreshMapSurfaces(); };
-  g("s_metric").onchange = e => { choroMetric = e.target.value; if(adminLevel!=="off") renderAdministrativeLayer(); };
+  g("s_metric").onchange = e => setMapAreaMetric(e.target.value);
   const saveNick = () => {
     if (!settingsLive()) return;
     nicknames[user.uid] = g("s_nick").value.trim();
@@ -1002,12 +1004,12 @@ function openSettings(){
   document.querySelectorAll("input[data-lv]").forEach(inp => inp.onchange = () => {
     levelColors[inp.dataset.lv] = inp.value;
     if (settingsLive()) setDoc(metaDocFor(settingsSpaceId), { levelColors: { [inp.dataset.lv]: inp.value } }, { merge:true });
-    renderMarkers(); if(adminLevel!=="off") renderAdministrativeLayer();
+    renderMarkers(); refreshMapSurfaces();
   });
   document.querySelectorAll("input[data-cat]").forEach(inp => inp.onchange = () => {
     catColors[inp.dataset.cat] = inp.value;
     if (settingsLive()) setDoc(metaDocFor(settingsSpaceId), { catColors: { [inp.dataset.cat]: inp.value } }, { merge:true });
-    renderMarkers();
+    renderMarkers(); refreshMapSurfaces();
   });
   document.querySelectorAll("input[data-trip]").forEach(inp => inp.onchange = () => {
     if (settingsLive()) updateDoc(tripDocFor(settingsSpaceId, inp.dataset.trip), { color: inp.value }); renderMarkers();
@@ -1259,14 +1261,21 @@ function openNoSpaceSettings(){
     <div class="sethead">顯示</div>
     <div class="srow"><span>顯示地點標記</span><input type="checkbox" id="ns_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
     <div class="srow"><span>標記顏色</span><select id="ns_markermode" class="sselect">${markerOpts.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
+    <div class="sethead">地圖上色</div>
+    <div class="srow"><span>上色依據</span><select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
+    <div class="srow"><span>透明度</span><input type="range" id="ns_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
     <div class="sethead">個人資料</div>
     <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
     <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
   `);
   const mode = document.getElementById("ns_markermode");
   mode.value = markerMode;
+  const metric = document.getElementById("ns_metric");
+  metric.value = choroMetric;
   document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
   mode.onchange = event => { markerMode=event.target.value; renderMarkers(); };
+  metric.onchange = event => setMapAreaMetric(event.target.value);
+  document.getElementById("ns_alpha").oninput = event => { choroAlpha=(+event.target.value)/100; refreshMapSurfaces(); };
   document.getElementById("ns_done").onclick = async() => {
     const repo = noSpaceRepository, session = spaceSession, uid = user.uid;
     if (repo && noSpaceSessionIsCurrent(session,uid)){
@@ -2299,7 +2308,7 @@ function dateMarkerLegendBody(){
     `<div style="font-size:11px;margin-top:2px">同日：淺 → 深 = 第一站 → 最後一站</div></div>`;
 }
 function markerLegendBody(){
-  if (!showPins && !proximityEnabled) return "";
+  if (!showPins) return "";
   const titles = { cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
   const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
   let order="";
@@ -2327,20 +2336,33 @@ function markerLegendBody(){
   return `<div class="legendsection"><div class="legendtitle">地標 · ${titles[markerMode]||"地標"}</div>${body}</div>`;
 }
 
-function regionLegendBody(){
-  if(!regionLegendState || !shouldShowAdministrativeLegend({adminLevel,proximityEnabled})) return "";
-  const {metric,ctx}=regionLegendState;
+function areaMetricLegendBody(surface,metric,ctx={}){
   if(metric==="first"||metric==="last"){
-    const lab=metric==="first"?"初次造訪":"最後造訪", grad=VISIT_DATE_RAINBOW.join(",");
-    return `<div class="legendsection"><div class="legendtitle">行政區 · ${lab}</div>`+
+    const lab=metric==="first"?"最早造訪日期":"最後造訪日期", grad=VISIT_DATE_RAINBOW.join(",");
+    return `<div class="legendsection"><div class="legendtitle">${surface} · ${lab}</div>`+
       `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
       `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
+  }
+  if(metric==="categoryMode"){
+    const observed=new Set();
+    for(const place of Object.values(places)){
+      if(!mapAreaPlacePassFilter(place)) continue;
+      for(const visit of areaVisitsForPlace(place)) if(areaVisitPassFilter(place,visit) && visit.category) observed.add(visit.category);
+    }
+    const categories=[...spaceCats,...[...observed].filter(category=>!spaceCats.includes(category)).sort()];
+    const rows=categories.map(category=>[catColor(category),category]);
+    const body=rows.length ? rows.map(([color,label])=>`<div class="lg"><span class="sw" style="background:${color}"></span>${esc(label)}</div>`).join("") : `<div style="font-size:11px">尚無造訪目的</div>`;
+    return `<div class="legendsection"><div class="legendtitle">${surface} · 造訪目的（眾數）</div>${body}</div>`;
   }
   let rows=metric==="count"
     ? [[COUNT_SHADES[0],"1"],[COUNT_SHADES[1],"2"],[COUNT_SHADES[2],"3–4"],[COUNT_SHADES[3],"5–9"],[COUNT_SHADES[4],"10+"]]
     : [[levelColors["居住"],"居住"],[levelColors["住宿"],"住宿"],[levelColors["旅遊"],"旅遊"],[levelColors["接地"],"接地"],[levelColors["經過"],"經過"],["#e5e0d6","未到"]];
-  return `<div class="legendsection"><div class="legendtitle">行政區 · ${metric==="count"?"地標數":"造訪深度"}</div>`+
+  return `<div class="legendsection"><div class="legendtitle">${surface} · ${metric==="count"?"地標數":"造訪深度"}</div>`+
     rows.map(r=>`<div class="lg"><span class="sw" style="background:${r[0]}"></span>${r[1]}</div>`).join("")+`</div>`;
+}
+function regionLegendBody(){
+  if(!regionLegendState || !shouldShowAdministrativeLegend({adminLevel,proximityEnabled})) return "";
+  return areaMetricLegendBody("行政區",regionLegendState.metric,regionLegendState.ctx);
 }
 function proximityLegendBody(){
   if(!proximityEnabled) return "";
@@ -2348,8 +2370,10 @@ function proximityLegendBody(){
   const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
     : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
   const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
-  return `<div class="legendsection"><div class="legendtitle">最近造訪涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
-    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
+  const bounds=markerDateBounds();
+  return `<div class="legendsection"><div class="legendtitle">鄰近涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
+    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點。</div></div>`+
+    areaMetricLegendBody("鄰近",choroMetric,{dmin:bounds.from,dmax:bounds.to});
 }
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
@@ -2450,16 +2474,30 @@ async function ensureVillage(){
 function regionPlaces(codeOf){
   const m = {};
   for (const p of Object.values(places)){
-    if (!passFilter(p)) continue;
+    if (!mapAreaPlacePassFilter(p)) continue;
     const code = codeOf(p); if (!code) continue;
     (m[code] = m[code] || []).push(p);
   }
   return m;
 }
-function regionDate(pls, which){
-  const mode=which==="first"?"dateFirst":"dateLast";
-  const ds=pls.map(p=>representativeDateOccurrence(p,mode)).filter(Boolean).map(occurrenceDate).filter(Boolean).sort();
-  return which === "first" ? ds[0] : ds[ds.length-1];
+function areaVisitsForPlace(place){
+  return isNoSpace() ? (Array.isArray(place?.visits) ? place.visits : []) : placeVisits(place);
+}
+function areaVisitPassFilter(place,visit){
+  if(!isNoSpace()) return visitPassFilter(place,visit);
+  const category=typeof visit?.category==="string" ? visit.category.trim() : "";
+  return placeStaticFilter(place) && visitMatchesWho(place,visit) && visitMatchesTrip(visit)
+    && (!filter.cats.size || filter.cats.has(category)) && visitIntersects(visit,filter.from,filter.to);
+}
+function mapAreaPlacePassFilter(place){
+  return isNoSpace() ? areaVisitsForPlace(place).some(visit=>areaVisitPassFilter(place,visit)) : passFilter(place);
+}
+function visitAreaMetrics(pls){
+  return aggregatePlaceVisitAreaMetrics(pls,{
+    categoryOrder:isNoSpace() ? noSpaceState.defaults.categories||[] : spaceCats,
+    selectVisits:areaVisitsForPlace,
+    visitFilter:(visit,place)=>areaVisitPassFilter(place,visit)
+  });
 }
 const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
 function countColor(n){ return COUNT_SHADES[n>=10?4:n>=5?3:n>=3?2:n>=2?1:0]; }
@@ -2518,9 +2556,16 @@ function removeProximityLayer(){
 }
 function restyleProximityLayer(){
   if(!proximityLayer) return;
+  const bounds=markerDateBounds();
   proximityLayer.setStyle(feature=>{
     const place=places[String(feature.getProperty("seedId"))];
-    const color=place ? effectiveMarkerColor(place) : getCSS("--visited");
+    const metrics=place ? visitAreaMetrics([place]) : null;
+    let color=getCSS("--visited");
+    if(place && choroMetric==="level") color=levelColors[effLevel(place)]||color;
+    else if(place && choroMetric==="count") color=countColor(1);
+    else if(metrics && choroMetric==="first" && metrics.earliest) color=dateColor(metrics.earliest,bounds.from,bounds.to);
+    else if(metrics && choroMetric==="last" && metrics.latest) color=dateColor(metrics.latest,bounds.from,bounds.to);
+    else if(metrics && choroMetric==="categoryMode" && metrics.categoryMode) color=catColor(metrics.categoryMode);
     return {
       fillColor:color,
       fillOpacity:choroAlpha,
@@ -2583,7 +2628,7 @@ function proximityGeometryKey(seeds,maskMode){
 }
 async function renderProximityCoverage(requestVersion){
   const selectedRegions=filter.regions.map(region=>({...region}));
-  const seeds=selectEligibleProximitySeeds(places, passFilter);
+  const seeds=selectEligibleProximitySeeds(places, mapAreaPlacePassFilter);
   const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
   updateProximityMaskControl();
@@ -2681,6 +2726,7 @@ async function renderAdministrativeLayer(){
   if(requestVersion!==adminRenderVersion || adminLevel!==level) return;
 
   const byRegion=regionPlaces(codeOf);
+  const metricsByRegion=Object.fromEntries(Object.entries(byRegion).map(([code,regionPlacesList])=>[code,visitAreaMetrics(regionPlacesList)]));
   let dmin,dmax;
   if(choroMetric==="first" || choroMetric==="last"){
     const bounds=markerDateBounds(); dmin=bounds.from; dmax=bounds.to;
@@ -2697,7 +2743,9 @@ async function renderAdministrativeLayer(){
       return best<0 ? null : levelColors[LEVEL_ORDER[best]];
     }
     if(choroMetric==="count") return countColor(regionPlacesList.length);
-    const date=regionDate(regionPlacesList,choroMetric);
+    const metrics=metricsByRegion[code];
+    if(choroMetric==="categoryMode") return metrics.categoryMode ? catColor(metrics.categoryMode) : null;
+    const date=choroMetric==="first" ? metrics.earliest : metrics.latest;
     return date ? dateColor(date,dmin,dmax) : null;
   };
   const selectedCodes=new Set(filter.regions
@@ -2785,6 +2833,11 @@ function refreshMapSurfaces(){
   }
   updateSurfaceControls();
   renderUnifiedLegend();
+}
+
+function setMapAreaMetric(metric){
+  choroMetric=metric;
+  refreshMapSurfaces();
 }
 
 function toggleMapSurface(control){
