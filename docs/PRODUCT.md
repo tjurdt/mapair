@@ -52,7 +52,7 @@ In the legacy Space runtime, “我的足跡 / My Footprints” was reserved as 
 
 The map can show Places as markers colored by category, visit depth, participants, Trip, rating, or first/last Visit date. (The old "是否去過 / status" colour mode was removed with the wishlist feature.) For a Trip or single selected day, markers can show sequence numbers.
 
-Taiwan county, town, and village boundaries can be displayed as choropleths. Regions are colored by deepest visit level, Place count, first Visit, or last Visit, and clicking a region adds a geographic filter.
+Taiwan county, town, and village boundaries can be displayed as choropleths. Regions are colored by deepest visit level, Place count, first Visit, last Visit, or the most frequent Visit category, and clicking a region adds a geographic filter. Proximity footprints use the same area-color basis; date and category colors are derived from the currently relevant Visit occurrences at each Place.
 
 ### Filtering and views
 
