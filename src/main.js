@@ -1,33 +1,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
-import { getFirestore, collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc,
-         getDoc, getDocs, onSnapshot, query, where, orderBy, arrayUnion, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
+         getDocs, onSnapshot, query, where, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
-import {
-  createMemberDirectory,
-  resolveSpaceMembershipFoundation
-} from "./space-membership.js";
-import {
-  PERSONAL_SPACE_NAME,
-  chooseInitialActiveSpace,
-  createSpaceSession,
-  discoveryDiagnostics,
-  isCurrentSpaceSession,
-  nextSpaceSession,
-  normalizeDiscoveredSpace,
-  orderSpacesForSwitcher,
-  personalSpaceId,
-  personalSpaceResolution,
-  readActiveSpacePreference,
-  resolveSpaceMembershipPath,
-  spaceFoundationReady,
-  spaceDisplayName,
-  spaceTypeLabel,
-  validateActiveSpacePreference,
-  writeActiveSpacePreference
-} from "./spaces.js";
 import {
   classifyParticipants,
   deriveLegacyWhoMode,
@@ -96,7 +73,6 @@ import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visit
 let runtimeConfig = null, localFailure = false;
 
 function isLocalTest(){ return runtimeConfig?.mode === "local"; }
-function isNoSpace(){ return runtimeConfig?.noSpace === true; }
 function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
 const LOCAL_TEST_IDENTITIES = Object.freeze({
   a: Object.freeze({ uid:"test-user-a", email:"test-user-a@example.invalid", name:"測試使用者甲" }),
@@ -168,74 +144,19 @@ const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵",
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
-  <div class="center"><div class="setup">
-    <h1>設定(約 10 分鐘)</h1>
-
-    <h3>A. Google Maps Platform</h3>
-    <ol>
-      <li>到 <code>console.cloud.google.com</code> 建專案,<b>啟用帳單</b>(需綁卡,但你們的量會落在免費額度,實際 $0)</li>
-      <li>APIs &amp; Services → 啟用這三個:<br>
-        <b>Maps JavaScript API</b>、<b>Places API (New)</b>、<b>Geocoding API</b></li>
-      <li>Credentials → 建立 <b>API key</b>,填入下方 <code>CONFIG.google.apiKey</code></li>
-      <li>金鑰是公開在前端的,務必做 <b>Application restrictions → HTTP referrers</b>,只允許你的 Pages 網址
-        (例:<code>https://你的帳號.github.io/*</code>),並在 API restrictions 只勾上面三個 API</li>
-      <li>(選)Map management → 建 Map ID 填入 <code>CONFIG.google.mapId</code>;先用 <code>DEMO_MAP_ID</code> 也行</li>
-    </ol>
-
-    <h3>B. Firebase</h3>
-    <ol>
-      <li>到 <code>console.firebase.google.com</code> 建專案(可沿用同一個 Google Cloud 專案)</li>
-      <li>Authentication → 啟用 <b>Google</b> 登入</li>
-      <li>Firestore Database → 建立(production mode)</li>
-      <li>專案設定 → Web app → 把 <code>firebaseConfig</code> 貼進 <code>CONFIG.firebase</code></li>
-      <li>Firestore → Rules 貼上(兩人登入後在 Authentication 分頁看 UID,填進去):
-        <pre>rules_version = '2';
-service cloud.firestore {
-  match /databases/{db}/documents {
-    match /spaces/{spaceId}/{doc=**} {
-      allow read, write: if request.auth != null
-        &amp;&amp; request.auth.uid in ['UID_A','UID_B'];
-    }
-  }
-}</pre>
-      </li>
-    </ol>
-
-    <h3>C. 部署</h3>
-    <ol>
-      <li>把本檔 push 到 GitHub → 開 GitHub Pages。兩人用同一網址、同一 <code>spaceId</code> 即共享。</li>
-    </ol>
-  </div></div>`;
+    <div class="center"><div class="setup">
+      <h1>設定尚未完成</h1>
+      <p>啟動 Mapair 前，請先設定 Firebase 與 Google Maps 憑證。</p>
+    </div></div>`;
 }
 
 /* ============================================================
-   2) 啟動
+   2) State
    ============================================================ */
 let db, auth, user;
-let currentSpaceId = "";
-let currentSpace = null, currentMembership = null, spaceMembers = [];
-let removedSpaceMembers = [], membershipSource = "pending", ownershipValidation = null;
-let memberDirectory = createMemberDirectory([]);
-// Phase 3 (LOCAL-only, behind ?firebaseEnv=local&multiSpace=1): Personal Space +
-// Space switcher. `spaceSession` is a fresh object on every switch so queued
-// callbacks from a prior Space become inert (§16).
-let spaceSession = createSpaceSession("");
-let spaceSwitchInFlight = false;
-const phase3 = {
-  active: false,
-  started: false,
-  discoveryUnsub: null,
-  discoveryGen: 0,        // bumped when a new discovery listener is attached / torn down
-  discoveryReq: 0,        // bumped per snapshot; only the newest request may apply (§1)
-  discoveryUid: "",       // the authenticated UID the discovery listener belongs to
-  discoveredSpaces: [],
-  initialSelectionPending: false,
-  provisioningInFlight: false,
-  personalSpaceId: "",
-  switcherOpen: false
-};
-let searchReqSeq = 0;     // Google autocomplete request sequence (§5)
-function isMultiSpace(){ return isLocalTest() && runtimeConfig?.multiSpace === true; }
+let participantMembers = [];
+let runtimeSession = {};
+let searchReqSeq = 0;
 let noSpaceRepository = null;
 const noSpaceState = {
   visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{},
@@ -247,7 +168,7 @@ let places = {}, trips = {}, tab = "visited";
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
-let nicknames = {}, levelColors = { ...LEVEL_COLORS }, addMode = false;
+let levelColors = { ...LEVEL_COLORS }, addMode = false;
 let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
 let proximityStorage = null;
 try { proximityStorage = globalThis.localStorage; } catch(e) {}
@@ -268,22 +189,10 @@ function textOn(hex){
   const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
   return (0.299*r+0.587*g+0.114*b) > 150 ? "#152230" : "#ffffff";
 }
-let members = {};   // uid -> 顯示名稱(兩人)
-let spaceFoundationReads = {
-  spaceReady:false,
-  membersReady:false,
-  metaReady:false,
-  reconciled:false,
-  formalReadFailed:false,
-  spaceDocument:null,
-  formalMemberships:[]
-};
-const currentSpaceUnsubscribes = new Map();
-let lastLocalMembershipDiagnostic = "";
-function memberById(uid){ return memberDirectory.memberById(uid); }
-function memberDisplayName(uid){ return memberDirectory.memberDisplayName(uid); }
-function activeSpaceMembers(){ return memberDirectory.activeSpaceMembers(); }
-function historicalSpaceMember(uid){ return memberDirectory.historicalSpaceMember(uid); }
+let members = {};
+const runtimeUnsubscribes = new Map();
+function memberById(uid){ return participantMembers.find(member => member.userId === uid) || null; }
+function activeParticipantMembers(){ return participantMembers.filter(member => member.valid === true && member.status === "active"); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
@@ -333,20 +242,17 @@ const REGION_GEO = {
   countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
   townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
 };
-// Phase 2: participants are arbitrary Space Members. `who` (Visit + Place)
-// and Place `whoMode` remain as legacy serialization / compatibility fallbacks.
-// The legacy universe is `meta/config.members`; the legacy `whoMode` anchor is
-// always a record's own `createdBy`, never the current viewer.
+// Participant compatibility remains available for projected legacy records.
 function legacyParticipantContext(){
   return { legacyMemberIds: Object.keys(members || {}) };
 }
-function activeMemberIds(){ return activeSpaceMembers().map(m => m.userId); }
+function activeMemberIds(){ return activeParticipantMembers().map(m => m.userId); }
 function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
 // Active Members ordered for display: the authenticated User first, then the
 // rest by display name (Phase 2 §9).
 function orderedActiveMembers(){
   const selfUid = user?.uid || "";
-  return activeSpaceMembers().slice().sort((a,b) => {
+  return activeParticipantMembers().slice().sort((a,b) => {
     if (a.userId === selfUid) return -1;
     if (b.userId === selfUid) return 1;
     return String(a.displayName||"").localeCompare(String(b.displayName||""));
@@ -363,11 +269,10 @@ function participantName(uid){
   const isSelf = !!uid && !!user && uid === user.uid;
   let name = "";
   if (member && member.displayName && member.displayName !== "Member") name = member.displayName;
-  else if (isSelf) name = nicknames[uid] || members[uid] || "";
+  else if (isSelf) name = members[uid] || "";
   if (!name){
     if (isSelf) return "我";
-    if (isNoSpace()) return member ? "同行者" : "未知同行者";
-    return member ? "成員" : "未知成員";
+    return member ? "同行者" : "未知同行者";
   }
   if (isSelf) return `${name}（我）`;
   if (member && member.status === "removed") return `${name}（已離開）`;
@@ -660,21 +565,14 @@ function boot(){
       } catch(e){ failLocal("emulator connection setup", e); return; }
     }
     onAuthStateChanged(auth, u => {
-      // Sign-out or a change of authenticated User: invalidate the Space session
-      // FIRST so any queued callback from the previous User/Space becomes inert
-      // (§4), then tear down BOTH the current-Space listeners and the Phase 3
-      // Space-discovery listener (§8).
-      spaceSession = nextSpaceSession(spaceSession, "");
-      spaceSwitchInFlight = false;
+      runtimeSession = {};
       searchReqSeq++;
       clearTimeout(searchTimer);
       closeAllModals();
       cancelAddMode();
       clearSearchSuggestions();
-      teardownPhase3();
-      unsubscribeCurrentSpaceListeners();
-      clearSpaceScopedState();
-      resetSpaceFoundationReads();
+      unsubscribeRuntimeListeners();
+      resetRuntimeState();
       user = u;
       u ? renderApp() : renderGate();
     },
@@ -716,21 +614,10 @@ async function renderApp(){
   proximityRenderVersion++;
   removeAdministrativeLayer();
   removeProximityLayer();
-  if (isMultiSpace()){
-    // Phase 3: no active Space until Membership discovery + initial selection.
-    currentSpaceId = "";
-  } else if (isNoSpace()){
-    currentSpaceId = `no-space:${user.uid}`;
-    spaceSession = nextSpaceSession(spaceSession, currentSpaceId);
-  }
   document.getElementById("app").innerHTML = `
     <header>
-      <span class="title">${isNoSpace() ? "我的足跡" : "我們去過的地方"}</span>
+      <span class="title">我的足跡</span>
       ${localBadge()}
-      ${isMultiSpace() ? `<div class="spaceswitch" id="spaceSwitch">
-        <button class="spaceswitchbtn" id="spaceSwitchBtn" aria-haspopup="true" aria-expanded="false"><span id="spaceSwitchName">${esc(PERSONAL_SPACE_NAME)}</span> <span class="spaceswitchcaret">▾</span></button>
-        <div class="spaceswitchmenu" id="spaceSwitchMenu" role="menu"></div>
-      </div>` : ""}
       <span class="spacer"></span>
       <span class="who">${user.displayName||user.email}</span>
       <button class="btn ghost mini" id="logout">登出</button>
@@ -774,7 +661,7 @@ async function renderApp(){
           <button class="tab" data-t="trips">行程</button>
         </div>
         <div id="filterbar">
-          ${isNoSpace() ? `<div class="filter-heading">回看我的足跡 <span>日期 · 旅程 · 同行者 · 分類 · 地區</span></div>` : ""}
+          <div class="filter-heading">回看我的足跡 <span>日期 · 旅程 · 同行者 · 分類 · 地區</span></div>
           <div class="frow">
             <select id="fl_scope" class="fmini" aria-label="日期"></select>
             <select id="fl_trip" class="fmini" aria-label="旅程"></select>
@@ -850,22 +737,13 @@ async function renderApp(){
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
-  if (isMultiSpace()){
-    wireSpaceSwitcher();
-    renderSpaceSwitcher();
-    showSpaceLoadingState();
-    startPhase3();
-  } else if (isNoSpace()){
-    subscribeNoSpace();
-  } else {
-    subscribe();
-  }
+  subscribeNoSpace();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
     toggleMapSurface(b.dataset.l);
     renderMarkers();
   });
   document.getElementById("addBtn").onclick = e => {
-    if (!currentSpaceFoundationReady()) return;
+    if (!runtimeReady()) return;
     addMode = !addMode;
     e.target.classList.toggle("on", addMode);
     document.getElementById("map").style.cursor = addMode ? "crosshair" : "";
@@ -958,104 +836,11 @@ async function renderApp(){
 
 /* ---------- 設定頁(整合顯示/顏色/綽號) ---------- */
 function openSettings(){
-  if (!currentSpaceFoundationReady()) return;
-  if (isNoSpace()){ openNoSpaceSettings(); return; }
-  const settingsSpaceId = currentSpaceId;
-  const settingsSession = spaceSession;
-  const settingsLive = () => isCurrentSpaceSession(settingsSession, spaceSession);
-  const markerOpts = [["cat","在這裡做什麼"],["level","造訪深度"],["who","誰去的"],["trip","哪趟旅程"],["rating","評分"],["dateFirst","造訪日期（最早一次）"],["dateLast","造訪日期（最後一次）"]];
-  const metricOpts = MAP_AREA_METRIC_OPTIONS;
-  const sw = (val,attrs) => `<input type="color" ${attrs} value="${val}" style="width:40px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px">`;
-  const colorItem = (label,val,attrs) => `<div class="colitem"><span>${esc(label)}</span>${sw(val,attrs)}</div>`;
-  modal(`
-    <h2 style="margin-bottom:14px">設定</h2>
-
-    <div class="sethead">你的綽號</div>
-    <input id="s_nick" value="${esc(nicknames[user.uid]||"")}" placeholder="例:小明" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
-
-    <div class="sethead">顯示</div>
-    <div class="srow"><span>顯示地標</span><input type="checkbox" id="s_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
-    <div class="srow"><span>地標配色</span><select id="s_markermode" class="sselect">${markerOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
-
-    <div class="sethead">行政區上色</div>
-    <div class="srow"><span>透明度</span><input type="range" id="s_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
-    <div class="srow"><span>上色依據</span><select id="s_metric" class="sselect">${metricOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select></div>
-
-    <div class="sethead">造訪深度顏色</div>
-    <div class="colgrid">${["居住","住宿","旅遊","接地","經過"].map(l=>colorItem(l, levelColors[l], `data-lv="${l}"`)).join("")}</div>
-
-    <div class="sethead">分類</div>
-    <div id="s_cats">${spaceCats.length ? spaceCats.map(c=>`
-      <div class="catrow">
-        <input class="catname" data-old="${esc(c)}" value="${esc(c)}">
-        ${sw(catColors[c]||"#d98b3f", `data-cat="${esc(c)}"`)}
-        <button class="delx" data-catdel="${esc(c)}" title="刪除分類">✕</button>
-      </div>`).join("") : `<div style="font-size:12px;color:var(--ink-soft)">還沒有分類。到地點編輯裡用「＋自訂」新增。</div>`}</div>
-
-    <div class="sethead">旅程顏色</div>
-    <div class="colgrid">${Object.values(trips).length ? Object.values(trips).map(t=>colorItem((t.emoji?t.emoji+" ":"")+t.name, t.color||"#3f7d78", `data-trip="${t.id}"`)).join("") : `<div style="font-size:12px;color:var(--ink-soft)">尚無旅程</div>`}</div>
-
-    <div class="row" style="margin-top:8px"><button class="btn" id="s_done">完成</button></div>
-  `);
-  const g = x => document.getElementById(x);
-  g("s_markermode").value = markerMode;
-  g("s_metric").value = choroMetric;
-  g("s_pins").onchange = e => { showPins = e.target.checked; renderMarkers(); };
-  g("s_markermode").onchange = e => { markerMode = e.target.value; renderMarkers(); };
-  g("s_alpha").oninput = e => { choroAlpha = (+e.target.value)/100; refreshMapSurfaces(); };
-  g("s_metric").onchange = e => setMapAreaMetric(e.target.value);
-  const saveNick = () => {
-    if (!settingsLive()) return;
-    nicknames[user.uid] = g("s_nick").value.trim();
-    setDoc(metaDocFor(settingsSpaceId), { nicknames: { [user.uid]: nicknames[user.uid] } }, { merge:true });
-    refreshFilterUI();
-  };
-  g("s_nick").addEventListener("change", saveNick); g("s_nick").addEventListener("blur", saveNick);
-  document.querySelectorAll("input[data-lv]").forEach(inp => inp.onchange = () => {
-    levelColors[inp.dataset.lv] = inp.value;
-    if (settingsLive()) setDoc(metaDocFor(settingsSpaceId), { levelColors: { [inp.dataset.lv]: inp.value } }, { merge:true });
-    renderMarkers(); refreshMapSurfaces();
-  });
-  document.querySelectorAll("input[data-cat]").forEach(inp => inp.onchange = () => {
-    catColors[inp.dataset.cat] = inp.value;
-    if (settingsLive()) setDoc(metaDocFor(settingsSpaceId), { catColors: { [inp.dataset.cat]: inp.value } }, { merge:true });
-    renderMarkers(); refreshMapSurfaces();
-  });
-  document.querySelectorAll("input[data-trip]").forEach(inp => inp.onchange = () => {
-    if (settingsLive()) updateDoc(tripDocFor(settingsSpaceId, inp.dataset.trip), { color: inp.value }); renderMarkers();
-  });
-  document.querySelectorAll(".catname").forEach(inp => inp.addEventListener("change", () => renameCat(settingsSpaceId, inp.dataset.old, inp.value)));
-  document.querySelectorAll("[data-catdel]").forEach(b => b.onclick = () => deleteCat(settingsSpaceId, b.dataset.catdel));
-  g("s_done").onclick = closeModal;
-}
-async function renameCat(spaceId, oldN, newN){
-  if (spaceId !== currentSpaceId) return;   // a Space switch invalidated Settings
-  newN = (newN||"").trim();
-  if (!newN || newN === oldN || spaceCats.includes(newN)) return;
-  const i = spaceCats.indexOf(oldN); if (i < 0) return;
-  spaceCats[i] = newN;
-  const cc = { ...catColors }; if (cc[oldN] !== undefined){ cc[newN] = cc[oldN]; delete cc[oldN]; }
-  catColors = cc;
-  await setDoc(metaDocFor(spaceId), { categories: spaceCats, catColors: cc }, { merge:true });
-  if (spaceId !== currentSpaceId) return;
-  for (const p of Object.values(places)){
-    if ((p.categories||[]).includes(oldN)) updateDoc(placeDocFor(spaceId, p.id), { categories: p.categories.map(x=>x===oldN?newN:x) });
-  }
-  openSettings();  // 重繪
-}
-async function deleteCat(spaceId, c){
-  if (spaceId !== currentSpaceId) return;
-  spaceCats = spaceCats.filter(x => x !== c);
-  const cc = { ...catColors }; delete cc[c]; catColors = cc;
-  await setDoc(metaDocFor(spaceId), { categories: spaceCats, catColors: cc }, { merge:true });
-  if (spaceId !== currentSpaceId) return;
-  for (const p of Object.values(places)){
-    if ((p.categories||[]).includes(c)) updateDoc(placeDocFor(spaceId, p.id), { categories: p.categories.filter(x=>x!==c) });
-  }
-  closeModal(); openSettings();
+  if (!runtimeReady()) return;
+  openNoSpaceSettings();
 }
 
-/* ---------- 篩選 UI ---------- */
+/* ---------- Filters ---------- */
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
   if(!map || layoutState.map || tab==="trips") return;
@@ -1189,7 +974,7 @@ async function initMap(){
   });
   map.addListener("click", async e => {
     if (!addMode) return;                              // 只有開啟新增模式才加點
-    if (!currentSpaceFoundationReady()) return;
+    if (!runtimeReady()) return;
     if (Date.now() - lastMarkerClick < 500) return;
     const lat=e.latLng.lat(), lng=e.latLng.lng();
     nearbyPicker(lat, lng);                            // 先列出附近地標供選
@@ -1200,70 +985,6 @@ async function initMap(){
 // True while a queued current-Space callback still belongs to the Space that
 // was active when its listener was attached (§16). Any listener whose captured
 // session is no longer current must ignore its data.
-function isStaleSpaceCallback(session){ return localFailure || session !== spaceSession; }
-
-function subscribe(){
-  unsubscribeCurrentSpaceListeners();
-  resetSpaceFoundationReads();
-  const session = spaceSession;              // captured for stale-snapshot protection
-
-  // A queued error from a listener whose Space session is no longer current
-  // (e.g. Space A error arriving after an A→B switch) must not fail B's session (§4).
-  const guardedError = handler => error => { if (isStaleSpaceCallback(session)) return; handler(error); };
-
-  currentSpaceUnsubscribes.set("space", onSnapshot(spaceDoc(), snapshot => {
-    if (isStaleSpaceCallback(session)) return;
-    spaceFoundationReads.spaceReady = true;
-    spaceFoundationReads.spaceDocument = snapshot.exists() ? snapshot.data() : null;
-    reconcileSpaceMembershipFoundation();
-  }, guardedError(error => handleOptionalFoundationReadError("Space root", "space", error))));
-
-  currentSpaceUnsubscribes.set("members", onSnapshot(membersCol(), snapshot => {
-    if (isStaleSpaceCallback(session)) return;
-    spaceFoundationReads.membersReady = true;
-    spaceFoundationReads.formalMemberships = snapshot.docs.map(member => ({ ...member.data(), id:member.id }));
-    reconcileSpaceMembershipFoundation();
-  }, guardedError(error => handleOptionalFoundationReadError("Memberships", "members", error))));
-
-  currentSpaceUnsubscribes.set("places", onSnapshot(query(placesCol(), orderBy("createdAt","desc")), snap => {
-    if (isStaleSpaceCallback(session)) return;
-    places = {}; snap.forEach(d => places[d.id] = { id:d.id, ...d.data() });
-    recomputeReferencedParticipants();
-    auditParticipantData();
-    refreshFilterUI();
-    renderList(); renderMarkers();
-    refreshMapSurfaces();
-  }, guardedError(error => handleFirestoreError("places", error))));
-  currentSpaceUnsubscribes.set("trips", onSnapshot(query(tripsCol(), orderBy("createdAt","desc")), snap => {
-    if (isStaleSpaceCallback(session)) return;
-    trips = {}; snap.forEach(d => trips[d.id] = { id:d.id, ...d.data() });
-    renderList(); renderMarkers();
-    refreshFilterUI();
-    refreshMapSurfaces();
-  }, guardedError(error => handleFirestoreError("trips", error))));
-  currentSpaceUnsubscribes.set("meta", onSnapshot(metaDoc(), s => {
-    if (isStaleSpaceCallback(session)) return;
-    const d = s.data() || {};
-    spaceCats = d.categories || [];
-    members   = d.members || {};
-    catColors = d.catColors || {};
-    nicknames = d.nicknames || {};
-    levelColors = { ...LEVEL_COLORS, ...(d.levelColors||{}) };
-    spaceFoundationReads.metaReady = true;
-    reconcileSpaceMembershipFoundation();
-    refreshFilterUI();
-    renderList(); renderMarkers(); renderMarkerLegend();
-    refreshMapSurfaces();
-  }, guardedError(error => handleFirestoreError("meta/config", error))));
-
-  // Record the authenticated User in this Space's legacy meta (participant
-  // filter self entry + two-person `whoMode` compatibility). Targets the Space
-  // captured now, never a later switched-to Space.
-  const metaSpaceId = currentSpaceId;
-  setDoc(metaDocFor(metaSpaceId), { members: { [user.uid]: me() } }, { merge:true })
-    .catch(e => isLocalTest() ? failLocal("initial member write", e) : undefined);
-}
-
 function openNoSpaceSettings(){
   const markerOpts = [["cat","活動"],["level","我的足跡深度"],["who","參與者"],["trip","旅程"],["rating","我的評分"],["dateFirst","首次造訪"],["dateLast","最近造訪"]];
   modal(`
@@ -1287,16 +1008,16 @@ function openNoSpaceSettings(){
   metric.onchange = event => setMapAreaMetric(event.target.value);
   document.getElementById("ns_alpha").oninput = event => { choroAlpha=(+event.target.value)/100; refreshMapSurfaces(); };
   document.getElementById("ns_done").onclick = async() => {
-    const repo = noSpaceRepository, session = spaceSession, uid = user.uid;
-    if (repo && noSpaceSessionIsCurrent(session,uid)){
+    const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
+    if (repo && runtimeSessionIsCurrent(session,uid)){
       await repo.updateOwnProfile({ displayName:document.getElementById("ns_name").value, photoURL:user.photoURL || "" });
     }
     closeModal();
   };
 }
 
-function noSpaceSessionIsCurrent(session, uid){
-  return !localFailure && isNoSpace() && user?.uid === uid && session === spaceSession;
+function runtimeSessionIsCurrent(session, uid){
+  return !localFailure && user?.uid === uid && session === runtimeSession;
 }
 
 function resetNoSpaceState(){
@@ -1316,12 +1037,11 @@ function resetNoSpaceState(){
 }
 
 function subscribeNoSpace(){
-  unsubscribeCurrentSpaceListeners();
+  unsubscribeRuntimeListeners();
   resetNoSpaceState();
-  resetSpaceFoundationReads();
-  const session = spaceSession;
+  const session = runtimeSession;
   const uid = user.uid;
-  const current = () => noSpaceSessionIsCurrent(session, uid);
+  const current = () => runtimeSessionIsCurrent(session, uid);
   const error = area => problem => { if (current()) handleFirestoreError(`No-Space ${area}`, problem); };
   noSpaceRepository = createNoSpaceRepository({
     db,
@@ -1329,39 +1049,27 @@ function subscribeNoSpace(){
     firestore:{ addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch }
   });
 
-  // No-Space has no Membership foundation. Participation is the shared editing
-  // relationship, and these synthetic ready flags only let the existing shell
-  // reuse its loading/interaction guards.
-  spaceFoundationReads = {
-    spaceReady:true, membersReady:true, metaReady:true, reconciled:true,
-    formalReadFailed:false, spaceDocument:null, formalMemberships:[]
-  };
-  currentSpace = { id:currentSpaceId, type:"no-space", name:"我的足跡" };
-  currentMembership = { userId:uid, status:"active", valid:true };
-  membershipSource = "no-space";
-  setSpaceEditingAvailable(true);
-
-  currentSpaceUnsubscribes.set("no-space-visits", noSpaceRepository.listenVisibleVisits(snapshot => {
+  runtimeUnsubscribes.set("visits", noSpaceRepository.listenVisibleVisits(snapshot => {
     if (!current()) return;
     noSpaceState.visits = {};
     snapshot.forEach(item => noSpaceState.visits[item.id] = { id:item.id, ...item.data() });
     syncNoSpaceReferenceListeners(session, uid);
     refreshNoSpaceProjection();
   }, error("visits")));
-  currentSpaceUnsubscribes.set("no-space-trips", noSpaceRepository.listenVisibleTrips(snapshot => {
+  runtimeUnsubscribes.set("trips", noSpaceRepository.listenVisibleTrips(snapshot => {
     if (!current()) return;
     noSpaceState.trips = {};
     snapshot.forEach(item => noSpaceState.trips[item.id] = { id:item.id, ...item.data() });
     syncNoSpaceReferenceListeners(session, uid);
     refreshNoSpaceProjection();
   }, error("trips")));
-  currentSpaceUnsubscribes.set("no-space-day-orders", noSpaceRepository.listenDayOrders(snapshot => {
+  runtimeUnsubscribes.set("day-orders", noSpaceRepository.listenDayOrders(snapshot => {
     if (!current()) return;
     noSpaceState.dayOrders = {};
     snapshot.forEach(item => noSpaceState.dayOrders[item.id] = { id:item.id, ...item.data() });
     refreshNoSpaceProjection();
   }, error("day orders")));
-  currentSpaceUnsubscribes.set("no-space-defaults", noSpaceRepository.listenDefaults(snapshot => {
+  runtimeUnsubscribes.set("defaults", noSpaceRepository.listenDefaults(snapshot => {
     if (!current()) return;
     noSpaceState.defaults = snapshot.exists() ? snapshot.data() : {};
     refreshNoSpaceProjection();
@@ -1382,13 +1090,13 @@ function syncNoSpaceReferenceGroup(group, desiredIds, subscribe, onRemove){
 }
 
 function syncNoSpaceReferenceListeners(session, uid){
-  if (!noSpaceSessionIsCurrent(session, uid) || !noSpaceRepository) return;
+  if (!runtimeSessionIsCurrent(session, uid) || !noSpaceRepository) return;
   const visitsList = Object.values(noSpaceState.visits);
   const tripsList = Object.values(noSpaceState.trips);
   const placeIds = new Set(visitsList.map(visit => visit.placeId).filter(Boolean));
   const visitIds = new Set(visitsList.map(visit => visit.id));
   const profileIds = new Set(knownParticipantUserIds(uid, visitsList, tripsList));
-  const guard = callback => (...args) => { if (noSpaceSessionIsCurrent(session, uid)) callback(...args); };
+  const guard = callback => (...args) => { if (runtimeSessionIsCurrent(session, uid)) callback(...args); };
   const error = area => guard(problem => handleFirestoreError(`No-Space ${area}`, problem));
   const legacyImportError = placeId => guard(problem => {
     if(problem?.code === "permission-denied"){
@@ -1431,7 +1139,7 @@ function syncNoSpaceReferenceListeners(session, uid){
 }
 
 function refreshNoSpaceProjection(){
-  if (!isNoSpace() || !user || !noSpaceRepository) return;
+  if (!user || !noSpaceRepository) return;
   const visitList = Object.values(noSpaceState.visits);
   places = projectNoSpaceRuntime({
     currentUserId:user.uid,
@@ -1451,7 +1159,7 @@ function refreshNoSpaceProjection(){
   catColors = { ...(noSpaceState.defaults.catColors || {}) };
   levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}) };
   const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
-  spaceMembers = profileIds.map(uid => ({
+  participantMembers = profileIds.map(uid => ({
     userId:uid,
     role:null,
     status:"active",
@@ -1461,8 +1169,7 @@ function refreshNoSpaceProjection(){
     valid:true,
     issues:[]
   }));
-  memberDirectory = createMemberDirectory(spaceMembers);
-  members = Object.fromEntries(spaceMembers.map(member => [member.userId, member.displayName]));
+  members = Object.fromEntries(participantMembers.map(member => [member.userId, member.displayName]));
   recomputeReferencedParticipants();
   if (!document.getElementById("fl_trip")) return;
   refreshFilterUI();
@@ -1470,597 +1177,48 @@ function refreshNoSpaceProjection(){
   renderMarkers();
   refreshMapSurfaces();
 }
-function resetSpaceFoundationReads(){
-  spaceFoundationReads = {
-    spaceReady:false,
-    membersReady:false,
-    metaReady:false,
-    reconciled:false,
-    formalReadFailed:false,
-    spaceDocument:null,
-    formalMemberships:[]
-  };
-  currentSpace = null;
-  currentMembership = null;
-  spaceMembers = [];
-  removedSpaceMembers = [];
-  membershipSource = "pending";
-  ownershipValidation = null;
-  memberDirectory = createMemberDirectory([]);
-  lastLocalMembershipDiagnostic = "";
-  lastMembershipRenderSignature = "";
-  referencedHistoricalIds = [];
-}
-function unsubscribeCurrentSpaceListeners(){
-  for (const unsubscribe of currentSpaceUnsubscribes.values()){
+function unsubscribeRuntimeListeners(){
+  for (const unsubscribe of runtimeUnsubscribes.values()){
     try { unsubscribe(); } catch(error){ console.warn("Firestore listener cleanup failed:", error); }
   }
-  currentSpaceUnsubscribes.clear();
-}
-function handleOptionalFoundationReadError(area, readKey, error){
-  if (isLocalTest()){
-    failLocal(`Firestore ${area}`, error);
-    return;
-  }
-  console.warn(`Optional Firestore ${area} read failed; continuing with legacy meta compatibility.`, error);
-  spaceFoundationReads.formalReadFailed = true;
-  if (readKey === "space"){
-    spaceFoundationReads.spaceReady = true;
-    spaceFoundationReads.spaceDocument = null;
-  } else {
-    spaceFoundationReads.membersReady = true;
-    spaceFoundationReads.formalMemberships = [];
-  }
-  reconcileSpaceMembershipFoundation();
-}
-let lastMembershipRenderSignature = "";
-function reconcileSpaceMembershipFoundation(){
-  if (!spaceFoundationReads.spaceReady || !spaceFoundationReads.membersReady || !spaceFoundationReads.metaReady) return;
-  const foundation = resolveSpaceMembershipFoundation({
-    spaceId:currentSpaceId,
-    spaceDocument:spaceFoundationReads.formalReadFailed ? null : spaceFoundationReads.spaceDocument,
-    formalMemberships:spaceFoundationReads.formalReadFailed ? [] : spaceFoundationReads.formalMemberships,
-    legacyMembers:members,
-    legacyNicknames:nicknames,
-    currentUserId:user?.uid || ""
-  });
-  currentSpace = foundation.currentSpace;
-  currentMembership = foundation.currentMembership;
-  spaceMembers = foundation.spaceMembers;
-  removedSpaceMembers = foundation.removedMembers;
-  membershipSource = foundation.membershipSource;
-  ownershipValidation = foundation.ownership;
-  memberDirectory = foundation.directory;
-  spaceFoundationReads.reconciled = true;
-  setSpaceEditingAvailable(true);
-  reportSpaceMembershipDiagnostic(foundation);
-
-  // Phase 2 §4: participant-dependent UI depends on formal Membership data.
-  // Whenever the resolved directory / active / removed Members / names change,
-  // refresh that UI once — regardless of whether this listener arrived before
-  // or after meta/places/trips. A signature guard prevents render loops.
-  const signature = JSON.stringify({
-    source:foundation.membershipSource,
-    active:foundation.activeMembers.map(m=>`${m.userId}:${m.displayName}`),
-    removed:foundation.removedMembers.map(m=>`${m.userId}:${m.displayName}`),
-    current:foundation.currentMembership?.userId || null
-  });
-  if (signature !== lastMembershipRenderSignature){
-    lastMembershipRenderSignature = signature;
-    recomputeReferencedParticipants();
-    refreshParticipantDependentUI();
-  }
-}
-function currentSpaceFoundationReady(){
-  if (isNoSpace()) return !!user && !!noSpaceRepository && spaceSession.spaceId === currentSpaceId;
-  return spaceFoundationReady({
-    multiSpace:isMultiSpace(),
-    currentSpaceId,
-    session:spaceSession,
-    ...spaceFoundationReads
-  });
-}
-// Re-render the participant-dependent surfaces. Guarded so it is inert until the
-// app shell + map exist; creates no Firestore listeners or writes.
-function refreshParticipantDependentUI(){
-  if (!document.getElementById("app") || !document.getElementById("fl_trip")) return;
-  refreshFilterUI();
-  renderList();
-  renderMarkers();
-}
-function reportSpaceMembershipDiagnostic(foundation){
-  const diagnostic = {
-    currentSpaceId,
-    membershipSource:foundation.membershipSource,
-    members:foundation.spaceMembers.length,
-    activeMembers:foundation.activeMembers.length,
-    removedMembers:foundation.removedMembers.length,
-    currentRole:foundation.currentMembership?.role || null,
-    currentStatus:foundation.currentMembership?.status || null,
-    currentMembershipAccessible:foundation.currentMembershipAccessible,
-    ownershipInvariant:foundation.ownership.code
-  };
-  if (isLocalTest()){
-    const key = JSON.stringify(diagnostic);
-    if (key !== lastLocalMembershipDiagnostic){
-      lastLocalMembershipDiagnostic = key;
-      console.info("Mapair LOCAL TEST membership foundation", diagnostic);
-    }
-  }
-  if (foundation.membershipSource === "formal" && !foundation.ownership.valid){
-    console.warn("Invalid formal Space ownership state detected; no repair or authorization change was attempted.", foundation.ownership);
-  }
-  if (foundation.membershipSource === "formal" && foundation.currentMembership?.status === "removed"){
-    console.warn("The authenticated User has a removed formal Membership. Phase 1 records this as inaccessible but does not enforce authorization in the UI.");
-  }
-}
-const loggedParticipantWarnings = new Set();
-// LOCAL TEST only: surface Visits whose `who` and `participantIds` disagree or
-// whose `participantIds` is malformed. Diagnostic only — nothing is normalized
-// or written (APPROVED PHASE 2 CONTRACT §2).
-function auditParticipantData(){
-  if (!isLocalTest()) return;
-  for (const p of Object.values(places)){
-    for (const v of (Array.isArray(p.visits) ? p.visits : [])){
-      const key = `${p.id}:${v?.id||""}`;
-      const mismatch = detectParticipantMismatch(v);
-      if (mismatch?.mismatch && !loggedParticipantWarnings.has(`mismatch:${key}`)){
-        loggedParticipantWarnings.add(`mismatch:${key}`);
-        console.warn("Mapair LOCAL TEST participant mismatch", { place:p.id, visit:v?.id, who:mismatch.who, participantIds:mismatch.participantIds });
-      }
-      const issues = resolveVisitParticipants(v, p, legacyParticipantContext()).issues;
-      for (const issue of issues){
-        const issueKey = `${issue.code}:${key}`;
-        if (loggedParticipantWarnings.has(issueKey)) continue;
-        loggedParticipantWarnings.add(issueKey);
-        console.warn("Mapair LOCAL TEST participant data issue", { place:p.id, visit:v?.id, ...issue });
-      }
-    }
-  }
-}
-// Space-scoped Firestore path helpers. The `*For(spaceId)` forms bind an
-// explicit Space; any deferred / queued / async write MUST use a `*For` helper
-// with the Space ID captured before a possible switch (§17). The bare helpers
-// resolve `currentSpaceId` and are for the live current-Space subscription and
-// synchronous handlers only.
-const spaceDocFor   = spaceId => doc(db, "spaces", spaceId);
-const membersColFor = spaceId => collection(db, "spaces", spaceId, "members");
-const memberDocFor  = (spaceId, uid) => doc(db, "spaces", spaceId, "members", uid);
-const metaDocFor    = spaceId => doc(db, "spaces", spaceId, "meta", "config");
-const placesColFor  = spaceId => collection(db, "spaces", spaceId, "places");
-const placeDocFor   = (spaceId, id) => doc(db, "spaces", spaceId, "places", id);
-const tripsColFor   = spaceId => collection(db, "spaces", spaceId, "trips");
-const tripDocFor    = (spaceId, id) => doc(db, "spaces", spaceId, "trips", id);
-
-const spaceDoc   = () => spaceDocFor(currentSpaceId);
-const membersCol = () => membersColFor(currentSpaceId);
-const memberDoc  = uid => memberDocFor(currentSpaceId, uid);
-const metaDoc    = () => metaDocFor(currentSpaceId);
-const placesCol  = () => placesColFor(currentSpaceId);
-const placeDoc   = id => placeDocFor(currentSpaceId, id);
-const tripsCol   = () => tripsColFor(currentSpaceId);
-const tripDoc    = id => tripDocFor(currentSpaceId, id);
-
-/* ============================================================
-   Phase 3 — Personal Space + Space switcher (LOCAL only, gated by
-   ?firebaseEnv=local&multiSpace=1). Membership is the discovery and
-   permission relationship; participation is never consulted.
-   ============================================================ */
-function phase3Diag(area, detail){
-  if (isLocalTest()) console.info(`Mapair Phase 3 · ${area}`, detail);
-}
-function spacePrefStorage(){ try { return globalThis.localStorage; } catch(e){ return null; } }
-function safeSelfDisplayName(){ return user?.displayName || user?.email || "地圖擁有者"; }
-function safeSelfPhotoURL(){ return typeof user?.photoURL === "string" ? user.photoURL : ""; }
-
-function teardownPhase3(){
-  if (phase3.discoveryUnsub){ try { phase3.discoveryUnsub(); } catch(e){} }
-  phase3.discoveryUnsub = null;
-  phase3.discoveryGen++;
-  phase3.discoveryReq++;
-  phase3.discoveryUid = "";
-  phase3.discoveredSpaces = [];
-  phase3.started = false;
-  phase3.initialSelectionPending = false;
-  phase3.provisioningInFlight = false;
-  phase3.personalSpaceId = "";
-  phase3.switcherOpen = false;
+  runtimeUnsubscribes.clear();
 }
 
-function startPhase3(){
-  if (!isMultiSpace() || !user?.uid) return;
-  phase3.active = true;
-  phase3.started = true;
-  phase3.initialSelectionPending = true;
-  phase3.personalSpaceId = personalSpaceId(user.uid);
-  startSpaceDiscovery();
+function runtimeReady(){
+  return !!user && !!noSpaceRepository;
 }
 
-// ONE authenticated-User discovery listener over the collection group. It lives
-// across Space switches and is torn down only on logout / auth change (§8).
-function startSpaceDiscovery(){
-  const uid = user?.uid || "";
-  if (!uid) return;
-  phase3.discoveryGen++;
-  phase3.discoveryUid = uid;
-  const gen = phase3.discoveryGen;
-  try {
-    const q = query(collectionGroup(db, "members"), where("userId", "==", uid), where("status", "==", "active"));
-    phase3.discoveryUnsub = onSnapshot(q,
-      snap => {
-        // Each snapshot gets a monotonically increasing request version; only the
-        // newest may apply its async result (§1).
-        const req = ++phase3.discoveryReq;
-        handleDiscoverySnapshot(gen, req, uid, snap).catch(err => { phase3Diag("discovery-callback", err?.message || String(err)); });
-      },
-      err => {
-        // Ignore a queued error from a superseded / torn-down discovery listener (§4).
-        if (localFailure || gen !== phase3.discoveryGen || uid !== (user?.uid || "")) return;
-        failLocal("Space discovery", err);
-      }
-    );
-  } catch(err){
-    failLocal("Space discovery setup", err);
-  }
-}
-
-// `gen` = discovery listener generation; `req` = per-snapshot request version;
-// `snapUid` = the UID the listener belongs to. A result applies only if all three
-// are still current after the awaits (§1, §2, §4).
-async function handleDiscoverySnapshot(gen, req, snapUid, snapshot){
-  const stillCurrent = () => !localFailure && gen === phase3.discoveryGen && req === phase3.discoveryReq && snapUid === (user?.uid || "") && snapUid === phase3.discoveryUid;
-  if (!stillCurrent()) return;
-
-  const rows = snapshot.docs.map(d => ({ path: d.ref.path, id: d.id, ...d.data() }));
-
-  // §3 — trust a Membership only when its document path is exactly
-  // spaces/{spaceId}/members/{uid}; never map another "members" collection's
-  // grandparent ID into spaces/{id}.
-  const mine = [];
-  const rejected = [];
-  for (const row of rows){
-    const parsed = resolveSpaceMembershipPath(row.path, snapUid);
-    const validRow = parsed.valid
-      && row.id === snapUid && row.userId === snapUid
-      && row.status === "active" && ["owner", "member"].includes(row.role);
-    if (validRow) mine.push({ ...row, spaceId: parsed.spaceId });
-    else rejected.push({ path: row.path, reason: parsed.valid ? "membership-fields" : parsed.reason, role: row.role, status: row.status });
-  }
-  if (rejected.length) phase3Diag("discovery-rejected-rows", rejected);
-
-  // §2 — a Firestore READ FAILURE is not evidence that a Space root is missing.
-  // Distinguish read error (fail closed) from a successful "does not exist" read.
-  const settled = await Promise.allSettled(mine.map(m => getDoc(spaceDocFor(m.spaceId))));
-  if (!stillCurrent()) return;   // a newer request / listener / User superseded this one
-
-  const readFailures = settled
-    .map((s, i) => ({ s, spaceId: mine[i].spaceId }))
-    .filter(({ s }) => s.status === "rejected");
-  if (readFailures.length){
-    phase3Diag("discovery-root-read-failed", readFailures.map(({ spaceId, s }) => ({ spaceId, error: s.reason?.message || String(s.reason) })));
-    failLocal("Space discovery", new Error(`${readFailures.length} Space root read(s) failed; refusing to update discovery or provision a Personal Space while root reads are uncertain.`));
-    return;
-  }
-
-  phase3.discoveredSpaces = mine.map((m, i) => {
-    const snap = settled[i].value;
-    return normalizeDiscoveredSpace({
-      spaceId: m.spaceId,
-      membership: m,
-      spaceDoc: snap.exists() ? snap.data() : null
-    });
-  });
-  const diags = discoveryDiagnostics(phase3.discoveredSpaces);
-  if (diags.length) phase3Diag("discovered-space-issues", diags);
-  onDiscoveryUpdate();
-}
-
-function accessibleSpaceIds(){ return phase3.discoveredSpaces.filter(s => s.valid).map(s => s.id); }
-function discoveredSpaceById(id){ return phase3.discoveredSpaces.find(s => s.id === id && s.valid) || null; }
-function currentPersonalSpaceId(){
-  const uid = user?.uid || "";
-  const owned = phase3.discoveredSpaces.filter(s => s.valid && s.isPersonal && s.ownerId === uid && s.userId === uid && s.status === "active");
-  return owned.length === 1 ? owned[0].id : "";
-}
-
-function onDiscoveryUpdate(){
-  if (localFailure) return;
-  if (phase3.initialSelectionPending) resolveInitialSpaceSelection();
-  else reconcileActiveSpaceAgainstDiscovery();
-  renderSpaceSwitcher();
-}
-
-function resolveInitialSpaceSelection(){
-  if (!phase3.initialSelectionPending || phase3.provisioningInFlight || spaceSwitchInFlight) return;
-  const uid = user?.uid || "";
-  const resolution = personalSpaceResolution(phase3.discoveredSpaces, uid, phase3.personalSpaceId);
-
-  if (resolution.action === "conflict"){
-    phase3.initialSelectionPending = false;
-    failLocal("Personal Space", new Error(`More than one valid Personal Space for this User (${resolution.spaceIds.join(", ")}). Refusing to guess a canonical one; not deleting or merging anything.`));
-    return;
-  }
-
-  if (resolution.action === "provision"){
-    phase3.provisioningInFlight = true;
-    phase3Diag("personal-space", { action:"provision", spaceId: resolution.spaceId });
-    ensurePersonalSpace(uid).then(async pid => {
-      phase3.personalSpaceId = pid;
-      if (uid !== (user?.uid || "")) { phase3.provisioningInFlight = false; return; }   // auth changed
-      // Authoritatively confirm the freshly-provisioned Space with a read that
-      // fails closed rather than being interpreted as "missing".
-      let spaceSnap, memberSnap;
-      try {
-        [spaceSnap, memberSnap] = await Promise.all([getDoc(spaceDocFor(pid)), getDoc(memberDocFor(pid, uid))]);
-      } catch(e){
-        phase3.provisioningInFlight = false;
-        phase3.initialSelectionPending = false;
-        failLocal("Personal Space confirmation", e);
-        return;
-      }
-      if (uid !== (user?.uid || "")) { phase3.provisioningInFlight = false; return; }
-      const entry = normalizeDiscoveredSpace({
-        spaceId: pid,
-        membership: memberSnap.exists() ? { path: `spaces/${pid}/members/${uid}`, id: uid, ...memberSnap.data() } : null,
-        spaceDoc: spaceSnap.exists() ? spaceSnap.data() : null
-      });
-      if (entry.valid) phase3.discoveredSpaces = [...phase3.discoveredSpaces.filter(s => s.id !== pid), entry];
-      else phase3Diag("personal-space-invalid-after-provision", entry.issues);
-      phase3.provisioningInFlight = false;
-      onDiscoveryUpdate();   // re-run selection with the confirmed Personal Space
-    }).catch(err => {
-      phase3.provisioningInFlight = false;
-      phase3.initialSelectionPending = false;
-      failLocal("Personal Space provisioning", err);
-    });
-    return;
-  }
-
-  // reuse
-  phase3.personalSpaceId = resolution.spaceId;
-  phase3.initialSelectionPending = false;
-
-  const accessible = accessibleSpaceIds();
-  const savedPref = validateActiveSpacePreference(
-    readActiveSpacePreference(spacePrefStorage(), runtimeConfig.firebase.projectId, uid),
-    accessible
-  );
-  const choice = chooseInitialActiveSpace({
-    explicitRequested: !!runtimeConfig.explicitTestSpace,
-    explicitTestSpaceId: runtimeConfig.explicitTestSpaceId,
-    savedPreferenceId: savedPref,
-    personalSpaceId: resolution.spaceId,
-    accessibleSpaceIds: accessible
-  });
-
-  if (choice.error === "explicit-inaccessible"){
-    failLocal("initial Space", new Error(`testSpace=${runtimeConfig.explicitTestSpace} was requested but the authenticated User is not an active Member of that fixture Space. Not selecting another Space.`));
-    return;
-  }
-  if (!choice.spaceId){
-    failLocal("initial Space", new Error("Personal Space provisioning produced no accessible Space; failing closed rather than choosing arbitrary data."));
-    return;
-  }
-  phase3Diag("initial-space", { spaceId: choice.spaceId, source: choice.source });
-  switchActiveSpace(choice.spaceId, { initial:true, reason: choice.source });
-}
-
-function reconcileActiveSpaceAgainstDiscovery(){
-  if (!currentSpaceId || spaceSwitchInFlight) return;
-  const accessible = accessibleSpaceIds();
-  if (accessible.includes(currentSpaceId)) return;
-  phase3Diag("membership-lost", { space: currentSpaceId });
-  const personal = currentPersonalSpaceId();
-  if (personal && personal !== currentSpaceId && accessible.includes(personal)){
-    switchActiveSpace(personal, { reason:"membership-lost" });
-    return;
-  }
-  failLocal("active Space access", new Error(`Current Space ${currentSpaceId} is no longer accessible and no Personal Space fallback is available.`));
-}
-
-// Retry-safe, idempotent, concurrent-tab-safe (§4, §5). One Firestore
-// transaction; never overwrites a Shared Space, never "repairs" an ambiguous
-// ownership state, never uses merge to paper over a conflict.
-async function ensurePersonalSpace(uid){
-  const pid = personalSpaceId(uid);
-  const spaceRef = spaceDocFor(pid);
-  const memberRef = memberDocFor(pid, uid);
-  const displayName = safeSelfDisplayName();
-  const photoURL = safeSelfPhotoURL();
-  await runTransaction(db, async tx => {
-    const spaceSnap = await tx.get(spaceRef);
-    const memberSnap = await tx.get(memberRef);
-    const spaceExists = spaceSnap.exists();
-    const memberExists = memberSnap.exists();
-
-    if (spaceExists){
-      const s = spaceSnap.data() || {};
-      if (s.type !== "personal" || s.ownerId !== uid){
-        throw new Error(`spaces/${pid} already exists and is NOT this User's Personal Space (type=${s.type ?? "?"}, ownerId=${s.ownerId ?? "?"}). Not overwriting.`);
-      }
-    }
-    if (memberExists){
-      const m = memberSnap.data() || {};
-      if (m.userId !== uid || m.role !== "owner" || m.status !== "active"){
-        throw new Error(`spaces/${pid}/members/${uid} already exists and is NOT a valid active owner Membership (userId=${m.userId ?? "?"}, role=${m.role ?? "?"}, status=${m.status ?? "?"}). Not repairing.`);
-      }
-    }
-    if (spaceExists && memberExists) return;   // already provisioned and valid — no-op
-
-    if (!spaceExists){
-      tx.set(spaceRef, {
-        name: PERSONAL_SPACE_NAME,
-        type: "personal",
-        ownerId: uid,
-        createdBy: uid,
-        createdAt: serverTimestamp()
-      });
-    }
-    if (!memberExists){
-      const memberData = {
-        userId: uid,
-        role: "owner",
-        status: "active",
-        displayNameSnapshot: displayName,
-        joinedAt: serverTimestamp()
-      };
-      if (photoURL) memberData.photoURLSnapshot = photoURL;
-      tx.set(memberRef, memberData);
-    }
-  });
-  phase3Diag("personal-space", { spaceId: pid, ensured: true });
-  return pid;
-}
-
-async function createSharedSpace(name){
-  const uid = user?.uid || "";
-  if (!uid) throw new Error("Not authenticated.");
-  const trimmed = (name || "").trim();
-  if (!trimmed) throw new Error("A Shared Space needs a name.");
-  const ref = doc(collection(db, "spaces"));   // cryptographic auto ID
-  const newId = ref.id;
-  const memberRef = memberDocFor(newId, uid);
-  const displayName = safeSelfDisplayName();
-  await runTransaction(db, async tx => {
-    const existing = await tx.get(ref);
-    if (existing.exists()) throw new Error("Generated Space ID collided; please retry.");
-    tx.set(ref, {
-      name: trimmed,
-      type: "shared",
-      ownerId: uid,
-      createdBy: uid,
-      createdAt: serverTimestamp()
-    });
-    tx.set(memberRef, {
-      userId: uid, role: "owner", status: "active",
-      displayNameSnapshot: displayName, joinedAt: serverTimestamp()
-    });
-  });
-  // Optimistic entry so the immediate switch can validate the new Space; the
-  // discovery listener reconciles it on its next fire.
-  phase3.discoveredSpaces = [
-    ...phase3.discoveredSpaces.filter(s => s.id !== newId),
-    normalizeDiscoveredSpace({
-      spaceId: newId,
-      membership: { id: uid, userId: uid, role: "owner", status: "active" },
-      spaceDoc: { name: trimmed, type: "shared", ownerId: uid }
-    })
-  ];
-  phase3Diag("shared-space", { spaceId: newId, created: true });
-  return newId;
-}
-
-// The single controlled Space activation (§14). Tears down everything bound to
-// the previous Space BEFORE any new snapshot can arrive.
-function switchActiveSpace(spaceId, opts = {}){
-  if (!isMultiSpace()) return;
-  const target = discoveredSpaceById(spaceId);
-  if (!target){
-    phase3Diag("switch-rejected", { spaceId, reason:"not-accessible" });
-    if (!opts.initial) alert("這張地圖目前無法開啟。");
-    return;
-  }
-  if (spaceId === currentSpaceId && spaceSession.spaceId === spaceId && !opts.initial){
-    closeSpaceSwitcherMenu();
-    return;
-  }
-
-  spaceSwitchInFlight = true;
-  closeSpaceSwitcherMenu();
-
-  // 1) tear down interaction bound to the old Space
-  closeAllModals();
-  cancelAddMode();
-  clearSearchSuggestions();
-  clearTimeout(searchTimer);
-  searchReqSeq++;   // invalidate any in-flight Google autocomplete request (§5)
-  clearTimeout(filterFitTimer); filterFitTimer = null;
-
-  // 2) drop the old Space's live listeners and mint a new session token so any
-  //    queued callback from the old Space becomes inert
-  unsubscribeCurrentSpaceListeners();
-  spaceSession = nextSpaceSession(spaceSession, spaceId);
-  adminRenderVersion++;
-  proximityRenderVersion++;
-
-  // 3) clear every Space-scoped domain + view slice
-  clearSpaceScopedState();
-
-  // 4) reset data-bound filters (§15)
-  resetFiltersForSpaceSwitch();
-
-  // 5) activate the new Space
-  currentSpaceId = spaceId;
-  writeActiveSpacePreference(spacePrefStorage(), runtimeConfig.firebase.projectId, user?.uid || "", spaceId);
-  renderSpaceSwitcher();
-  showSpaceLoadingState();
-  refreshMapSurfaces();
-
-  subscribe();
-  spaceSwitchInFlight = false;
-  phase3Diag("switch", { to: spaceId, reason: opts.reason || "user" });
-  renderSpaceSwitcher();
-}
-
-function clearSpaceScopedState(){
+function resetRuntimeState(){
   resetNoSpaceState();
-  places = {}; trips = {}; spaceCats = [];
-  members = {}; nicknames = {}; catColors = {};
+  places = {};
+  trips = {};
+  spaceCats = [];
+  members = {};
+  catColors = {};
   levelColors = { ...LEVEL_COLORS };
-  currentSpace = null; currentMembership = null;
-  spaceMembers = []; removedSpaceMembers = [];
-  membershipSource = "pending"; ownershipValidation = null;
-  memberDirectory = createMemberDirectory([]);
+  participantMembers = [];
   referencedHistoricalIds = [];
-  lastMembershipRenderSignature = "";
-  lastLocalMembershipDiagnostic = "";
-  loggedParticipantWarnings.clear();
   dayVisitItems = [];
-  markers.forEach(m => { try { m.map = null; } catch(e){} }); markers = [];
+  markers.forEach(marker => { try { marker.map = null; } catch(e){} });
+  markers = [];
   if (tripLine){ try { tripLine.setMap(null); } catch(e){} tripLine = null; }
   removeAdministrativeLayer();
   removeProximityLayer();
-  adminLevel = "off"; proximityEnabled = false;
-  regionLegendState = null; regionMulti = false;
+  adminLevel = "off";
+  proximityEnabled = false;
+  regionLegendState = null;
+  regionMulti = false;
   proximityMaskIndex = null;
   selectedRegionMaskCache = { identity:"", maskIndex:null };
   proximityGeometryCache.clear();
   proximitySeedCount = 0;
-  // NOTE: `placeEditorWriteQueues` is intentionally NOT cleared here (§6).
-  // Clearing the Map would forget still-running Promise chains without
-  // cancelling them; a returned-to Space must keep serializing behind any
-  // unresolved write for the same `${spaceId}:${placeId}` key. Each entry
-  // removes itself via its own `.finally`. New editors are session-invalidated.
 }
 
-function resetFiltersForSpaceSwitch(){
-  filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
-  dateScope = "month";
-  pickedMonth = currentMonth(0);
-  applyDateScope();
-  tab = "visited";
-  numberPins = false;
-}
-
-function showSpaceLoadingState(){
-  setSpaceEditingAvailable(false);
+function showLoadingState(){
   const list = document.getElementById("list");
-  if (list) list.innerHTML = `<div class="empty">地圖載入中…</div>`;
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === "visited"));
-  document.getElementById("searchWrap") && (document.getElementById("searchWrap").style.display = "block");
-  if (document.getElementById("fl_trip")) refreshFilterUI();
-  renderFilterChips();
+  if (list) list.innerHTML = `<div class="empty">載入中…</div>`;
   const legend = document.getElementById("maplegend");
   if (legend){ legend.innerHTML = ""; legend.style.display = "none"; }
-}
-function setSpaceEditingAvailable(ready){
-  if (!isMultiSpace()) return;
-  const enabled = !!ready && currentSpaceFoundationReady();
-  const addButton = document.getElementById("addBtn");
-  const searchInput = document.getElementById("search");
-  if (addButton) addButton.disabled = !enabled;
-  if (searchInput) searchInput.disabled = !enabled;
-  if (!enabled) cancelAddMode();
 }
 
 function cancelAddMode(){
@@ -2079,90 +1237,7 @@ function closeAllModals(){
   document.querySelectorAll(".modal-bg").forEach(m => m.remove());
 }
 
-/* ---------- Space switcher UI (§11–§13) ---------- */
-function wireSpaceSwitcher(){
-  const btn = document.getElementById("spaceSwitchBtn");
-  if (!btn) return;
-  btn.onclick = e => { e.stopPropagation(); toggleSpaceSwitcherMenu(); };
-  const signal = layoutDismissController?.signal;
-  document.addEventListener("click", e => {
-    const sw = document.getElementById("spaceSwitch");
-    if (phase3.switcherOpen && sw && !sw.contains(e.target)) closeSpaceSwitcherMenu();
-  }, signal ? { signal } : undefined);
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && phase3.switcherOpen){
-      closeSpaceSwitcherMenu();
-      document.getElementById("spaceSwitchBtn")?.focus();
-    }
-  }, signal ? { signal } : undefined);
-}
-function toggleSpaceSwitcherMenu(){ phase3.switcherOpen ? closeSpaceSwitcherMenu() : openSpaceSwitcherMenu(); }
-function openSpaceSwitcherMenu(){
-  phase3.switcherOpen = true;
-  document.getElementById("spaceSwitchMenu")?.classList.add("open");
-  document.getElementById("spaceSwitchBtn")?.setAttribute("aria-expanded", "true");
-  renderSpaceSwitcher();
-}
-function closeSpaceSwitcherMenu(){
-  phase3.switcherOpen = false;
-  document.getElementById("spaceSwitchMenu")?.classList.remove("open");
-  document.getElementById("spaceSwitchBtn")?.setAttribute("aria-expanded", "false");
-}
-function renderSpaceSwitcher(){
-  const nameEl = document.getElementById("spaceSwitchName");
-  const menu = document.getElementById("spaceSwitchMenu");
-  if (!nameEl || !menu) return;
-  const uid = user?.uid || "";
-  const ordered = orderSpacesForSwitcher(phase3.discoveredSpaces, uid);
-  const active = ordered.find(s => s.id === currentSpaceId);
-  nameEl.textContent = active ? spaceDisplayName(active) : (currentSpaceId ? "載入中…" : "選擇地圖…");
-
-  const rows = ordered.map(s => `<button class="spacerow${s.id === currentSpaceId ? " on" : ""}" role="menuitem" data-space="${esc(s.id)}">
-      <span class="spacerow-check">${s.id === currentSpaceId ? "✓" : ""}</span>
-      <span class="spacerow-name">${esc(spaceDisplayName(s))}</span>
-      <span class="spacerow-type">${esc(spaceTypeLabel(s))}</span>
-    </button>`).join("");
-  const empty = ordered.length ? "" : `<div class="spacerow-empty">尋找你的地圖中…</div>`;
-  menu.innerHTML = `${rows}${empty}<button class="spacerow spacerow-new" role="menuitem" id="spaceNewShared">＋ 新共享地圖</button>`;
-
-  menu.querySelectorAll("[data-space]").forEach(b => b.onclick = () => {
-    closeSpaceSwitcherMenu();
-    switchActiveSpace(b.dataset.space, { reason:"user" });
-  });
-  const newBtn = document.getElementById("spaceNewShared");
-  if (newBtn) newBtn.onclick = () => { closeSpaceSwitcherMenu(); promptNewSharedSpace(); };
-}
-function promptNewSharedSpace(){
-  modal(`
-    <h2 style="margin-bottom:4px">新共享地圖</h2>
-    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">先取個名字，之後可邀請其他人加入。</div>
-    <input id="newSpaceName" placeholder="例:大學朋友、家庭旅行" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff">
-    <div class="row" style="margin-top:12px"><button class="btn" id="newSpaceCreate">建立</button></div>
-  `);
-  const input = document.getElementById("newSpaceName");
-  const create = document.getElementById("newSpaceCreate");
-  input.focus();
-  create.onclick = async () => {
-    const name = (input.value || "").trim();
-    if (!name){ input.focus(); return; }
-    create.disabled = true;
-    try {
-      const newId = await createSharedSpace(name);
-      closeModal();
-      switchActiveSpace(newId, { reason:"created" });
-    } catch(err){
-      create.disabled = false;
-      failLocal("Shared Space creation", err);
-    }
-  };
-  input.onkeydown = e => { if (e.key === "Enter"){ e.preventDefault(); create.click(); } };
-}
-
-/* ---------- 地圖標記(AdvancedMarker + 彩色 PinElement) ---------- */
-// Participant marker colouring for arbitrary Member sets: each UID maps to a
-// stable palette colour by deterministic hash (independent of Member count or
-// order); any multi-person Visit shares one "group" colour; exactly two people
-// carries no special meaning (Phase 2 §7).
+/* ---------- Map markers ---------- */
 const PARTICIPANT_GROUP_COLOR = "#b25b6b";
 const PARTICIPANT_NONE_COLOR = "#9aa5ad";
 function participantColor(uid){ return CAT_PALETTE[participantColorIndex(uid, CAT_PALETTE.length)]; }
@@ -2239,7 +1314,7 @@ function markerColorForVisit(p,v){
   if (markerMode === "cat"){
     const c=visitCategory(p,v); if(c) return catColor(c);
   }
-  const personal=isNoSpace()?v?._contributions?.[user?.uid]||{}:{};
+  const personal=v?._contributions?.[user?.uid]||{};
   if (markerMode === "level" && personal.level) return levelColors[personal.level] || markerColor(p);
   if (markerMode === "rating" && personal.rating) return ratingColor(personal.rating);
   if (markerMode === "who") return visitWhoColor(p,v);
@@ -2267,7 +1342,7 @@ function effectiveMarkerColor(p){
 function renderMarkers(){
   if (!AdvMarker) return;
   markers.forEach(m => m.map = null); markers = [];
-  if (!currentSpaceFoundationReady()){
+  if (!runtimeReady()){
     const legend = document.getElementById("maplegend");
     if (legend){ legend.innerHTML = ""; legend.style.display = "none"; }
     return;
@@ -2435,61 +1510,56 @@ function pip(lat, lng, features, codeProp){
 // 造訪深度:沒設 level 的地點預設當作「旅遊」。
 function effLevel(p){ return p.level || "旅遊"; }
 
-function updatePlaceGeographyCache(originContextId, placeId, fields){
-  if (originContextId !== currentSpaceId) return Promise.resolve();
-  if (isNoSpace()) return noSpaceRepository?.updatePlaceCache(placeId, fields) || Promise.resolve();
-  return updateDoc(placeDocFor(originContextId, placeId), fields);
+function updatePlaceGeographyCache(_originContextId, placeId, fields){
+  return noSpaceRepository?.updatePlaceCache(placeId, fields) || Promise.resolve();
 }
 
 // 確保每個地點都有該級的行政區代碼(算一次就寫回 Firestore 快取)。快取寫回
 // 綁定啟動時的 Space;若期間切換 Space 就停止寫入 (§17)。
 async function ensureCounty(){
-  const geoSpaceId = currentSpaceId;
-  const geoSession = spaceSession;
+  const geoSession = runtimeSession;
   const geo = await loadGeo("geo/county.json");
-  if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) return geo;
+  if (geoSession !== runtimeSession) return geo;
   for (const p of Object.values(places)){
-    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
+    if (geoSession !== runtimeSession) break;
     if (!hasVisitHistory(p)) continue;
     if (p.countyCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "COUNTYCODE");
-    if (code){ p.countyCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { countyCode: code }); }
+    if (code){ p.countyCode = code; updatePlaceGeographyCache(null, p.id, { countyCode: code }); }
   }
   return geo;
 }
 async function ensureTown(){
-  const geoSpaceId = currentSpaceId;
-  const geoSession = spaceSession;
+  const geoSession = runtimeSession;
   const geo = await loadGeo("geo/town.json");
-  if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) return geo;
+  if (geoSession !== runtimeSession) return geo;
   for (const p of Object.values(places)){
-    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
+    if (geoSession !== runtimeSession) break;
     if (!hasVisitHistory(p)) continue;
     if (p.townCode) continue;
     const code = pip(p.lat, p.lng, geo.features, "TOWNCODE");
-    if (code){ p.townCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { townCode: code }); }
+    if (code){ p.townCode = code; updatePlaceGeographyCache(null, p.id, { townCode: code }); }
   }
   return geo;
 }
 async function ensureVillage(){
-  const geoSpaceId = currentSpaceId;
-  const geoSession = spaceSession;
+  const geoSession = runtimeSession;
   const county = await ensureCounty();                       // 先確保 countyCode
   const codes = county.features.map(f => f.properties.COUNTYCODE);
   const byCounty = {}; let feats = [];
   for (const c of codes){
-    if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
+    if (geoSession !== runtimeSession) break;
     let geo; try { geo = await loadGeo("geo/village/" + c + ".json"); } catch(e){ continue; }
     byCounty[c] = geo.features; feats = feats.concat(geo.features);
   }
-  if (geoSpaceId === currentSpaceId && isCurrentSpaceSession(geoSession,spaceSession)){
+  if (geoSession === runtimeSession){
     for (const p of Object.values(places)){
-      if (geoSpaceId !== currentSpaceId || !isCurrentSpaceSession(geoSession,spaceSession)) break;
+      if (geoSession !== runtimeSession) break;
       if (!hasVisitHistory(p)) continue;
       if (p.villCode || !p.countyCode) continue;
       const gf = byCounty[p.countyCode]; if (!gf) continue;
       const code = pip(p.lat, p.lng, gf, "VILLCODE");
-      if (code){ p.villCode = code; updatePlaceGeographyCache(geoSpaceId, p.id, { villCode: code }); }
+      if (code){ p.villCode = code; updatePlaceGeographyCache(null, p.id, { villCode: code }); }
     }
   }
   return { type:"FeatureCollection", features: feats };
@@ -2505,20 +1575,19 @@ function regionPlaces(codeOf){
   return m;
 }
 function areaVisitsForPlace(place){
-  return isNoSpace() ? (Array.isArray(place?.visits) ? place.visits : []) : placeVisits(place);
+  return Array.isArray(place?.visits) ? place.visits : [];
 }
 function areaVisitPassFilter(place,visit){
-  if(!isNoSpace()) return visitPassFilter(place,visit);
   const category=typeof visit?.category==="string" ? visit.category.trim() : "";
   return placeStaticFilter(place) && visitMatchesWho(place,visit) && visitMatchesTrip(visit)
     && (!filter.cats.size || filter.cats.has(category)) && visitIntersects(visit,filter.from,filter.to);
 }
 function mapAreaPlacePassFilter(place){
-  return isNoSpace() ? areaVisitsForPlace(place).some(visit=>areaVisitPassFilter(place,visit)) : passFilter(place);
+  return areaVisitsForPlace(place).some(visit=>areaVisitPassFilter(place,visit));
 }
 function visitAreaMetrics(pls){
   return aggregatePlaceVisitAreaMetrics(pls,{
-    categoryOrder:isNoSpace() ? noSpaceState.defaults.categories||[] : spaceCats,
+    categoryOrder:noSpaceState.defaults.categories||[],
     selectVisits:areaVisitsForPlace,
     visitFilter:(visit,place)=>areaVisitPassFilter(place,visit)
   });
@@ -2881,7 +1950,7 @@ function setMapAreaMetric(metric){
 }
 
 function toggleMapSurface(control){
-  if (!currentSpaceFoundationReady()) return;
+  if (!runtimeReady()) return;
   const action=control==="proximity" ? {type:"proximity"} : {type:"admin",level:control};
   const next=transitionMapSurfaceState({adminLevel,proximityEnabled},action);
   if(action.type==="proximity"){
@@ -2908,7 +1977,7 @@ function toggleMapSurface(control){
 let dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
-  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
+  if (!runtimeReady()){ showLoadingState(); return; }
   if (tab !== "visited" && tab !== "trips") tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
@@ -2957,7 +2026,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):"#9aa5ad";
   const whoTxt=visitWhoText(p,v);
   const tripRef=tripReferenceState(v.tripId,trips),t=tripRef.trip,stay=visitKind(v)==="stay",nights=stayNights(v);
-  const personalRating=isNoSpace()?v?._contributions?.[user?.uid]?.rating:p.rating;
+  const personalRating=v?._contributions?.[user?.uid]?.rating;
   const tags=[
     stay?`<span class="ptag" style="background:#e6efe9">住宿 ${nights}晚 · ${esc(v.date)} → ${esc(stayCheckout(v)||v.date)}</span>`:"",
     cat?`<span class="ptag" style="background:${col};color:${textOn(col)}">${esc(cat)}</span>`:"",
@@ -2970,7 +2039,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder" aria-label="我的同日順序"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="調整我的同日順序" title="移動到我的指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
-    ${!isNoSpace() || canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
+    ${canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):levelColors["住宿"];
@@ -3009,7 +2078,6 @@ function wireVisitCards(el){
   el.querySelectorAll("[data-vposition]").forEach(s=>s.onchange=ev=>{ev.stopPropagation();if(s.value) moveVisitOccurrence(s.dataset.vposition,s.dataset.date,s.value);s.value="";});
 }
 async function moveVisitOccurrence(key,date,action){
-  const opSpaceId=currentSpaceId;
   const [pid,idxRaw]=key.split(":"), idx=+idxRaw;
   const scope=visitReorderScope(); if(!scope) return;
   const regular=fullDayOrdinaryOccurrences(date);
@@ -3021,80 +2089,29 @@ async function moveVisitOccurrence(key,date,action){
   const i=candidates.findIndex(o=>o.p.id===pid && o.visitIndex===idx);
   const j=resolveVisitMoveTarget(action,i,candidates.length);
   if(i<0 || j<0 || i===j) return;
-  if (isNoSpace()){
-    const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
-    const stored=noSpaceState.dayOrders[date]?.visitIds || [];
-    const normalized=normalizeDayOrder(date,Object.values(noSpaceState.visits),stored);
-    const candidateIds=candidates.map(item=>item.v.id);
-    const reorderedCandidates=reorderDayVisitIds(candidateIds,candidates[i].v.id,j);
-    let nextIndex=0;
-    const candidateSet=new Set(candidateIds);
-    const next=normalized.map(id=>candidateSet.has(id)?reorderedCandidates[nextIndex++]:id);
-    noSpaceState.dayOrders[date]={id:date,visitIds:next};
-    refreshNoSpaceProjection();
-    if(repo && noSpaceSessionIsCurrent(session,uid)) await repo.setDayOrder(date,next);
-    return;
-  }
-  const reordered=reorderWithinSlots(regular,movable,i,j);
-  const byPlace=new Map();
-  reordered.forEach((o,pos)=>{
-    const p=o.p;
-    if(!byPlace.has(p.id)) byPlace.set(p.id,placeVisits(p).map(v=>persistableVisit(p,v)));
-    const vv=byPlace.get(p.id); if(vv[o.visitIndex]) vv[o.visitIndex].order=pos+1;
-  });
-  if(opSpaceId!==currentSpaceId) return;
-  [...byPlace.entries()].forEach(([id,vv])=>{ if(places[id]) places[id].visits=vv; });
-  renderList(); renderMarkers();
-  await Promise.all([...byPlace.entries()].map(([id,vv])=>updateDoc(placeDocFor(opSpaceId,id),{visits:vv,...visitLegacyFields(vv,places[id])})));
+  const repo=noSpaceRepository, session=runtimeSession, uid=user.uid;
+  const stored=noSpaceState.dayOrders[date]?.visitIds || [];
+  const normalized=normalizeDayOrder(date,Object.values(noSpaceState.visits),stored);
+  const candidateIds=candidates.map(item=>item.v.id);
+  const reorderedCandidates=reorderDayVisitIds(candidateIds,candidates[i].v.id,j);
+  let nextIndex=0;
+  const candidateSet=new Set(candidateIds);
+  const next=normalized.map(id=>candidateSet.has(id)?reorderedCandidates[nextIndex++]:id);
+  noSpaceState.dayOrders[date]={id:date,visitIds:next};
+  refreshNoSpaceProjection();
+  if(repo && runtimeSessionIsCurrent(session,uid)) await repo.setDayOrder(date,next);
 }
 
-// Serialize a normalized Visit for a whole-array rewrite without disturbing its
-// raw participant representation (APPROVED PHASE 2 CONTRACT §8). A Visit that
-// carried neither field keeps today's behaviour of materialising `who`.
-function persistableVisit(p,v){
-  const fields=nextVisitParticipantFields({ raw:v, edited:false, resolvedIds:visitWhoUids(p,v) });
-  const out={ ...v };
-  delete out.participantIds; delete out.who;
-  if (Object.hasOwn(fields,"participantIds")) out.participantIds=fields.participantIds;
-  if (Object.hasOwn(fields,"who")) out.who=fields.who;
-  return out;
-}
-function visitLegacyFields(vv,p=null){
-  const base=p||{}, clean=vv.filter(v=>v.date).map((v,i)=>normalizedVisit(base,v,i));
-  const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-  const who=latest ? visitWhoUids(base,latest) : whoUids(base);
-  return {
-    visitedOn:latest?latest.date:"",
-    tripId:latest?.tripId||"",
-    categories:latest?.category?[latest.category]:(base.categories||[]),
-    who,
-    whoMode:deriveLegacyWhoMode(who, { ...legacyParticipantContext(), createdBy:base.createdBy })
-  };
-}
 async function deleteVisitOccurrence(key){
-  const opSpaceId=currentSpaceId;
   const [pid,idxRaw]=key.split(":"),p=places[pid],idx=+idxRaw; if(!p) return;
-  if (isNoSpace()){
-    const visit=placeVisits(p)[idx];
-    if (!visit || !canDeleteVisit(user.uid, visit._shared || visit)) return;
-    const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
-    if (repo && noSpaceSessionIsCurrent(session,uid)) await repo.deleteVisit(visit.id);
-    return;
-  }
-  const vv=placeVisits(p).map(v=>persistableVisit(p,v)); if(idx<0||idx>=vv.length) return;
-  vv.splice(idx,1);
-  if(opSpaceId!==currentSpaceId) return;
-  if(!vv.length){
-    // Deleting the last remaining Visit removes the whole Place — a Place only
-    // exists because it has Visit history (§15).
-    await deleteDoc(placeDocFor(opSpaceId,pid));
-  }else{
-    await updateDoc(placeDocFor(opSpaceId,pid),{visits:vv,status:"visited",...visitLegacyFields(vv,p)});
-  }
+  const visit=placeVisits(p)[idx];
+  if (!visit || !canDeleteVisit(user.uid, visit._shared || visit)) return;
+  const repo=noSpaceRepository, session=runtimeSession, uid=user.uid;
+  if (repo && runtimeSessionIsCurrent(session,uid)) await repo.deleteVisit(visit.id);
 }
 
 /* ============================================================
-   5) 搜尋(Google Places New:AutocompleteSuggestion → toPlace → fetchFields)
+   5) Search
    ============================================================ */
 let searchTimer;
 function normPlaceName(x){ return (x||"").trim().toLowerCase().replace(/\s+/g,""); }
@@ -3113,7 +2130,7 @@ function findExistingPlace(seed){
   return null;
 }
 function openSeed(seed){
-  if (!currentSpaceFoundationReady()) return;
+  if (!runtimeReady()) return;
   // Explicitly searching/selecting a Place records a Visit. An existing Place —
   // including a legacy wishlist-only document detected by extId/name/location —
   // is reused and gains its first real Visit through this explicit action
@@ -3127,15 +2144,14 @@ function wireSearch(){
   const box = document.getElementById("results");
   input.oninput = () => {
     clearTimeout(searchTimer);
-    if (!currentSpaceFoundationReady()){ clearSearchSuggestions(); return; }
+    if (!runtimeReady()){ clearSearchSuggestions(); return; }
     const q = input.value.trim();
     if (q.length < 2){ box.style.display="none"; return; }
     searchTimer = setTimeout(async () => {
-      // Capture the Space session AND a request generation BEFORE the request
-      // begins (§5). A Space switch or a newer keystroke invalidates both.
-      const reqSession = spaceSession;
+      // Capture the authenticated runtime and request generation before lookup.
+      const reqSession = runtimeSession;
       const reqSeq = ++searchReqSeq;
-      const reqCurrent = () => reqSeq === searchReqSeq && isCurrentSpaceSession(reqSession, spaceSession);
+      const reqCurrent = () => reqSeq === searchReqSeq && reqSession === runtimeSession;
       let rs = [];
       try { rs = await searchPlace(q); } catch(e){ console.warn(e); }
       if (!reqCurrent()){ box.style.display = "none"; return; }
@@ -3191,8 +2207,8 @@ function parseAdmin(comps){
    6) 新增 / 編輯地點
    ============================================================ */
 async function nearbyPicker(lat, lng){
-  if (!currentSpaceFoundationReady()) return;
-  const pickerSession = spaceSession;
+  if (!runtimeReady()) return;
+  const pickerSession = runtimeSession;
   let results = [];
   try {
     if (PlaceClass && PlaceClass.searchNearby){
@@ -3204,7 +2220,7 @@ async function nearbyPicker(lat, lng){
       results = resp.places || [];
     }
   } catch(e){ console.warn("nearby search failed", e); }
-  if (!isCurrentSpaceSession(pickerSession, spaceSession)) return;   // switched Space mid-lookup (§18)
+  if (pickerSession !== runtimeSession) return;
   const rows = results.map((pl,i)=>`<div class="nb" data-i="${i}">${esc(pl.displayName||"(未命名地點)")}</div>`).join("");
   modal(`
     <h2 style="margin-bottom:6px">附近地標</h2>
@@ -3216,13 +2232,13 @@ async function nearbyPicker(lat, lng){
     const pl = results[+d.dataset.i]; closeModal();
     const la = pl.location.lat(), ln = pl.location.lng();
     const admin = await reverseGeocode(la, ln);
-    if (!isCurrentSpaceSession(pickerSession, spaceSession)) return;
+    if (pickerSession !== runtimeSession) return;
     openSeed({ name: pl.displayName||"", lat: la, lng: ln, admin, source:"google", extId: pl.id });
   });
   document.getElementById("nb_custom").onclick = async () => {
     closeModal();
     const admin = await reverseGeocode(lat, lng);
-    if (!isCurrentSpaceSession(pickerSession, spaceSession)) return;
+    if (pickerSession !== runtimeSession) return;
     openEditor(null, { name:"", lat, lng, admin, source:"map" });
   };
 }
@@ -3231,24 +2247,9 @@ function addDays(date,n){
   if(!date) return ""; const d=new Date(date+"T00:00:00"); d.setDate(d.getDate()+n);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
-const placeEditorWriteQueues=new Map();
-// Every queued write targets the Space that owned the editor (§17), never a
-// later switched-to Space. Only mutate the in-memory Place when that Space is
-// still the active one.
-function persistPlaceEditorData(spaceId,id,data){
-  if(spaceId===currentSpaceId && places[id]) Object.assign(places[id],data);
-  const key=`${spaceId}:${id}`;
-  const previous=placeEditorWriteQueues.get(key)||Promise.resolve();
-  const write=previous.then(()=>updateDoc(placeDocFor(spaceId,id),data));
-  const settled=write.catch(()=>{});
-  placeEditorWriteQueues.set(key,settled);
-  settled.finally(()=>{ if(placeEditorWriteQueues.get(key)===settled) placeEditorWriteQueues.delete(key); });
-  return write;
-}
-
 function openNoSpaceVisitEditor(id, seed, opts={}){
-  const repo=noSpaceRepository, editorSession=spaceSession, editorUid=user.uid;
-  if (!repo || !noSpaceSessionIsCurrent(editorSession,editorUid)) return;
+  const repo=noSpaceRepository, editorSession=runtimeSession, editorUid=user.uid;
+  if (!repo || !runtimeSessionIsCurrent(editorSession,editorUid)) return;
   const runtimePlace=id?places[id]:null;
   const existingVisits=runtimePlace?placeVisits(runtimePlace):[];
   const focusIndex=Number.isFinite(Number(opts.focusVisitIndex))?Number(opts.focusVisitIndex):0;
@@ -3264,7 +2265,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const scopedContributions=()=>participantContributions(allContributions,selected);
   const mine=scopedContributions()[editorUid]||{};
   const legacyImport=selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null;
-  const live=()=>noSpaceSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
+  const live=()=>runtimeSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
   const allowNewPlace=creating&&!selectedPlaceId;
   const memberList=orderedActiveMembers();
   const selectablePlaces={...noSpaceState.places};
@@ -3412,329 +2413,12 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
 }
 
 function openEditor(id, seed, opts={}){
-  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
-  if (isNoSpace()){ openNoSpaceVisitEditor(id,seed,opts); return; }
-  const p = id ? places[id] : { categories:[], ...seed };
-  const shared=placeSharedFields(p);
-  // The editor is bound to the Space that was active when it opened. Every write
-  // it makes targets `editorSpaceId`, and it stops acting once a Space switch
-  // invalidates its session (§17).
-  const editorSpaceId = currentSpaceId;
-  const editorSession = spaceSession;
-  const editorLive = () => isCurrentSpaceSession(editorSession, spaceSession);
-  let docId = id || null, persistQueue=Promise.resolve();
-  let level = shared.level;
-  let deleted = false;   // set once the Place has been deleted (last Visit removed / 刪除地點)
-  // Legacy whoMode anchor: a NEW Place is genuinely created by the current
-  // User; an EXISTING Place uses only its explicit stored `createdBy` and never
-  // substitutes the viewer, so an old Place resolves/serializes the same for
-  // everyone (Phase 2 §2). deriveLegacyWhoMode stays fail-closed when empty.
-  const partCtx = {
-    ...legacyParticipantContext(),
-    createdBy: isUsableUid(p.createdBy) ? p.createdBy : (id ? "" : (user?.uid || ""))
-  };
-  const activeMembersList = orderedActiveMembers();
-  const activeIds = activeMembersList.map(m=>m.userId);
-  const activeIdSet = new Set(activeIds);
-  const filterTrip = specificTripId();
-  const defaultDate = defaultDateForNewVisit();
-  // Every NEW-Visit participant seed is intersected with active valid
-  // Memberships — a removed Member is never copied into new data merely because
-  // a previous Visit had them (CONTRACT §3). A new/explicitly-edited Visit
-  // writes `participantIds` and `who` identically.
-  const newWorkingVisit = (base, selected) => ({
-    ...base,
-    _raw:{},
-    _selected:orderParticipantSelection(sanitizeParticipantsForNewSelection(selected, activeIds), activeIds),
-    _participantsEdited:true,
-    _mismatch:null
-  });
-  const loadWorkingVisit = (rawVisit, i) => {
-    const norm = normalizedVisit(p, rawVisit, i);
-    const id = (norm.id && !String(norm.id).startsWith("legacy_")) ? norm.id : newVisitId();
-    const resolved = resolveVisitParticipants(norm, p, partCtx).participantIds;
-    return {
-      ...norm,
-      id,
-      _raw:{
-        ...(Object.hasOwn(norm,"participantIds") ? { participantIds:norm.participantIds } : {}),
-        ...(Object.hasOwn(norm,"who") ? { who:norm.who } : {})
-      },
-      // Active Members + retained historical participants. Historical entries
-      // stay until the user explicitly removes them (one-way, §1).
-      _selected:orderParticipantSelection(resolved, activeIds),
-      _participantsEdited:false,
-      _mismatch:detectParticipantMismatch(norm)
-    };
-  };
-  let visits = placeVisits(p).map(loadWorkingVisit);
-  let focusIndex = Number.isFinite(Number(opts.focusVisitIndex)) ? Number(opts.focusVisitIndex) : -1;
-  // A Place exists in the active product only because it has Visit history:
-  //  - a brand-new Place, or a legacy record reached through explicit search/add
-  //    (`opts.addVisit`), gets its first Visit here using the Phase 2 defaults;
-  //  - an existing recorded Place with no Visits (should not occur in normal
-  //    views) is defensively given one so it never stays as an empty document.
-  if (opts.addVisit || !id || !visits.length){
-    const prev=id?latestVisit(p):null;
-    const cat=prev ? visitCategory(p,prev) : (filter.cats.size===1?[...filter.cats][0]:((p.categories||[])[0]||""));
-    const prevSeed=prev?visitWhoUids(p,prev):[];
-    const k=level==="住宿"?"stay":"visit";
-    visits.push(newWorkingVisit(
-      {id:newVisitId(),kind:k,date:defaultDate,endDate:k==="stay"?addDays(defaultDate,1):"",tripId:filterTrip||"",category:cat},
-      prevSeed.length?prevSeed:defaultParticipants()
-    ));
-    focusIndex=visits.length-1;
-  }
-
-  // Arbitrary-Member participant picker. Active Members are toggle chips.
-  // Historical (removed / unknown) participants already on the record render as
-  // a chip with an explicit "×": they are preserved until removed, the removal
-  // is one-way, and they are never offered as a re-addable candidate (§1, §2).
-  function participantPickHTML(selectedIds, opts={}){
-    const sel=[...new Set(selectedIds||[])];
-    const selSet=new Set(sel);
-    const attr=`${opts.id?` id="${opts.id}"`:""} class="pick partpick${opts.cls?` ${opts.cls}`:""}"`;
-    const historical=sel.filter(uid=>!activeIdSet.has(uid));
-    if(!activeMembersList.length && !historical.length){
-      return `<div${attr}><span style="font-size:12px;color:var(--ink-soft)">尚無可選成員</span></div>`;
-    }
-    const active=activeMembersList.map(m=>
-      `<span class="chip ${selSet.has(m.userId)?'on':''}" data-uid="${esc(m.userId)}" role="button" tabindex="0">${esc(participantName(m.userId))}</span>`
-    ).join("");
-    const removed=historical.map(uid=>
-      `<span class="chip histchip" title="歷史參與者：可移除，但無法重新加入">${esc(participantName(uid))} <b class="histx" data-hist-uid="${esc(uid)}" role="button" tabindex="0" aria-label="移除">×</b></span>`
-    ).join("");
-    return `<div${attr}>${active}${removed}</div>`;
-  }
-  function wireParticipantPick(container, getSelected, setSelected){
-    if(!container) return;
-    const commit = next => setSelected(orderParticipantSelection(next, activeIds));
-    container.querySelectorAll(".chip[data-uid]").forEach(chip=>{
-      const toggle=()=>{
-        const uid=chip.dataset.uid, cur=getSelected();
-        commit(cur.includes(uid) ? cur.filter(x=>x!==uid) : [...cur, uid]);
-      };
-      chip.onclick=toggle;
-      chip.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } };
-    });
-    container.querySelectorAll(".histx[data-hist-uid]").forEach(x=>{
-      const remove=e=>{ e.stopPropagation(); commit(getSelected().filter(y=>y!==x.dataset.histUid)); };
-      x.onclick=remove;
-      x.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); remove(e); } };
-    });
-  }
-  modal(`
-    <h2 style="margin-bottom:3px">${esc(p.name||"新地點")}</h2>
-    <div class="admin" style="margin-bottom:10px">改動會自動儲存${opts.addVisit?" · 本次已帶入上一次的設定，可直接修改":""}</div>
-
-    <div class="editor-section">
-      <div class="editor-section-head"><div class="editor-section-title">地點</div></div>
-      <input id="f_name" value="${esc(p.name||"")}" placeholder="名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff">
-    </div>
-
-    <div class="editor-section" id="f_visitwrap">
-      <div class="editor-section-head">
-        <div><div class="editor-section-title">造訪紀錄</div><div class="editor-section-note">每次造訪各自記日期、目的、旅程與同行者；評價仍共用</div></div>
-        <button class="btn grey mini" id="v_add" type="button">＋新增</button>
-      </div>
-      <div id="f_visits"></div>
-    </div>
-
-    <div class="editor-section">
-      <div class="editor-section-head"><div><div class="editor-section-title">地點共用</div><div class="editor-section-note">以下設定不分造訪次數</div></div></div>
-      <div class="field" style="margin-bottom:10px"><label>造訪深度</label>
-        <div class="seg lvlseg" id="f_level">${LEVEL_ORDER.map(l=>`<button data-l="${l}" class="${level===l?'on':''}" style="${level===l?`background:${levelColors[l]};color:#fff`:''}">${l}</button>`).join("")}</div>
-      </div>
-      <div class="field" style="margin-bottom:8px"><label>共用評價</label>
-        <div class="row" style="align-items:center;gap:10px"><input type="range" id="f_rating" min="0" max="5" step="0.5" value="${shared.rating}" style="flex:1"><span id="f_ratingval" style="width:64px;text-align:right;color:var(--ink-soft)">${shared.rating?("★ "+shared.rating):"未評分"}</span></div>
-      </div>
-      <textarea id="f_review" placeholder="這個地點的共用評語…" style="width:100%;min-height:62px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fff;resize:vertical">${esc(shared.review)}</textarea>
-    </div>
-
-    <div class="row"><button class="btn" id="f_done">完成</button>${id?`<button class="danger" id="f_del" style="border-radius:10px">刪除地點</button>`:``}</div>
-  `);
-
-  const editorModal = [...document.querySelectorAll(".modal-bg")].at(-1);
-  const nameEl=document.getElementById("f_name"), visitWrap=document.getElementById("f_visitwrap");
-  function collect(){
-    const clean=visits.filter(v=>v.date).map(v=>{
-      const kind=v.kind==="stay"?"stay":"visit";
-      const out={id:v.id||newVisitId(),kind,date:v.date,tripId:v.tripId||"",category:v.category||""};
-      if(kind==="stay") out.endDate=(v.endDate&&v.endDate>v.date)?v.endDate:addDays(v.date,1);
-      else out.endDate="";
-      if(Number.isFinite(Number(v.order))) out.order=Number(v.order);
-      // Preserve the raw participant representation for untouched Visits; write
-      // both fields identically only on an explicit participant edit / new Visit
-      // (APPROVED PHASE 2 CONTRACT §3, §8).
-      const parts=nextVisitParticipantFields({
-        raw:v._raw||{},
-        edited:!!v._participantsEdited,
-        selectedIds:v._selected||[],
-        resolvedIds:v._selected||[]
-      });
-      if(Object.hasOwn(parts,"participantIds")) out.participantIds=parts.participantIds;
-      if(Object.hasOwn(parts,"who")) out.who=parts.who;
-      return out;
-    });
-    const latest=clean.slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-    const summaryWho=latest ? resolveVisitParticipants(latest, p, partCtx).participantIds : defaultParticipants();
-    const rv=parseFloat(document.getElementById("f_rating").value);
-    const latestCat=latest?.category||"";
-    // A recorded Place is always a Visit-bearing document. `status:"visited"` is
-    // kept only as a mixed-client compatibility mirror (§18); it carries no
-    // domain meaning any more.
-    return {
-      name:nameEl.value.trim(),lat:p.lat,lng:p.lng,source:p.source||"google",extId:p.extId||null,admin:p.admin||{},
-      status:"visited", categories:latestCat?[latestCat]:[], level, whoMode:deriveLegacyWhoMode(summaryWho, partCtx), who:summaryWho,
-      visits:clean, visitedOn:latest?.date||"", tripId:latest?.tripId||"",
-      rating:rv>0?rv:null, review:document.getElementById("f_review").value.trim()
-    };
-  }
-  function persist(){
-    if(!editorLive() || deleted) return Promise.resolve();   // switch invalidated the editor, or the Place is gone
-    const data=collect();
-    if(!data.visits.length) return Promise.resolve();   // never autosave an empty Place (§15)
-    if(docId) return persistPlaceEditorData(editorSpaceId,docId,data);
-    const queued=persistQueue.then(async()=>{
-      if(!editorLive() || deleted) return;
-      if(!docId){
-        if(!data.name) return;
-        data.createdBy=user.uid; data.createdAt=serverTimestamp();
-        const ref=await addDoc(placesColFor(editorSpaceId),data); docId=ref.id;
-      }else await persistPlaceEditorData(editorSpaceId,docId,data);
-    });
-    persistQueue=queued.catch(()=>{});
-    return queued;
-  }
-  async function deletePlaceAndClose(){
-    if (!editorLive() || deleted) return;
-    deleted = true;
-    try {
-      // If addDoc has not started, its queued callback sees the deletion flag
-      // and creates nothing. If it is already running, wait for it to publish
-      // docId, then drain queued writes for that exact originating document.
-      await persistQueue;
-      if (docId){
-        const pendingWrites = placeEditorWriteQueues.get(`${editorSpaceId}:${docId}`);
-        if (pendingWrites) await pendingWrites;
-        await deleteDoc(placeDocFor(editorSpaceId, docId));
-      }
-    }
-    catch(e){ /* snapshot will reconcile */ }
-    editorModal?.remove();
-  }
-  function catOptions(selected){
-    return `<option value="">未分類</option>`+spaceCats.map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join("")+`<option value="__new__">＋新增分類…</option>`;
-  }
-  function tripOptions(selected){
-    return `<option value="">日常</option>`+Object.values(trips).map(t=>`<option value="${t.id}" ${selected===t.id?'selected':''}>${esc((t.emoji?t.emoji+' ':'')+t.name)}</option>`).join('')+`<option value="__new__">＋新增旅程…</option>`;
-  }
-  function renderVisits(){
-    const box=document.getElementById("f_visits"); if(!box) return;
-    if(!visits.length){ box.innerHTML=`<div style="font-size:12px;color:var(--ink-soft);padding:4px 2px 8px">尚無造訪紀錄。</div>`; return; }
-    box.innerHTML=visits.map((v,i)=>{
-      const stay=visitKind(v)==="stay", co=stay?(v.endDate&&v.endDate>v.date?v.endDate:addDays(v.date,1)):"";
-      const nights=stay?Math.max(1,dayDiff(v.date||co,co)):0;
-      const conflict=v._mismatch?.mismatch && !v._participantsEdited;
-      return `<div class="visitrow ${i===focusIndex?'focus':''}" data-i="${i}">
-        ${i===focusIndex?`<span class="visitbadge">本次</span>`:""}
-        <div class="visitmain ${stay?'stay':''}">
-          <input type="date" class="v_date" value="${v.date||''}" title="${stay?'入住日':'造訪日'}">
-          ${stay?`<span class="stayarrow">→</span><input type="date" class="v_end" min="${v.date||''}" value="${co}" title="退房日">`:``}
-          <button class="delx v_del" title="刪除此造訪">✕</button>
-          ${stay?`<div class="staymeta">${nights} 晚 · 自動成為每晚最後一站與隔天早上第一站</div>`:``}
-        </div>
-        <div class="visitextra">
-          <label class="visitmini"><span>做什麼</span><select class="v_cat">${catOptions(v.category||'')}</select></label>
-          <label class="visitmini"><span>旅程</span><select class="v_trip">${tripOptions(v.tripId||'')}</select></label>
-        </div>
-        <div class="visitparts">
-          <span>同行</span>
-          ${participantPickHTML(v._selected||[], {cls:"v_who"})}
-          ${conflict?`<div class="visitwarn">同行者資料需確認（who 與 participantIds 不一致，顯示以 participantIds 為準；重新選擇即可更新）</div>`:""}
-        </div>
-      </div>`;
-    }).join("");
-    box.querySelectorAll(".visitrow").forEach(row=>{
-      const i=+row.dataset.i, d=row.querySelector(".v_date"), cat=row.querySelector(".v_cat"), trip=row.querySelector(".v_trip"), end=row.querySelector(".v_end");
-      wireParticipantPick(
-        row.querySelector(".v_who"),
-        ()=>visits[i]._selected||[],
-        next=>{ visits[i]._selected=next; visits[i]._participantsEdited=true; focusIndex=i; renderVisits(); persist(); }
-      );
-      d.onchange=()=>{
-        visits[i].date=d.value;
-        if(visitKind(visits[i])==="stay" && (!visits[i].endDate||visits[i].endDate<=d.value)) visits[i].endDate=addDays(d.value,1);
-        if(d.value&&!visits[i].tripId){ const t=Object.values(trips).find(t=>t.startDate&&t.endDate&&d.value>=t.startDate&&d.value<=t.endDate); if(t) visits[i].tripId=t.id; }
-        focusIndex=i; renderVisits(); persist();
-      };
-      cat.onchange=()=>{
-        if(cat.value==="__new__"){
-          const name=(prompt("新增分類(例:溫泉、看展、爬山)")||"").trim();
-          if(!name){ renderVisits(); return; }
-          if(!spaceCats.includes(name)){ spaceCats.push(name); if(editorLive()) setDoc(metaDocFor(editorSpaceId),{categories:arrayUnion(name)},{merge:true}); }
-          visits[i].category=name; focusIndex=i; renderVisits(); persist(); return;
-        }
-        visits[i].category=cat.value; focusIndex=i; persist();
-      };
-      trip.onchange=()=>{
-        if(trip.value==="__new__"){
-          trip.value=visits[i].tripId||""; editTrip(null,t=>{visits[i].tripId=t.id;focusIndex=i;renderVisits();persist();}); return;
-        }
-        visits[i].tripId=trip.value; focusIndex=i; persist();
-      };
-      if(end) end.onchange=()=>{
-        visits[i].kind="stay";
-        visits[i].endDate=end.value&&end.value>visits[i].date?end.value:addDays(visits[i].date,1); focusIndex=i; renderVisits(); persist();
-      };
-      row.querySelector(".v_del").onclick=()=>{
-        // Deleting the last Visit deletes the whole Place and closes the editor
-        // (§15). Otherwise the Place keeps its remaining Visits.
-        if(visits.length<=1){ deletePlaceAndClose(); return; }
-        visits.splice(i,1); focusIndex=Math.min(i,visits.length-1);
-        renderVisits(); persist();
-      };
-    });
-    if(focusIndex>=0){ setTimeout(()=>{ const r=box.querySelector(`.visitrow[data-i="${focusIndex}"]`); r?.scrollIntoView({block:"nearest"}); },0); }
-  }
-  function addVisit(){
-    const prev=visits.filter(v=>v.date).slice().sort((a,b)=>a.date.localeCompare(b.date)||(Number(a.order)||1e9)-(Number(b.order)||1e9)).pop();
-    const d=defaultDateForNewVisit(), k=level==="住宿"?"stay":"visit";
-    const seedParticipants=prev?sanitizeParticipantsForNewSelection(prev._selected||[], activeIds):[];
-    visits.push(newWorkingVisit(
-      {id:newVisitId(),kind:k,date:d,endDate:k==="stay"?addDays(d,1):"",tripId:filterTrip||"",category:prev?.category||latestVisitCategory(p)||""},
-      seedParticipants.length?seedParticipants:defaultParticipants()
-    ));
-    focusIndex=visits.length-1; renderVisits(); persist();
-  }
-
-  renderVisits();
-  document.getElementById("v_add").onclick=addVisit;
-
-  document.querySelectorAll("#f_level button").forEach(b=>b.onclick=()=>{
-    level=b.dataset.l;
-    document.querySelectorAll("#f_level button").forEach(x=>{x.classList.remove("on");x.style.background="";x.style.color="";}); b.classList.add("on");b.style.background=levelColors[level];b.style.color="#fff";
-    if(level==="住宿"){
-      if(!visits.length){ const d=defaultDateForNewVisit(); visits.push(newWorkingVisit({id:newVisitId(),kind:"stay",date:d,endDate:addDays(d,1),tripId:filterTrip||"",category:""}, defaultParticipants())); focusIndex=0; }
-      const i=focusIndex>=0?focusIndex:visits.length-1;
-      if(visits[i]){ visits[i].kind="stay"; visits[i].endDate=(visits[i].endDate&&visits[i].endDate>visits[i].date)?visits[i].endDate:addDays(visits[i].date||defaultDateForNewVisit(),1); if(!visits[i].category&&spaceCats.includes("住宿"))visits[i].category="住宿"; focusIndex=i; renderVisits(); }
-    }
-    persist();
-  });
-  nameEl.addEventListener("change",persist); nameEl.addEventListener("blur",persist);
-  const rEl=document.getElementById("f_rating"),rVal=document.getElementById("f_ratingval");
-  rEl.oninput=()=>{const v=parseFloat(rEl.value);rVal.textContent=v>0?("★ "+v):"未評分";}; rEl.addEventListener("change",persist);
-  document.getElementById("f_review").addEventListener("blur",persist);
-  document.getElementById("f_done").onclick=async()=>{await persist();editorModal?.remove();};
-  const fdel=document.getElementById("f_del"); if(fdel)fdel.onclick=deletePlaceAndClose;
-  if(!id&&collect().name) persist();
+  if (!runtimeReady()){ showLoadingState(); return; }
+  openNoSpaceVisitEditor(id,seed,opts);
 }
 
 /* ============================================================
-   7) 詳情:雙方感想 + 加到行程
-   ============================================================ */
-/* ============================================================
-   7) 旅程(以 tripId 歸屬;點旅程 = 篩選該趟)
+   7) Trips
    ============================================================ */
 function renderTrips(el){
   const list = Object.values(trips).sort((a,b)=>(b.startDate||"0000-00-00").localeCompare(a.startDate||"0000-00-00"));
@@ -3750,7 +2434,7 @@ function renderTrips(el){
         </div>
         <span style="width:12px;height:12px;border-radius:3px;background:${t.color||'#3f7d78'}"></span>
         <button class="btn mini grey" data-edit="${t.id}">編輯</button>
-        ${!isNoSpace() || canDeleteTrip(user?.uid,t) ? `<button class="delx" data-del="${t.id}" title="刪除">✕</button>` : ""}
+        ${canDeleteTrip(user?.uid,t) ? `<button class="delx" data-del="${t.id}" title="刪除">✕</button>` : ""}
       </div>`).join("") : `<div class="empty">還沒有旅程。建立一個,再到地點的「哪趟旅程」把地點歸進來。</div>`);
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
@@ -3763,20 +2447,18 @@ function renderTrips(el){
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editTrip(b.dataset.edit));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
-    if (!currentSpaceFoundationReady()) return;
-    if (isNoSpace()){
-      const trip=noSpaceState.trips[b.dataset.del];
-      if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id).catch(error=>alert(`無法刪除旅程：${error.message}`));
-    } else deleteDoc(tripDoc(b.dataset.del));
+    if (!runtimeReady()) return;
+    const trip=noSpaceState.trips[b.dataset.del];
+    if (trip&&canDeleteTrip(user.uid,trip)) noSpaceRepository.deleteTrip(trip.id).catch(error=>alert(`無法刪除旅程：${error.message}`));
   });
 }
 
 function openNoSpaceTripEditor(id,onDone){
-  const repo=noSpaceRepository, session=spaceSession, uid=user.uid;
-  if(!repo||!noSpaceSessionIsCurrent(session,uid)) return;
+  const repo=noSpaceRepository, session=runtimeSession, uid=user.uid;
+  if(!repo||!runtimeSessionIsCurrent(session,uid)) return;
   const trip=id?noSpaceState.trips[id]||trips[id]:null;
   let selected=retainCurrentParticipant(trip?.participantUserIds||[uid],uid);
-  const live=()=>repo===noSpaceRepository&&noSpaceSessionIsCurrent(session,uid);
+  const live=()=>repo===noSpaceRepository&&runtimeSessionIsCurrent(session,uid);
   modal(`
     <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
     <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
@@ -3828,64 +2510,8 @@ function openNoSpaceTripEditor(id,onDone){
 }
 
 function editTrip(id, onDone){
-  if (!currentSpaceFoundationReady()){ showSpaceLoadingState(); return; }
-  if (isNoSpace()){ openNoSpaceTripEditor(id,onDone); return; }
-  let docId = id || null, creating = false;
-  const t = id ? trips[id] : {};
-  let emoji = t.emoji || "";
-  const g = x => document.getElementById(x);
-  const tripSpaceId = currentSpaceId;
-  const tripSession = spaceSession;
-  const tripLive = () => isCurrentSpaceSession(tripSession, spaceSession);
-  modal(`
-    <h2 style="margin-bottom:2px">${id?"編輯":"新"}旅程</h2>
-    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">改動會自動儲存</div>
-    <div class="field"><label>表情 + 名稱</label>
-      <div class="row" style="gap:8px;position:relative">
-        <button type="button" id="t_emoji" style="flex:0 0 52px;height:40px;font-size:22px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer">${emoji||"➕"}</button>
-        <input id="t_name" value="${esc(t.name||"")}" placeholder="例:2026 東京" style="flex:1">
-        <div id="emojipop" style="display:none;position:absolute;top:46px;left:0;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px;grid-template-columns:repeat(7,1fr);gap:2px;width:264px">
-          ${EMOJIS.map(e=>`<button type="button" class="emojibtn" data-e="${e}" style="font-size:20px;border:none;background:none;cursor:pointer;padding:4px">${e}</button>`).join("")}
-        </div>
-      </div>
-    </div>
-    <div class="row">
-      <div class="field" style="flex:1"><label>開始</label><input type="date" id="t_start" value="${t.startDate||""}"></div>
-      <div class="field" style="flex:1"><label>結束</label><input type="date" id="t_end" value="${t.endDate||""}"></div>
-    </div>
-    <div class="field"><label>顏色</label>
-      <input type="color" id="t_color" value="${t.color||"#3f7d78"}" style="width:48px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px">
-    </div>
-    <div class="row">
-      <button class="btn" id="t_done">完成</button>
-      ${id?`<button class="danger" id="t_del" style="border-radius:10px">刪除</button>`:``}
-    </div>
-  `);
-  const eBtn = g("t_emoji"), ePop = g("emojipop");
-  eBtn.onclick = () => { ePop.style.display = ePop.style.display === "none" ? "grid" : "none"; };
-  ePop.querySelectorAll(".emojibtn").forEach(b => b.onclick = () => {
-    emoji = b.dataset.e; eBtn.textContent = emoji; ePop.style.display = "none"; persist();
-  });
-  function collect(){ return { emoji, name:g("t_name").value.trim(),
-    startDate:g("t_start").value, endDate:g("t_end").value, color:g("t_color").value }; }
-  async function persist(){
-    if (!tripLive()) return;   // a Space switch invalidated this Trip editor
-    const data = collect();
-    if (!docId){ if(!data.name||creating) return; creating=true;
-      data.createdBy=user.uid; data.createdAt=serverTimestamp();
-      const ref=await addDoc(tripsColFor(tripSpaceId),data); docId=ref.id; creating=false; }
-    else await updateDoc(tripDocFor(tripSpaceId,docId), data);
-  }
-  ["t_name","t_start","t_end","t_color"].forEach(x => {
-    g(x).addEventListener("change", persist); g(x).addEventListener("blur", persist);
-  });
-  g("t_done").onclick = async () => {
-    await persist();
-    if (onDone && docId) onDone({ id: docId, ...collect() });
-    closeModal();
-  };
-  const td = g("t_del");
-  if (td) td.onclick = async () => { if (tripLive()) await deleteDoc(tripDocFor(tripSpaceId,docId||id)); closeModal(); };
+  if (!runtimeReady()){ showLoadingState(); return; }
+  openNoSpaceTripEditor(id,onDone);
 }
 
 /* ============================================================
@@ -3904,7 +2530,6 @@ function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">
 /* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
 try {
   runtimeConfig = resolveRuntimeConfig();
-  currentSpaceId = runtimeConfig.spaceId;
   if (!runtimeConfig.firebase.projectId || !runtimeConfig.google.apiKey) renderSetup();
   else boot();
 } catch(e){

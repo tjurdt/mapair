@@ -11,9 +11,7 @@ const PRODUCTION_CONFIG = {
   google: {
     apiKey: "AIzaSyDL41HwqYYTdgDWVjurVCOtxZfmVErDGy4",
     mapId: "ab521a22dfdf46ce4d5c8faf"
-  },
-  spaceId: "us",
-  noSpace: true
+  }
 };
 
 const LOCAL_TEST_CONFIG = {
@@ -26,52 +24,11 @@ const LOCAL_TEST_CONFIG = {
     appId: "1:000000000000:web:localtest"
   },
   google: PRODUCTION_CONFIG.google,
-  spaceId: "test-space-baseline",
   emulators: {
     auth: { url: "http://127.0.0.1:9099" },
     firestore: { host: "127.0.0.1", port: 8080 }
   }
 };
-
-// Strict LOCAL-only development/test harness. It selects one of a fixed
-// allowlist of Emulator fixture Spaces; it is NOT a production Space switcher
-// and never accepts an arbitrary Firestore Space ID.
-const LOCAL_TEST_SPACES = {
-  baseline: "test-space-baseline",
-  group: "test-space-group"
-};
-
-function localTestSpaceToken(search){
-  const values = new URLSearchParams(search).getAll("testSpace");
-  if (!values.length) return null;
-  if (values.length !== 1 || !Object.hasOwn(LOCAL_TEST_SPACES, values[0])){
-    throw new Error('testSpace must be exactly one of "baseline" or "group". Startup stopped.');
-  }
-  return values[0];
-}
-
-// Strict LOCAL-only Phase 3 feature flag. Enables Personal Space provisioning,
-// Membership-based Space discovery, and the Space switcher. It never touches
-// production config and fails closed anywhere but LOCAL TEST.
-function resolveMultiSpace(search){
-  const values = new URLSearchParams(search).getAll("multiSpace");
-  if (!values.length) return false;
-  if (values.length !== 1 || values[0] !== "1"){
-    throw new Error('multiSpace must be exactly "1". Startup stopped.');
-  }
-  return true;
-}
-
-// Strict LOCAL-only Phase A gate for the top-level Visit architecture. The
-// exact flag is required and it is deliberately incompatible with multiSpace.
-function resolveNoSpace(search){
-  const values = new URLSearchParams(search).getAll("noSpace");
-  if (!values.length) return false;
-  if (values.length !== 1 || values[0] !== "1"){
-    throw new Error('noSpace must be exactly "1". Startup stopped.');
-  }
-  return true;
-}
 
 export function resolveRuntimeConfig(hostname = location.hostname, search = location.search){
   const localHost = hostname === "localhost" || hostname === "127.0.0.1";
@@ -79,30 +36,10 @@ export function resolveRuntimeConfig(hostname = location.hostname, search = loca
   if (values.length){
     if (values.length !== 1 || values[0] !== "local") throw new Error('firebaseEnv must be exactly "local". Startup stopped.');
     if (!localHost) throw new Error("LOCAL TEST mode is allowed only on localhost or 127.0.0.1. Startup stopped.");
-    const testSpace = localTestSpaceToken(search);
-    const multiSpace = resolveMultiSpace(search);
-    const noSpace = resolveNoSpace(search);
-    if (multiSpace && noSpace){
-      throw new Error("multiSpace=1 and noSpace=1 cannot be enabled together. Startup stopped.");
-    }
     return {
       mode: "local",
-      ...LOCAL_TEST_CONFIG,
-      spaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : LOCAL_TEST_CONFIG.spaceId,
-      explicitTestSpace: testSpace,
-      explicitTestSpaceId: testSpace ? LOCAL_TEST_SPACES[testSpace] : null,
-      multiSpace,
-      noSpace
+      ...LOCAL_TEST_CONFIG
     };
-  }
-  if (new URLSearchParams(search).getAll("testSpace").length){
-    throw new Error("testSpace is only available in LOCAL TEST mode. Startup stopped.");
-  }
-  if (new URLSearchParams(search).getAll("multiSpace").length){
-    throw new Error("multiSpace is only available in LOCAL TEST mode. Startup stopped.");
-  }
-  if (new URLSearchParams(search).getAll("noSpace").length){
-    throw new Error("noSpace is only available in LOCAL TEST mode. Startup stopped.");
   }
   if (localHost) throw new Error('Localhost requires the exact query parameter ?firebaseEnv=local. Startup stopped.');
   return { mode: "production", ...PRODUCTION_CONFIG };
