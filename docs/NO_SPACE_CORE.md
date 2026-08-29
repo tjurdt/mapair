@@ -1,10 +1,10 @@
-# No-Space Core — Phase A
+# No-Space Core — v0.3 release candidate
 
 ## Status and safety boundary
 
-No-Space Core is a parallel, local-Emulator-only architecture. It activates only at an exact localhost/loopback URL containing `?firebaseEnv=local&noSpace=1`. It cannot run in production, and it fails startup if `multiSpace=1` is also present. The existing fixed-Space production runtime and LOCAL multi-Space harness remain available and unchanged outside this gate.
+On `release/mapair-v0.3-no-space`, No-Space is the production-default architecture. Production needs no query parameter. LOCAL development retains the fixed-Space baseline at `?firebaseEnv=local`, the legacy multi-Space harness at `?firebaseEnv=local&multiSpace=1`, and No-Space at `?firebaseEnv=local&noSpace=1`; the two feature flags remain mutually exclusive. Legacy Space runtime code and `spaces/us` are retained only for rollback and are not exposed as a production write mode.
 
-This phase performs no production migration, rule deployment, data copy, or deletion. Space remains a legacy compatibility architecture pending a separately reviewed migration.
+Development on this branch performs no production migration, rule deployment, data copy, or deletion. The migration and candidate rules require separate review and explicit operator action.
 
 ## Domain model
 
@@ -64,7 +64,7 @@ No-Space path construction is centralized in `src/no-space/repository.js`. No No
 
 The client queries top-level `visits` and `trips` with `participantUserIds array-contains authenticatedUid`. A participant can edit shared facts. Every existing-Visit or existing-Trip mutation transaction first reads the current persisted parent and authorizes against that document, never permission facts supplied by an editor draft. The transaction preserves the stored `createdBy`; a stale editor belonging to a removed participant cannot edit or re-add that User. In Phase A only the currently stored `createdBy` can delete the whole Visit or Trip. `createdBy` is solely destructive-action protection and is not a permission role. The current User cannot remove their own UID as an ersatz Exit operation.
 
-These repository checks are Phase A application correctness and do not replace separately reviewed production Firestore Security Rules.
+These repository checks are application correctness and do not replace separately reviewed production Firestore Security Rules. `firestore.no-space.rules` is the candidate source and is intentionally isolated from normal `firebase.json` until the deployed rules have been inspected and reconciled.
 
 ### Place resolution
 
@@ -102,7 +102,7 @@ Stay anchors remain fixed derived occurrences; ordinary Visits use the personal 
 
 ## Trip defaults
 
-`trips/{tripId}.participantUserIds` defines defaults for future Visits created in that Trip. The array is copied into a new Visit and remains editable there. Updating Trip defaults never rewrites an existing Visit. Phase A prevents the current User from removing themselves from a Trip because explicit Exit semantics are deferred.
+`trips/{tripId}.participantUserIds` defines defaults for future Visits created in that Trip. The array is copied into a new Visit and remains editable there. Updating Trip defaults never rewrites an existing Visit. Phase A prevents the current User from removing themselves from a Trip because explicit Exit semantics are deferred. A migrated `createdBy` value is technical destructive-action protection selected from the resolved participants; it is not proof of historical authorship.
 
 Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tripId` remains as a dangling historical reference, is excluded from the Daily filter, and renders as “已刪除旅程” instead of being mislabeled as Daily life. When such a Visit is edited, the missing Trip appears as a synthetic selected “已刪除旅程” option, so unrelated changes preserve the original ID. The User may explicitly choose no Trip or another current Trip to detach or reassign it. This is the deterministic Phase A referential-integrity policy; detaching/backfilling history is deferred.
 

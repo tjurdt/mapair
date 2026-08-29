@@ -1,6 +1,6 @@
 # Mapair Product
 
-> In LOCAL-only No-Space Phase A (`?firebaseEnv=local&noSpace=1`), the primary object is Visit and the product title is “我的足跡”; Space is hidden completely. Shared facts and personal contributions/day order are separated as documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). The deployed/default product described below remains legacy-compatible.
+> In the v0.3 release candidate, the primary object is Visit and the production product title is “我的足跡”; Space is hidden completely. Shared experience facts, personal records, and personal day order are separated as documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). The legacy product details below remain relevant to rollback and migration compatibility.
 
 ## Purpose
 

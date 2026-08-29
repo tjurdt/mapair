@@ -12,7 +12,8 @@ const PRODUCTION_CONFIG = {
     apiKey: "AIzaSyDL41HwqYYTdgDWVjurVCOtxZfmVErDGy4",
     mapId: "ab521a22dfdf46ce4d5c8faf"
   },
-  spaceId: "us"
+  spaceId: "us",
+  noSpace: true
 };
 
 const LOCAL_TEST_CONFIG = {

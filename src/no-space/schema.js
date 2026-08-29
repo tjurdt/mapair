@@ -4,7 +4,8 @@ export const FORBIDDEN_CLOCK_FIELDS = Object.freeze([
   "time",
   "startTime",
   "endTime",
-  "arrivalTime"
+  "arrivalTime",
+  "departureTime"
 ]);
 
 const FORBIDDEN_CLOCK_FIELD_SET = new Set(FORBIDDEN_CLOCK_FIELDS);
@@ -88,6 +89,7 @@ export function tripSharedFields(input={}){
     emoji:nonEmptyString(input.emoji),
     startDate,
     endDate,
+    color:/^#[0-9a-f]{6}$/i.test(nonEmptyString(input.color)) ? nonEmptyString(input.color) : "#3f7d78",
     participantUserIds,
     createdBy:nonEmptyString(input.createdBy)
   };

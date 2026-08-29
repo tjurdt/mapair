@@ -1,6 +1,6 @@
 # Current Data Model
 
-> This file remains the deployed-compatible **legacy Space model**. The parallel LOCAL-only No-Space Phase A model is documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). No production data has been migrated or deleted.
+> This file documents the retained **legacy Space model** used for rollback and migration input. On the v0.3 release branch, production runtime defaults to the top-level No-Space model documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). No production data has been migrated or deleted by development work.
 
 This document records the deployed-compatible data model implemented by the current application. Phase 1 additionally supports read-only, additive root Space and Membership documents when present, but it does not require them, migrate existing data, or implement the complete target model.
 

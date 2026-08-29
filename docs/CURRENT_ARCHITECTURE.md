@@ -1,6 +1,6 @@
 # Current Architecture
 
-> **Parallel local architecture:** `?firebaseEnv=local&noSpace=1` now runs the No-Space Core Phase A adapter over top-level Users, Places, first-class Visits, Contributions, Day Orders, and Trips. It does not use Space as source of truth and cannot activate in production. The legacy architecture below remains the production/default runtime. See [NO_SPACE_CORE.md](NO_SPACE_CORE.md).
+> **v0.3 release candidate:** production now defaults to the No-Space adapter over top-level Users, objective Places, first-class Visits, Contributions, personal Day Orders, and Trips. No production query parameter is required. The legacy architecture described below remains in code for LOCAL compatibility and rollback, but is not a normal production mode. See [NO_SPACE_CORE.md](NO_SPACE_CORE.md).
 
 ## Repository shape
 
@@ -22,8 +22,8 @@ The current application is a static client-only site built with Vite:
 2. The module script checks embedded Firebase and Google configuration.
 3. `boot()` initializes Firebase Auth and Firestore and subscribes to authentication state.
 4. Signed-out users see the Google sign-in gate.
-5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, starts current-Space Firestore subscriptions, records the current member in legacy meta, and initializes date filters.
-6. Firestore snapshots replace the in-memory `places`, `trips`, and shared meta state, then invoke the relevant render functions. Optional root Space and Membership snapshots also populate the Phase 1 Member domain without changing visible rendering.
+5. `renderApp()` replaces `#app` with the complete application shell, initializes Google Maps, wires UI handlers, and starts No-Space subscriptions in production. LOCAL legacy modes retain their existing Space subscriptions.
+6. In production, participant-scoped Visit and Trip queries drive exact Place, legacy-import, Contribution, Day Order, User-profile, and app-default document listeners. The adapter projects these into the existing map/filter/stay/geography render pipeline without writing projected data back to Place.
 7. UI handlers mutate global state or write directly to Firestore. Snapshot updates eventually reconcile the rendered application with stored data.
 8. In Phase 3 LOCAL multi-Space mode (`?firebaseEnv=local&multiSpace=1`) `renderApp()` does not subscribe immediately: it renders the header Space switcher, starts one collection-group Membership discovery listener, ensures/reuses the User's single Personal Space, chooses the initial active Space, and only then calls `subscribe()` via `switchActiveSpace()`. Every subsequent switch re-runs that teardown-then-resubscribe cycle. Without the flag the flow is exactly as before.
 

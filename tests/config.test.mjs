@@ -6,6 +6,11 @@ import { resolveRuntimeConfig } from "../src/config.js";
   const config = resolveRuntimeConfig("mapair.example.com", "");
   assert.equal(config.mode, "production");
   assert.equal(config.spaceId, "us");
+  assert.equal(config.noSpace, true, "production launches the No-Space product without a query parameter");
+}
+{
+  const config = resolveRuntimeConfig("mapair.example.com", "?legacySpace=1");
+  assert.equal(config.noSpace,true,"no public production query can restore legacy Space writes");
 }
 
 /* LOCAL TEST baseline */
@@ -14,6 +19,7 @@ import { resolveRuntimeConfig } from "../src/config.js";
   assert.equal(config.mode, "local");
   assert.equal(config.spaceId, "test-space-baseline");
   assert.equal(config.firebase.projectId, "demo-mapair-local");
+  assert.equal(config.noSpace, false, "the legacy local harness remains available by default");
 }
 
 /* LOCAL TEST explicit baseline harness */

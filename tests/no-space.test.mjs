@@ -25,6 +25,7 @@ import {
   assertNoClockFields,
   findForbiddenClockFields,
   placeObjectiveFields,
+  tripSharedFields,
   visitSharedFields
 } from "../src/no-space/schema.js";
 import { applyTripDefaultsToNewVisit, tripReferenceState, updateTripDefaults } from "../src/no-space/trips.js";
@@ -171,6 +172,8 @@ assert.deepEqual(historical.participantUserIds, [A,B,C], "Trip default changes c
 assert.deepEqual(tripReferenceState("",{"trip-1":trip}),{kind:"daily",trip:null});
 assert.equal(tripReferenceState("trip-1",{"trip-1":trip}).kind,"active");
 assert.deepEqual(tripReferenceState("deleted-trip",{"trip-1":trip}),{kind:"missing",trip:null});
+assert.equal(tripSharedFields({name:"Trip",participantUserIds:[A],createdBy:A,color:"#123abc"}).color,"#123abc");
+assert.equal(tripSharedFields({name:"Trip",participantUserIds:[A],createdBy:A,color:"unsafe"}).color,"#3f7d78");
 
 /* F. No clock-time contract + objective Place audit */
 const visitShape = visitSharedFields({
@@ -186,6 +189,7 @@ assert.equal(visitSharedFields({...visitShape,tripId:""}).tripId,null);
 assert.equal(visitSharedFields({...visitShape,tripId:"deleted-trip"}).tripId,"deleted-trip");
 assert.throws(() => assertNoClockFields({ startTime:"14:30" }), /forbidden clock-time/);
 assert.throws(() => visitSharedFields({ ...visitShape, time:"14:30" }), /forbidden clock-time/);
+assert.throws(() => visitSharedFields({ ...visitShape, departureTime:"14:30" }), /forbidden clock-time/);
 const objective = placeObjectiveFields({ name:"Cafe", lat:25, lng:121, rating:5, review:"subjective", level:"deep", visits:[visitShape] });
 assert.equal(Object.hasOwn(objective, "rating"), false);
 assert.equal(Object.hasOwn(objective, "review"), false);
@@ -221,22 +225,25 @@ assert.equal(selectExactExternalPlace([
   {id:"a",source:"google",extId:googlePlace.extId}
 ],googlePlace).id,"a","pre-existing exact matches are reused deterministically");
 {
-  const db={}; let addedVisit=null,transactionCalls=0;
+  const db={}; const transactionSets=[]; let transactionCalls=0;
   const repository=createNoSpaceRepository({db,uid:A,firestore:{
     collection:(base,...segments)=>({path:segments.join("/")}),
-    doc:(base,...segments)=>segments.length?{path:segments.join("/"),id:segments.at(-1)}:{path:`${base.path}/auto`,id:"auto"},
+    doc:(base,...segments)=>segments.length?{path:segments.join("/"),id:segments.at(-1)}:{path:`${base.path}/visit-created`,id:"visit-created"},
     query:(...parts)=>({type:"query",parts}),where:(...parts)=>({type:"where",parts}),limit:value=>({type:"limit",value}),
-    getDocs:async()=>({docs:[{id:"existing-global-place",data:()=>googlePlace}]}),
-    addDoc:async(collectionRef,data)=>{addedVisit={collectionRef,data};return{id:"visit-created"};},
-    runTransaction:async()=>{transactionCalls++;},serverTimestamp:()=>({stamp:true}),
+    getDocs:async()=>{throw new Error("external Place creation must not enumerate places");},addDoc(){},
+    runTransaction:async(dbArg,callback)=>{transactionCalls++;return callback({
+      get:async reference=>({exists:()=>reference.path===`places/${externalPlaceDocumentId(googlePlace)}`}),
+      set:(reference,data)=>transactionSets.push({reference,data})
+    });},serverTimestamp:()=>({stamp:true}),
     writeBatch(){},deleteDoc(){},onSnapshot(){},setDoc(){},updateDoc(){}
   }});
   const created=await repository.createPlaceAndVisit({...googlePlace,lat:25,lng:121},{
     placeId:"",date:"2026-08-07",category:"Cafe",participantUserIds:[A],tripId:null,kind:"visit",endDate:""
   });
-  assert.equal(created.placeId,"existing-global-place");
-  assert.equal(addedVisit.data.placeId,"existing-global-place");
-  assert.equal(transactionCalls,0,"an exact pre-existing Place must be reused without creating another Place");
+  assert.equal(created.placeId,externalPlaceDocumentId(googlePlace));
+  assert.equal(created.reusedPlace,true);
+  assert.equal(transactionCalls,1);
+  assert.deepEqual(transactionSets.map(item=>item.reference.path),["visits/visit-created"],"a deterministic direct lookup reuses the Place without listing the collection");
 }
 {
   const db={}; const transactionSets=[];
@@ -371,7 +378,9 @@ assert.match(editorBlock,/tripId:g\("ns_trip"\)\.value\|\|null/,"explicitly sele
 assert.doesNotMatch(editorBlock,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");
 assert.doesNotMatch(editorBlock,/placeName/,"Visit writes must not create a competing Place-name override");
 assert.doesNotMatch(repositorySource,/\bupdatePlace\(/,"Phase A exposes no general global Place mutation method");
-assert.match(repositorySource,/where\("extId","==",identity\.extId\)/,"external Place reuse must use exact extId lookup");
+const externalCreateBlock=repositorySource.slice(repositorySource.indexOf("async createPlaceAndVisit"),repositorySource.indexOf("updatePlaceCache"));
+assert.match(externalCreateBlock,/externalPlaceDocumentId\(objective\)/,"external Place reuse must use deterministic identity");
+assert.doesNotMatch(externalCreateBlock,/getDocs|where\(/,"external Place creation must not enumerate the global Places collection");
 assert.match(repositorySource,/runTransaction\(db/,'external Place creation must converge transactionally');
 assert.match(repositorySource,/if\(current\.deleting\).*cannot accept contributions/,'contributions must reject the deletion lifecycle');
 assert.match(repositorySource,/contributionSnapshot\.docs\.forEach\(item=>batch\.delete\(item\.ref\)\)/);
