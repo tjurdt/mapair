@@ -24,7 +24,7 @@ function parseArgs(argv){
   if(!options.project||!options.source_space) throw new Error("Usage: node scripts/migrate-no-space-v1.mjs --project PROJECT --source-space SPACE [--apply --confirm MAPAIR_NO_SPACE_V1]");
   return options;
 }
-function jsonValue(value){
+function jsonValue(_key,value){
   if(value && typeof value.toDate === "function") return {__type:"firestore-timestamp",iso:value.toDate().toISOString()};
   if(value && typeof value === "object" && typeof value.latitude === "number" && typeof value.longitude === "number") return {__type:"firestore-geopoint",latitude:value.latitude,longitude:value.longitude};
   return value;
