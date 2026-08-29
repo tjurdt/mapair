@@ -1,5 +1,5 @@
 import { contributionFields } from "./contributions.js";
-import { externalPlaceDocumentId, externalPlaceIdentity, selectExactExternalPlace } from "./places.js";
+import { externalPlaceDocumentId } from "./places.js";
 import { placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
 import { canDeleteTrip, canDeleteVisit, canEditTripSharedFacts, canEditVisitSharedFacts, canViewVisit } from "./policies.js";
 
@@ -8,6 +8,8 @@ export const noSpacePaths = Object.freeze({
   place:placeId => `places/${placeId}`,
   visit:visitId => `visits/${visitId}`,
   trip:tripId => `trips/${tripId}`,
+  defaults:() => "appConfig/defaults",
+  legacyImport:(placeId, sourceSpace="us") => `places/${placeId}/legacyImports/space-${sourceSpace}`,
   contribution:(visitId, uid) => `visits/${visitId}/contributions/${uid}`,
   dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`
 });
@@ -30,6 +32,8 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     listenVisibleTrips(next, error){
       return onSnapshot(query(col("trips"), where("participantUserIds", "array-contains", uid)), next, error);
     },
+    listenDefaults(next, error){ return onSnapshot(ref(noSpacePaths.defaults()), next, error); },
+    listenLegacyImport(placeId, next, error){ return onSnapshot(ref(noSpacePaths.legacyImport(placeId)), next, error); },
     listenDayOrders(next, error){ return onSnapshot(col(noSpacePaths.user(uid) + "/dayOrders"), next, error); },
     listenPlace(placeId, next, error){ return onSnapshot(ref(noSpacePaths.place(placeId)), next, error); },
     listenContributions(visitId, next, error){ return onSnapshot(col(noSpacePaths.visit(visitId) + "/contributions"), next, error); },
@@ -41,29 +45,19 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     },
     async createPlaceAndVisit(placeInput, visitInput){
       const objective=placeObjectiveFields(placeInput);
-      const identity=externalPlaceIdentity(objective);
-      if(identity){
-        const exactSnapshot=await getDocs(query(col("places"),where("extId","==",identity.extId)));
-        const exact=selectExactExternalPlace(exactSnapshot.docs.map(item=>({id:item.id,...item.data()})),objective);
-        if(exact){
-          const sharedVisit=visitSharedFields({...visitInput,placeId:exact.id,createdBy:uid});
-          if(!canEditVisitSharedFacts(uid,sharedVisit)) throw new Error("The creator must participate in a new Visit.");
-          const visitRef=await addDoc(col("visits"),{...sharedVisit,createdAt:stamp(),updatedAt:stamp()});
-          return {placeId:exact.id,visitId:visitRef.id,reusedPlace:true};
-        }
-      }
       const deterministicId=externalPlaceDocumentId(objective);
       const placeRef = deterministicId?ref(noSpacePaths.place(deterministicId)):doc(col("places"));
       const visitRef = doc(col("visits"));
       const sharedVisit=visitSharedFields({ ...visitInput, placeId:placeRef.id, createdBy:uid });
       if (!canEditVisitSharedFacts(uid,sharedVisit)) throw new Error("The creator must participate in a new Visit.");
       if(deterministicId){
-        await runTransaction(db,async transaction=>{
+        const reusedPlace=await runTransaction(db,async transaction=>{
           const existing=await transaction.get(placeRef);
           if(!existing.exists()) transaction.set(placeRef,{...objective,createdBy:uid,createdAt:stamp()});
           transaction.set(visitRef,{...sharedVisit,createdAt:stamp(),updatedAt:stamp()});
+          return existing.exists();
         });
-        return { placeId:placeRef.id, visitId:visitRef.id, reusedPlace:false };
+        return { placeId:placeRef.id, visitId:visitRef.id, reusedPlace };
       }
       const batch = writeBatch(db);
       batch.set(placeRef, { ...objective, createdBy:uid, createdAt:stamp() });

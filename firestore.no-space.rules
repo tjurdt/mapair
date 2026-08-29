@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function participant(data) {
+      return signedIn()
+        && data.participantUserIds.hasAny([request.auth.uid]);
+    }
+    function dateOnly(value) { return value is string && value.matches('^\\d{4}-\\d{2}-\\d{2}$'); }
+    function notDeleting(data) { return !('deleting' in data) || data.deleting != true; }
+    function validVisit(data) {
+      return data.keys().hasOnly([
+          'placeId','date','category','participantUserIds','tripId','kind','endDate','createdBy',
+          'createdAt','updatedAt','deleting','deletingAt','sourceSpace','sourcePlaceId','sourceVisitKey'
+        ])
+        && data.placeId is string && data.placeId.size() > 0
+        && dateOnly(data.date)
+        && data.participantUserIds is list && data.participantUserIds.size() > 0
+        && data.kind in ['visit','stay']
+        && (data.kind == 'visit' || (dateOnly(data.endDate) && data.endDate > data.date));
+    }
+    function validTrip(data) {
+      return data.keys().hasOnly([
+          'name','emoji','startDate','endDate','color','participantUserIds','createdBy',
+          'createdAt','updatedAt','sourceSpace','sourceTripId'
+        ])
+        && data.name is string
+        && data.participantUserIds is list && data.participantUserIds.size() > 0;
+    }
+    function visitNow(visitId) {
+      return get(/databases/$(database)/documents/visits/$(visitId));
+    }
+
+    match /visits/{visitId} {
+      allow get, list: if participant(resource.data);
+      allow create: if participant(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid
+        && validVisit(request.resource.data)
+        && notDeleting(request.resource.data);
+      allow update: if participant(resource.data)
+        && participant(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && validVisit(request.resource.data)
+        && (
+          (notDeleting(resource.data)
+            && notDeleting(request.resource.data)
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['deleting','deletingAt']))
+          || (request.auth.uid == resource.data.createdBy
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleting','deletingAt','updatedAt']))
+        );
+      allow delete: if participant(resource.data)
+        && request.auth.uid == resource.data.createdBy
+        && resource.data.deleting == true;
+
+      match /contributions/{contributionUid} {
+        function currentVisit() { return visitNow(visitId); }
+        function validContribution(data) {
+          return data.keys().hasOnly(['rating','memory','level','updatedAt'])
+            && (!('rating' in data) || data.rating == null
+              || data.rating in [0.5,1,1.5,2,2.5,3,3.5,4,4.5,5])
+            && (!('memory' in data) || data.memory is string)
+            && (!('level' in data) || data.level is string);
+        }
+        allow get, list: if participant(currentVisit().data);
+        allow create, update: if signedIn()
+          && request.auth.uid == contributionUid
+          && participant(currentVisit().data)
+          && notDeleting(currentVisit().data)
+          && validContribution(request.resource.data);
+        allow delete: if signedIn() && (
+          (request.auth.uid == contributionUid && participant(currentVisit().data) && notDeleting(currentVisit().data))
+          || (participant(currentVisit().data) && request.auth.uid == currentVisit().data.createdBy && currentVisit().data.deleting == true)
+        );
+      }
+    }
+
+    match /trips/{tripId} {
+      allow get, list: if participant(resource.data);
+      allow create: if participant(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid
+        && validTrip(request.resource.data);
+      allow update: if participant(resource.data)
+        && participant(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && validTrip(request.resource.data);
+      allow delete: if participant(resource.data) && request.auth.uid == resource.data.createdBy;
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update, delete: if signedIn() && request.auth.uid == uid;
+
+      match /dayOrders/{date} {
+        allow read, create, update, delete: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /places/{placeId} {
+      function objective(data) {
+        return data.keys().hasOnly([
+          'name','lat','lng','source','extId','admin','countyCode','townCode','villCode','createdBy','createdAt'
+        ]);
+      }
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && objective(request.resource.data) && request.resource.data.createdBy == request.auth.uid;
+      allow update: if signedIn()
+        && objective(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admin','countyCode','townCode','villCode']);
+      allow delete: if false;
+
+      match /legacyImports/{importId} {
+        allow get: if participant(resource.data);
+        allow list, create, update, delete: if false;
+      }
+    }
+
+    match /appConfig/{configId} {
+      allow get: if signedIn() && configId == 'defaults';
+      allow list, create, update, delete: if false;
+    }
+
+    match /migrations/{migrationId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

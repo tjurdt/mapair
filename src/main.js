@@ -85,7 +85,7 @@ import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visit
 let runtimeConfig = null, localFailure = false;
 
 function isLocalTest(){ return runtimeConfig?.mode === "local"; }
-function isNoSpace(){ return isLocalTest() && runtimeConfig?.noSpace === true; }
+function isNoSpace(){ return runtimeConfig?.noSpace === true; }
 function localBadge(){ return isLocalTest() ? `<span class="localtest-badge">LOCAL TEST</span>` : ""; }
 const LOCAL_TEST_IDENTITIES = Object.freeze({
   a: Object.freeze({ uid:"test-user-a", email:"test-user-a@example.invalid", name:"測試使用者甲" }),
@@ -227,8 +227,8 @@ let searchReqSeq = 0;     // Google autocomplete request sequence (§5)
 function isMultiSpace(){ return isLocalTest() && runtimeConfig?.multiSpace === true; }
 let noSpaceRepository = null;
 const noSpaceState = {
-  visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{},
-  placeUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
+  visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{},
+  placeUnsubs:new Map(), legacyImportUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
 };
 let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], tripLine = null, sessionToken = null;
@@ -353,6 +353,7 @@ function participantName(uid){
   else if (isSelf) name = nicknames[uid] || members[uid] || "";
   if (!name){
     if (isSelf) return "我";
+    if (isNoSpace()) return member ? "同行者" : "未知同行者";
     return member ? "成員" : "未知成員";
   }
   if (isSelf) return `${name}（我）`;
@@ -760,10 +761,11 @@ async function renderApp(){
           <button class="tab" data-t="trips">行程</button>
         </div>
         <div id="filterbar">
+          ${isNoSpace() ? `<div class="filter-heading">回看我的足跡 <span>日期 · 旅程 · 同行者 · 分類 · 地區</span></div>` : ""}
           <div class="frow">
-            <select id="fl_scope" class="fmini"></select>
-            <select id="fl_trip" class="fmini"></select>
-            <select id="fl_who" class="fmini"></select>
+            <select id="fl_scope" class="fmini" aria-label="日期"></select>
+            <select id="fl_trip" class="fmini" aria-label="旅程"></select>
+            <select id="fl_who" class="fmini" aria-label="同行者"></select>
             <button id="fl_more" class="btn grey mini">更多 ▾</button>
           </div>
           <div class="filtermeta"><span id="filterChips"></span><button id="fl_clear" class="btn grey mini" style="display:none">取消篩選</button></div>
@@ -1278,7 +1280,7 @@ function noSpaceSessionIsCurrent(session, uid){
 }
 
 function resetNoSpaceState(){
-  for (const group of [noSpaceState.placeUnsubs, noSpaceState.contributionUnsubs, noSpaceState.profileUnsubs]){
+  for (const group of [noSpaceState.placeUnsubs, noSpaceState.legacyImportUnsubs, noSpaceState.contributionUnsubs, noSpaceState.profileUnsubs]){
     for (const unsubscribe of group.values()) try { unsubscribe(); } catch(e) {}
     group.clear();
   }
@@ -1288,6 +1290,8 @@ function resetNoSpaceState(){
   noSpaceState.contributions = {};
   noSpaceState.dayOrders = {};
   noSpaceState.profiles = {};
+  noSpaceState.legacyImports = {};
+  noSpaceState.defaults = {};
   noSpaceRepository = null;
 }
 
@@ -1337,6 +1341,11 @@ function subscribeNoSpace(){
     snapshot.forEach(item => noSpaceState.dayOrders[item.id] = { id:item.id, ...item.data() });
     refreshNoSpaceProjection();
   }, error("day orders")));
+  currentSpaceUnsubscribes.set("no-space-defaults", noSpaceRepository.listenDefaults(snapshot => {
+    if (!current()) return;
+    noSpaceState.defaults = snapshot.exists() ? snapshot.data() : {};
+    refreshNoSpaceProjection();
+  }, error("display defaults")));
   syncNoSpaceReferenceListeners(session, uid);
 }
 
@@ -1361,6 +1370,14 @@ function syncNoSpaceReferenceListeners(session, uid){
   const profileIds = new Set(knownParticipantUserIds(uid, visitsList, tripsList));
   const guard = callback => (...args) => { if (noSpaceSessionIsCurrent(session, uid)) callback(...args); };
   const error = area => guard(problem => handleFirestoreError(`No-Space ${area}`, problem));
+  const legacyImportError = placeId => guard(problem => {
+    if(problem?.code === "permission-denied"){
+      delete noSpaceState.legacyImports[placeId];
+      refreshNoSpaceProjection();
+      return;
+    }
+    handleFirestoreError(`No-Space legacy record ${placeId}`,problem);
+  });
 
   syncNoSpaceReferenceGroup(noSpaceState.placeUnsubs, placeIds, placeId =>
     noSpaceRepository.listenPlace(placeId, guard(snapshot => {
@@ -1368,6 +1385,13 @@ function syncNoSpaceReferenceListeners(session, uid){
       else delete noSpaceState.places[placeId];
       refreshNoSpaceProjection();
     }), error(`Place ${placeId}`)), id => delete noSpaceState.places[id]);
+
+  syncNoSpaceReferenceGroup(noSpaceState.legacyImportUnsubs, placeIds, placeId =>
+    noSpaceRepository.listenLegacyImport(placeId, guard(snapshot => {
+      if (snapshot.exists()) noSpaceState.legacyImports[placeId] = snapshot.data();
+      else delete noSpaceState.legacyImports[placeId];
+      refreshNoSpaceProjection();
+    }), legacyImportError(placeId)), id => delete noSpaceState.legacyImports[id]);
 
   syncNoSpaceReferenceGroup(noSpaceState.contributionUnsubs, visitIds, visitId =>
     noSpaceRepository.listenContributions(visitId, guard(snapshot => {
@@ -1396,11 +1420,16 @@ function refreshNoSpaceProjection(){
     contributionsByVisitId:noSpaceState.contributions,
     dayOrdersByDate:noSpaceState.dayOrders
   });
+  Object.values(places).forEach(place => {
+    if (noSpaceState.legacyImports[place.id]) place._legacyImport = noSpaceState.legacyImports[place.id];
+  });
   trips = Object.fromEntries(Object.values(noSpaceState.trips).map(trip => [trip.id, {
     ...trip,
     participantIds:[...(trip.participantUserIds || [])]
   }]));
-  spaceCats = [...new Set(visitList.map(visit => visit.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  spaceCats = [...new Set([...(noSpaceState.defaults.categories || []), ...visitList.map(visit => visit.category)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  catColors = { ...(noSpaceState.defaults.catColors || {}) };
+  levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}) };
   const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
   spaceMembers = profileIds.map(uid => ({
     userId:uid,
@@ -2844,7 +2873,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="background:${col}14"><div style="display:flex;align-items:center;gap:8px">
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
-    ${orderInfo?`<div class="visitorder"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="移動造訪位置" title="移動到指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
+    ${orderInfo?`<div class="visitorder" aria-label="我的同日順序"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="調整我的同日順序" title="移動到我的指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
     ${!isNoSpace() || canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
@@ -3138,6 +3167,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const allContributions=rawVisit?noSpaceState.contributions[rawVisit.id]||{}:{};
   const scopedContributions=()=>participantContributions(allContributions,selected);
   const mine=scopedContributions()[editorUid]||{};
+  const legacyImport=selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null;
   const live=()=>noSpaceSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
   const allowNewPlace=creating&&!selectedPlaceId;
   const memberList=orderedActiveMembers();
@@ -3157,39 +3187,46 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       <div class="card compact" style="margin-bottom:8px">
         <div class="cname">${esc(participantName(uid))}${value.rating?` · ★ ${value.rating}`:" · 尚未評分"}</div>
         <div class="admin">${esc(value.memory||"尚未留下回憶")}</div>
-      </div>`).join(""):`<div class="admin">其他參與者尚未留下評分或回憶。</div>`;
+      </div>`).join(""):`<div class="admin">同行者尚未留下評分或回憶。</div>`;
   };
   const averageText=()=>{
     const average=averageSubmittedRating(Object.values(scopedContributions()));
-    return `參與者平均：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
+    return `平均評分：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
   };
+  const legacyImportHtml=legacyImport?`
+    <div class="editor-section legacy-record">
+      <div class="editor-section-head"><div><div class="editor-section-title">舊版共同記錄</div><div class="editor-section-note">從舊版保留下來，僅供閱讀。</div></div></div>
+      ${legacyImport.rating!=null?`<div class="legacy-record-row"><span>舊版評分</span><strong>★ ${esc(String(legacyImport.rating))}</strong></div>`:""}
+      ${legacyImport.review?`<div class="legacy-record-memory"><span>舊版回憶</span><p>${esc(legacyImport.review)}</p></div>`:""}
+      ${legacyImport.level?`<div class="legacy-record-row"><span>舊版足跡深度</span><strong>${esc(legacyImport.level)}</strong></div>`:""}
+    </div>`:"";
 
   modal(`
     <h2 style="margin-bottom:3px">${creating?"新增造訪":"編輯造訪"}</h2>
-    <div class="admin" style="margin-bottom:12px">日期加上你自己的當日順序；不使用時鐘時間。</div>
+    <div class="admin" style="margin-bottom:12px">同一天的足跡，可以在清單調整成你自己的順序。</div>
     <div class="editor-section">
-      <div class="editor-section-head"><div><div class="editor-section-title">共同記錄</div><div class="editor-section-note">參與這次經驗的人都能調整這些事實。</div></div></div>
+      <div class="editor-section-head"><div><div class="editor-section-title">共同經歷</div><div class="editor-section-note">一起留下這次造訪的基本記錄。</div></div></div>
       <div class="field"><label>地點</label><select id="ns_place">${allowNewPlace?`<option value="__new__" selected>新增地點</option>`:""}${placeOptions}</select></div>
       <div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱" ${selectedPlaceId?'readonly':''}></div>
       <div class="row">
         <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
-        <div class="field" style="flex:1"><label>活動</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
+        <div class="field" style="flex:1"><label>做什麼</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：喝咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
       </div>
-      <div class="field"><label>參與者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
+      <div class="field"><label>同行者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
       <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
       <div class="row">
-        <div class="field" style="flex:1"><label>類型</label><select id="ns_kind"><option value="visit" ${rawVisit?.kind==='stay'?'':'selected'}>一般造訪</option><option value="stay" ${rawVisit?.kind==='stay'?'selected':''}>住宿</option></select></div>
+        <div class="field" style="flex:1"><label>是否住宿</label><select id="ns_kind"><option value="visit" ${rawVisit?.kind==='stay'?'':'selected'}>一般造訪</option><option value="stay" ${rawVisit?.kind==='stay'?'selected':''}>住宿</option></select></div>
         <div class="field" id="ns_end_wrap" style="flex:1"><label>退房日期</label><input type="date" id="ns_end_date" value="${rawVisit?.endDate||addDays(rawVisit?.date||defaultDateForNewVisit(),1)}"></div>
       </div>
     </div>
     <div class="editor-section">
-      <div class="editor-section-head"><div><div class="editor-section-title">我的內容</div><div class="editor-section-note">只會更新你自己的內容。</div></div></div>
-      <div class="field"><label>我的足跡深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===(mine.level||"旅遊")?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
-      <div class="field"><label>我的評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
-      <div class="field"><label>我的回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="記下你自己的回憶">${esc(mine.memory||"")}</textarea></div>
-      <div class="admin" id="ns_average">${averageText()}</div>
+      <div class="editor-section-head"><div><div class="editor-section-title">我的記錄</div><div class="editor-section-note">這些內容只屬於你。</div></div></div>
+      <div class="field"><label>足跡深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===(mine.level||"旅遊")?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
+      <div class="field"><label>評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
+      <div class="field"><label>回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="寫下這次造訪的回憶">${esc(mine.memory||"")}</textarea></div>
     </div>
-    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">其他參與者的內容</div></div><div id="ns_other_contributions">${contributionRows()}</div></div>`:""}
+    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">同行者的記錄</div></div><div id="ns_other_contributions">${contributionRows()}</div><div class="admin contribution-average" id="ns_average">${averageText()}</div></div>`:""}
+    ${legacyImportHtml}
     <div class="row"><button class="btn" id="ns_save">完成</button>${rawVisit&&canDeleteVisit(editorUid,rawVisit)?`<button class="danger" id="ns_delete">刪除這次造訪</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
@@ -3199,7 +3236,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   g("ns_kind").onchange=refreshStay;
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
   const refreshContributionVisibility=()=>{
-    g("ns_average").textContent=averageText();
+    if(g("ns_average")) g("ns_average").textContent=averageText();
     if(g("ns_other_contributions")) g("ns_other_contributions").innerHTML=contributionRows();
   };
   g("ns_place").onchange=()=>{
@@ -3646,14 +3683,15 @@ function openNoSpaceTripEditor(id,onDone){
   const live=()=>repo===noSpaceRepository&&noSpaceSessionIsCurrent(session,uid);
   modal(`
     <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
-    <div class="admin" style="margin-bottom:12px">參與者是新造訪的預設值；既有造訪不會被改寫。</div>
+    <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
     <div class="field"><label>名稱</label><input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行"></div>
     <div class="field"><label>圖示</label><input id="nst_emoji" value="${esc(trip?.emoji||"")}" maxlength="8" placeholder="🧳"></div>
     <div class="row">
       <div class="field" style="flex:1"><label>開始日期</label><input type="date" id="nst_start" value="${trip?.startDate||""}"></div>
       <div class="field" style="flex:1"><label>結束日期</label><input type="date" id="nst_end" value="${trip?.endDate||""}"></div>
     </div>
-    <div class="field"><label>新造訪的預設參與者</label><div class="pick partpick" id="nst_participants">${orderedActiveMembers().map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===uid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
+    <div class="field"><label>旅程顏色</label><input type="color" id="nst_color" value="${esc(trip?.color||'#3f7d78')}" style="width:100%;height:42px;padding:4px"></div>
+    <div class="field"><label>同行者</label><div class="pick partpick" id="nst_participants">${orderedActiveMembers().map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===uid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
     <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
@@ -3671,6 +3709,7 @@ function openNoSpaceTripEditor(id,onDone){
   const collect=()=>({
     name:g("nst_name").value.trim(), emoji:g("nst_emoji").value.trim(),
     startDate:g("nst_start").value, endDate:g("nst_end").value,
+    color:g("nst_color").value,
     participantUserIds:retainCurrentParticipant(selected,uid), createdBy:trip?.createdBy||uid
   });
   g("nst_save").onclick=async()=>{
