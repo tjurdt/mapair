@@ -214,6 +214,32 @@ assert.equal(projected["place-1"].visits[1]._averageRating, 4);
 assert.equal(Object.hasOwn(projected["place-1"].visits[1]._contributions,C),false);
 assert.deepEqual(knownParticipantUserIds(A, [shared], [trip]), [A,B,C]);
 
+/* A visible Visit may arrive before its exact referenced Place listener. */
+const pendingPlaceVisit = { ...soloA, id:"visit-pending-place", placeId:"place-pending" };
+let pendingProjection;
+assert.doesNotThrow(() => {
+  pendingProjection = projectNoSpaceRuntime({ currentUserId:A, visits:[pendingPlaceVisit], placesById:{} });
+}, "a temporarily unresolved Place is normal loading state");
+assert.deepEqual(pendingProjection, {}, "an unresolved Place does not materialize an invalid runtime Place");
+assert.deepEqual(
+  projectNoSpaceRuntime({
+    currentUserId:A,
+    visits:[pendingPlaceVisit],
+    placesById:{ "place-pending":{ name:"Loaded place", lat:25.05, lng:121.52 } }
+  })["place-pending"].visits.map(visit => visit.id),
+  [pendingPlaceVisit.id],
+  "the Visit appears normally after its valid Place listener resolves"
+);
+assert.deepEqual(
+  projectNoSpaceRuntime({
+    currentUserId:A,
+    visits:[pendingPlaceVisit],
+    placesById:{ "place-pending":{ name:"Invalid place", lat:undefined, lng:121.52 } }
+  }),
+  {},
+  "a Place without finite numeric coordinates is not projected"
+);
+
 /* Exact external Place identity is deterministic and does not enumerate Places. */
 const googlePlace={source:"google",extId:"ChIJ/example",name:"Example"};
 assert.equal(externalPlaceDocumentId(googlePlace),externalPlaceDocumentId({...googlePlace,name:"Renamed input"}));

@@ -19,7 +19,8 @@ export function projectNoSpaceRuntime({
   const positions = personalOrderPositions(dayOrdersByDate, visits);
   const grouped = {};
   for (const visit of visits){
-    const objective = placesById[visit.placeId] || {};
+    const objective = placesById[visit.placeId];
+    if (!objective || !Number.isFinite(objective.lat) || !Number.isFinite(objective.lng)) continue;
     const contributions = participantContributions(contributionsByVisitId[visit.id],visit.participantUserIds);
     if (!grouped[visit.placeId]){
       grouped[visit.placeId] = {

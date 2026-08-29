@@ -69,6 +69,10 @@ export function placeSharedFields(place = {}) {
   };
 }
 
+export function hasFinitePlaceCoordinates(place) {
+  return Number.isFinite(place?.lat) && Number.isFinite(place?.lng);
+}
+
 export function layoutViewState({ map = false, filter = false, list = false } = {}, menuOpen = false) {
   const mapHidden = !!map;
   const filterHidden = !!filter;
