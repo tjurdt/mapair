@@ -66,6 +66,18 @@ function assertNoClockFields(value, path="legacy"){
     assertNoClockFields(child,`${path}.${key}`);
   }
 }
+function countClockFields(value){
+  if (Array.isArray(value)) return value.reduce((count,item)=>count+countClockFields(item),0);
+  if (!value || typeof value !== "object" || (Object.getPrototypeOf(value)!==Object.prototype && Object.getPrototypeOf(value)!==null)) return 0;
+  return Object.entries(value).reduce((count,[key,child])=>count+(CLOCK_FIELDS.has(key)?1:0)+countClockFields(child),0);
+}
+function dropClockFields(value){
+  if (Array.isArray(value)) return value.map(dropClockFields);
+  if (!value || typeof value !== "object" || (Object.getPrototypeOf(value)!==Object.prototype && Object.getPrototypeOf(value)!==null)) return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key])=>!CLOCK_FIELDS.has(key))
+    .map(([key,child])=>[key,dropClockFields(child)]));
+}
 function validDate(value){ return DATE_ONLY.test(value || "") ? value : ""; }
 function sourceRows(rows=[]){
   return rows.map((row,index)=>({ id:cleanString(row?.id) || String(index), data:row?.data || row || {} }));
@@ -112,9 +124,21 @@ export function convertLegacySpace({
   places=[],trips=[],members=[],existingUsers={},importedAt="MIGRATION_TIME"
 }={}){
   if (!cleanString(sourceSpace)) throw new Error("sourceSpace is required.");
-  assertNoClockFields({places,trips},"source");
+  const rawSource={spaceRoot,meta,places,trips,members};
+  const ignoredLegacyClockFields=countClockFields(rawSource);
+  meta=dropClockFields(meta);
+  places=dropClockFields(places);
+  trips=dropClockFields(trips);
+  members=dropClockFields(members);
   const documents=[];
   const warnings=[];
+  if(ignoredLegacyClockFields){
+    warnings.push({
+      code:"ignored-legacy-clock-fields",
+      count:ignoredLegacyClockFields,
+      message:`Ignored ${ignoredLegacyClockFields} legacy clock-time field${ignoredLegacyClockFields===1?"":"s"}.`
+    });
+  }
   const blockers=[];
   const legacyMembers=sourceRows(members);
   const legacyPlaces=sourceRows(places);
@@ -294,11 +318,12 @@ export function convertLegacySpace({
     visitOccurrences:legacyPlaces.reduce((sum,row)=>sum+occurrenceRows(row.data).length,0)
   };
   const sourceFingerprint=fingerprint("mapair-no-space-v1-source",{
-    version:1,sourceSpace,spaceRoot:spaceRootExists?spaceRoot:null,meta:metaExists?meta:null,
-    places:[...legacyPlaces].sort((a,b)=>a.id.localeCompare(b.id)),
-    trips:[...legacyTrips].sort((a,b)=>a.id.localeCompare(b.id)),
-    members:[...legacyMembers].sort((a,b)=>a.id.localeCompare(b.id))
+    version:1,sourceSpace,spaceRoot:spaceRootExists?rawSource.spaceRoot:null,meta:metaExists?rawSource.meta:null,
+    places:[...sourceRows(rawSource.places)].sort((a,b)=>a.id.localeCompare(b.id)),
+    trips:[...sourceRows(rawSource.trips)].sort((a,b)=>a.id.localeCompare(b.id)),
+    members:[...sourceRows(rawSource.members)].sort((a,b)=>a.id.localeCompare(b.id))
   });
+  assertNoClockFields(documents,"target");
   const importedAtCanonical=JSON.stringify(canonicalValue(importedAt));
   const fingerprintPlan=documents.map(item=>({path:item.path,merge:item.merge===true,data:stripPlanVolatile(item.data,importedAtCanonical)}))
     .sort((a,b)=>a.path.localeCompare(b.path));
@@ -307,7 +332,7 @@ export function convertLegacySpace({
   });
   return {
     sourceSpace,documents,warnings,blockers,counts,sourceCounts,sourceFingerprint,planFingerprint,
-    visits,trips:convertedTrips,placeIdMap,tripIdMap
+    visits,trips:convertedTrips,placeIdMap,tripIdMap,ignoredLegacyClockFields
   };
 }
 

@@ -99,9 +99,20 @@ const blocked=convertLegacySpace({sourceSpace:"us",importedAt:input.importedAt,p
 assert.equal(blocked.counts.visits,0);
 assert.equal(blocked.blockers.some(item=>item.code==="empty-visit-participants"),true,"explicit empty participant data blocks instead of inventing a User");
 
-assert.throws(()=>convertLegacySpace({sourceSpace:"us",places:[{id:"clock",data:{
-  name:"Clock",lat:25,lng:121,visitedOn:"2026-01-01",who:["a"],arrivalTime:"14:30"
-}}]}),/clock time/i);
+const legacyClockFields=convertLegacySpace({sourceSpace:"us",places:[{id:"clock",data:{
+  name:"Clock",lat:25,lng:121,visits:[{
+    date:"2026-01-01",who:["a"],time:"14:30",startTime:"14:00",endTime:"15:00",
+    arrivalTime:"13:55",departureTime:"15:05"
+  }]
+}}]});
+assert.deepEqual(legacyClockFields.blockers,[],"legacy clock-time fields do not block migration");
+assert.equal(legacyClockFields.ignoredLegacyClockFields,5);
+assert.equal(legacyClockFields.warnings.some(item=>item.code==="ignored-legacy-clock-fields"&&item.count===5),true);
+const clockTargetVisit=legacyClockFields.documents.find(item=>item.path.startsWith("visits/")).data;
+assert.equal(clockTargetVisit.date,"2026-01-01","migrated Visits remain date-only");
+for(const field of ["time","startTime","endTime","arrivalTime","departureTime"]){
+  assert.equal(Object.hasOwn(clockTargetVisit,field),false,`${field} is dropped from the target Visit`);
+}
 
 assert.deepEqual(validateMigrationOptions({project:"anything",source_space:"anything",apply:false}),{mode:"dry-run"});
 assert.throws(()=>validateMigrationOptions({project:"wrong",source_space:"us",apply:true,confirm:"MAPAIR_NO_SPACE_V1"}),/locked/);
