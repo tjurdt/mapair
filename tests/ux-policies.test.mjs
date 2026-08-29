@@ -4,6 +4,7 @@ import { resolveRuntimeConfig } from "../src/config.js";
 import { resolveProximityMaskMode } from "../src/proximity-geometry.js";
 import {
   MAP_SURFACE_Z_INDEX,
+  hasFinitePlaceCoordinates,
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
@@ -86,6 +87,12 @@ const copiedVisitFields = { ...station.visits[0], level:"經過", rating:1, revi
 assert.deepEqual(placeSharedFields(station, station.visits[0]), { level:"接地", rating:4.5, review:"測試共用評論：每次造訪都應看到同一段文字。" });
 assert.deepEqual(placeSharedFields(station, copiedVisitFields), placeSharedFields(station), "Visit data cannot override shared Place fields");
 
+assert.equal(hasFinitePlaceCoordinates({lat:25,lng:121}), true, "finite numeric coordinates are marker-safe");
+assert.equal(hasFinitePlaceCoordinates(), false, "a missing Place is not marker-safe");
+assert.equal(hasFinitePlaceCoordinates({lat:undefined,lng:121}), false, "a missing latitude is not marker-safe");
+assert.equal(hasFinitePlaceCoordinates({lat:25,lng:Infinity}), false, "non-finite coordinates are not marker-safe");
+assert.equal(hasFinitePlaceCoordinates({lat:"25",lng:121}), false, "numeric strings are not marker-safe");
+
 assert.throws(()=>resolveRuntimeConfig("localhost", ""), /requires the exact query parameter/);
 assert.throws(()=>resolveRuntimeConfig("localhost", "?firebaseEnv=local&firebaseEnv=local"), /must be exactly/);
 assert.throws(()=>resolveRuntimeConfig("mapair.example", "?firebaseEnv=local"), /only on localhost/);
@@ -102,6 +109,14 @@ assert.equal(layoutViewState({map:false,filter:true,list:true},true).compactSide
 assert.equal(layoutViewState({map:false,filter:true,list:true},false).contentHidden, true, "both content areas hide tabs and empty side content");
 const indexHtml=fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const mainSource=fs.readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const renderMarkersSource=mainSource.slice(mainSource.indexOf("function renderMarkers()"),mainSource.indexOf("function dateMarkerLegendBody()"));
+assert.equal(
+  [...renderMarkersSource.matchAll(/if \(!hasFinitePlaceCoordinates\(p\)\) return;/g)].length,
+  2,
+  "normal and sequence marker creation are both guarded by the finite-coordinate policy"
+);
+assert.doesNotMatch(renderMarkersSource,/pin\.element/,"marker rendering does not use deprecated PinElement.element");
+assert.match(renderMarkersSource,/pin\.style\.cursor = "pointer";[\s\S]*?content:pin,/,"PinElement itself supplies marker content and cursor styling");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
 assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");

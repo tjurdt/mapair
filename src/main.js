@@ -43,6 +43,7 @@ import {
 } from "./participants.js";
 import {
   MAP_SURFACE_Z_INDEX,
+  hasFinitePlaceCoordinates,
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
@@ -2265,6 +2266,7 @@ function renderMarkers(){
     const seen={};
     labelled.forEach((x,i)=>{
       const {o,label}=x, p=o.p, col=markerColorForOccurrence(o), idx=seen[p.id]||0; seen[p.id]=idx+1;
+      if (!hasFinitePlaceCoordinates(p)) return;
       const bubble=document.createElement("div"); bubble.className="seqpin"; bubble.textContent=label;
       if(label.length>2){ bubble.style.width="34px"; bubble.style.borderRadius="12px"; bubble.style.fontSize="9px"; }
       bubble.style.background=col; bubble.style.color=textOn(col);
@@ -2279,11 +2281,12 @@ function renderMarkers(){
   }
 
   Object.values(places).forEach(p => {
+    if (!hasFinitePlaceCoordinates(p)) return;
     if (!passFilter(p)) return;
     const col=effectiveMarkerColor(p);
     const pin = new Pin({ background:col, borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
-    pin.element.style.cursor = "pointer";
-    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin.element, title:p.name, gmpClickable:true });
+    pin.style.cursor = "pointer";
+    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin, title:p.name, gmpClickable:true });
     m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
     markers.push(m);
   });
