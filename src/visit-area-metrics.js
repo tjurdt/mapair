@@ -52,10 +52,16 @@ export function aggregatePlaceVisitAreaMetrics(places=[], {
   visitFilter=()=>true
 }={}){
   const visits=[];
+  let placeCount=0;
   for(const place of places||[]){
+    let survivingVisitCount=0;
     for(const visit of selectVisits(place)||[]){
-      if(visitFilter(visit,place)) visits.push(visit);
+      if(visitFilter(visit,place)){
+        visits.push(visit);
+        survivingVisitCount++;
+      }
     }
+    if(survivingVisitCount) placeCount++;
   }
-  return summarizeVisitAreaMetrics(visits,categoryOrder);
+  return {...summarizeVisitAreaMetrics(visits,categoryOrder),placeCount};
 }

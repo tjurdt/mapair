@@ -105,6 +105,19 @@ export function haversineKm(a, b) {
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+export function selectNearbyPlaces(seed, placeSource, radiusKm, qualifies = () => true) {
+  if (!seed || !Number.isFinite(Number(seed.lat)) || !Number.isFinite(Number(seed.lng))) return [];
+  const radius = Number(radiusKm);
+  if (!Number.isFinite(radius) || radius < 0) return [];
+  const values = Array.isArray(placeSource) ? placeSource : Object.values(placeSource || {});
+  return values.filter(place => (
+    Number.isFinite(Number(place?.lat)) &&
+    Number.isFinite(Number(place?.lng)) &&
+    qualifies(place) &&
+    haversineKm([Number(seed.lng),Number(seed.lat)],[Number(place.lng),Number(place.lat)]) <= radius
+  ));
+}
+
 export function nearestSeedOwner(coordinate, seeds, radiusKm = Infinity) {
   const radius = Number(radiusKm);
   let winner = null, bestDistance = Infinity;
