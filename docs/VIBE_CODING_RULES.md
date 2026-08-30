@@ -31,10 +31,13 @@ The recurring regression sources, all in `main.js`:
   `restyleProximityLayer`, `areaMetricLegendBody`).
 - **Filter predicates** — `passFilter`, `visitPassFilter`,
   `areaVisitPassFilter`, `mapAreaPlacePassFilter`.
-- **Occurrence enumeration / sort / stay expansion** — `getDayOccurrences`,
-  `getFilteredVisitOccurrences`, `sequenceOccurrences`,
-  `fullDayOrdinaryOccurrences`, `representativeDateOccurrence`, inline in
-  `renderMarkers`.
+- **Occurrence build / sort / stay expansion** — the shape, comparator, and
+  stay-anchor rule are now in `src/domain/occurrences.js` (use `occurrence()`,
+  `compareOccurrences` / `sortOccurrences`, `stayAnchorsOnDate` — never rebuild
+  the `{ p, v, visitIndex, seqDate, stayAnchor, fixed }` literal by hand). The
+  *enumeration* loop is still repeated across `getDayOccurrences`,
+  `getFilteredVisitOccurrences`, `fullDayOrdinaryOccurrences`, and
+  `representativeDateOccurrence` (Plan step 1b).
 - **`applyFilter()` cascade** — list render updates chips; marker render
   updates the legend; overlapping Firestore listeners each call a subset.
 

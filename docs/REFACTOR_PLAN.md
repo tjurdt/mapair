@@ -44,11 +44,21 @@ Run locally: `npm run test:e2e` (needs Java for the emulator).
 Mechanical, behaviour-preserving extraction into side-effect-free, unit-tested
 modules. Each sub-step is its own PR, guarded by the Phase 0 suite.
 
-1. `src/domain/occurrences.js` — one implementation of occurrence enumeration,
-   sorting, stay-night expansion, and single-day sequencing. Replaces the
-   parallel bodies in `getDayOccurrences`, `getFilteredVisitOccurrences`,
-   `sequenceOccurrences`, `fullDayOrdinaryOccurrences`,
-   `representativeDateOccurrence`, and the inline loop in `renderMarkers`.
+1. `src/domain/occurrences.js` — occurrence build / key / date / ordering /
+   stay-night expansion.
+   - **1a (done).** Pure primitives: `occurrence()` factory, `occurrenceDate`,
+     `occurrenceKey`, `stayAnchorRank`, `compareOccurrences` (+ `sortOccurrences`),
+     `stayAnchorsOnDate`. The six occurrence-building call sites in `main.js`
+     (`getDayOccurrences`, `getFilteredVisitOccurrences`,
+     `fullDayOrdinaryOccurrences`, `representativeDateOccurrence`,
+     `effectiveMarkerColor`, and the stay-expansion loop) now share one shape,
+     one comparator, and one stay-anchor rule.
+   - **1b (pending, after step 2).** Fold the *enumeration* structure
+     (iterate Places → gate → per-Visit predicate → expand) into the module via
+     injected predicates, so `getDayOccurrences` /
+     `getFilteredVisitOccurrences` / `fullDayOrdinaryOccurrences` /
+     `representativeDateOccurrence` stop repeating the loop. Needs `filter.js`
+     first so the predicates are plain values, not closures over `filter`.
 2. `src/domain/filter.js` — one `visitPasses()` / `placePasses()` pair.
    Replaces `passFilter`, `visitPassFilter`, `areaVisitPassFilter`,
    `mapAreaPlacePassFilter`.
