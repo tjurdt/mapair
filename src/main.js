@@ -47,6 +47,7 @@ import {
 import { aggregatePlaceVisitAreaMetrics } from "./visit-area-metrics.js";
 import {
   VISIT_DATE_RAINBOW,
+  deepestLevel,
   lerpHex,
   multiStopColor,
   orderedVisitDateColor,
@@ -1097,7 +1098,23 @@ function syncNoSpaceReferenceListeners(session, uid){
     }), error(`User ${profileUid}`)), id => delete noSpaceState.profiles[id]);
 }
 
+// Firestore delivers many per-document snapshots in quick succession (one per
+// referenced Place / contribution set / profile). Coalesce them: a single
+// re-projection + re-render runs shortly after a burst instead of once per
+// snapshot, which is the main cause of slow initial load.
+let noSpaceProjectionTimer = null;
 function refreshNoSpaceProjection(){
+  if (noSpaceProjectionTimer) return;
+  noSpaceProjectionTimer = setTimeout(() => {
+    noSpaceProjectionTimer = null;
+    applyNoSpaceProjection();
+  }, 24);
+}
+function cancelPendingProjection(){
+  if (noSpaceProjectionTimer){ clearTimeout(noSpaceProjectionTimer); noSpaceProjectionTimer = null; }
+}
+
+function applyNoSpaceProjection(){
   if (!user || !noSpaceRepository) return;
   const visitList = Object.values(noSpaceState.visits);
   places = projectNoSpaceRuntime({
@@ -1148,6 +1165,7 @@ function runtimeReady(){
 }
 
 function resetRuntimeState(){
+  cancelPendingProjection();
   resetNoSpaceState();
   places = {};
   trips = {};
@@ -1383,10 +1401,17 @@ function markerLegendBody(){
 
 function areaMetricLegendBody(surface,metric,ctx={}){
   if(metric==="first"||metric==="last"){
-    const lab=metric==="first"?"最早造訪日期":"最後造訪日期", grad=VISIT_DATE_RAINBOW.join(",");
+    const grad=VISIT_DATE_RAINBOW.join(",");
+    const singleDay=ctx.dmin && ctx.dmin===ctx.dmax;
+    const lab=singleDay
+      ? `${esc(ctx.dmin.replaceAll("-","/"))} ${metric==="first"?"首次進入":"最後停留"}順序`
+      : (metric==="first"?"最早造訪日期":"最後造訪日期");
+    const ends=singleDay
+      ? `<span>第一站</span><span>最後一站</span>`
+      : `<span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span>`;
     return `<div class="legendsection"><div class="legendtitle">${surface} · ${lab}</div>`+
       `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
+      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px">${ends}</div></div>`;
   }
   if(metric==="categoryMode"){
     const observed=new Set();
@@ -1464,8 +1489,6 @@ function pip(lat, lng, features, codeProp){
   }
   return null;
 }
-// 造訪深度:沒設 level 的地點預設當作「旅遊」。
-function effLevel(p){ return p.level || "旅遊"; }
 
 function updatePlaceGeographyCache(_originContextId, placeId, fields){
   return noSpaceRepository?.updatePlaceCache(placeId, fields) || Promise.resolve();
@@ -1549,6 +1572,43 @@ function visitAreaMetrics(pls){
     visitFilter:(visit,place)=>areaVisitPassFilter(place,visit)
   });
 }
+// Per-visit "造訪深度" of the current user's contribution (未設定的當作「旅遊」),
+// so area surfaces reflect the same depths the per-visit markers show.
+function filteredVisitLevel(visit){
+  return visit?._contributions?.[user?.uid]?.level || "旅遊";
+}
+// Deepest such level across the filter-passing visits of a Place set — the
+// value the choropleth / proximity "造訪深度" fill should use.
+function deepestFilteredLevel(placeList){
+  const levels=[];
+  for(const place of placeList||[]){
+    for(const visit of areaVisitsForPlace(place)){
+      if(areaVisitPassFilter(place,visit)) levels.push(filteredVisitLevel(visit));
+    }
+  }
+  return deepestLevel(levels,LEVEL_ORDER);
+}
+// When the active date window is a single day, colour a Place set by where its
+// first / last visit that day sits in the whole day's ordered sequence, so
+// same-day order is distinguishable on area surfaces (not just markers).
+// `daySequence` is the shared getDayOccurrences(date) result.
+function singleDayOrderColor(placeList,mode,daySequence){
+  if(!daySequence || !daySequence.length) return null;
+  const ids=new Set((placeList||[]).map(place=>place.id));
+  let slot=-1;
+  daySequence.forEach((occurrence,index)=>{
+    if(!ids.has(occurrence.p.id)) return;
+    if(mode==="first"){ if(slot<0) slot=index; }
+    else slot=index;
+  });
+  if(slot<0) return null;
+  return orderedVisitDateColor({
+    baseColor:VISIT_DATE_RAINBOW[0],
+    occurrenceIndex:slot,
+    occurrenceCount:daySequence.length,
+    singleDay:true
+  });
+}
 const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
 function countColor(value,bounds){ return quantitativeColor(COUNT_SHADES,value,bounds); }
 function countMetricBounds(metricsByKey,metric){
@@ -1605,17 +1665,19 @@ function removeProximityLayer(){
 }
 function restyleProximityLayer(){
   if(!proximityLayer) return;
+  const state=proximityAreaMetricState;
   const bounds=markerDateBounds();
   proximityLayer.setStyle(feature=>{
-    const place=places[String(feature.getProperty("seedId"))];
-    const metrics=proximityAreaMetricState?.bySeed?.[String(feature.getProperty("seedId"))] || null;
+    const metrics=state?.bySeed?.[String(feature.getProperty("seedId"))] || null;
     let color=(choroMetric==="count" || choroMetric==="visitCount") ? null : getCSS("--visited");
-    if(place && choroMetric==="level") color=levelColors[effLevel(place)]||color;
-    else if(metrics && choroMetric==="count") color=countColor(metrics.placeCount,proximityAreaMetricState.placeCountBounds);
-    else if(metrics && choroMetric==="visitCount") color=countColor(metrics.visitCount,proximityAreaMetricState.visitCountBounds);
-    else if(metrics && choroMetric==="first" && metrics.earliest) color=dateColor(metrics.earliest,bounds.from,bounds.to);
-    else if(metrics && choroMetric==="last" && metrics.latest) color=dateColor(metrics.latest,bounds.from,bounds.to);
-    else if(metrics && choroMetric==="categoryMode" && metrics.categoryMode) color=catColor(metrics.categoryMode);
+    if(metrics){
+      if(choroMetric==="level" && metrics.deepestLevel) color=levelColors[metrics.deepestLevel]||color;
+      else if(choroMetric==="count") color=countColor(metrics.placeCount,state.placeCountBounds);
+      else if(choroMetric==="visitCount") color=countColor(metrics.visitCount,state.visitCountBounds);
+      else if(choroMetric==="first") color=metrics.firstDayColor || (metrics.earliest ? dateColor(metrics.earliest,bounds.from,bounds.to) : color);
+      else if(choroMetric==="last") color=metrics.lastDayColor || (metrics.latest ? dateColor(metrics.latest,bounds.from,bounds.to) : color);
+      else if(choroMetric==="categoryMode" && metrics.categoryMode) color=catColor(metrics.categoryMode);
+    }
     if(!color) color="#e5e0d6";
     return {
       fillColor:color,
@@ -1682,10 +1744,17 @@ async function renderProximityCoverage(requestVersion){
   const seeds=selectEligibleProximitySeeds(places, mapAreaPlacePassFilter);
   const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
-  const bySeed=Object.fromEntries(seeds.map(seed=>[
-    seed.id,
-    visitAreaMetrics(selectNearbyPlaces(seed,places,proximityRadius,mapAreaPlacePassFilter))
-  ]));
+  const bounds=markerDateBounds();
+  const singleDaySeq=(bounds.from && bounds.from===bounds.to) ? getDayOccurrences(bounds.from) : null;
+  const bySeed=Object.fromEntries(seeds.map(seed=>{
+    const nearby=selectNearbyPlaces(seed,places,proximityRadius,mapAreaPlacePassFilter);
+    return [seed.id,{
+      ...visitAreaMetrics(nearby),
+      deepestLevel:deepestFilteredLevel(nearby),
+      firstDayColor:singleDaySeq ? singleDayOrderColor(nearby,"first",singleDaySeq) : null,
+      lastDayColor:singleDaySeq ? singleDayOrderColor(nearby,"last",singleDaySeq) : null
+    }];
+  }));
   proximityAreaMetricState={
     bySeed,
     placeCountBounds:countMetricBounds(bySeed,"count"),
@@ -1796,23 +1865,25 @@ async function renderAdministrativeLayer(){
   if(choroMetric==="first" || choroMetric==="last"){
     const bounds=markerDateBounds(); dmin=bounds.from; dmax=bounds.to;
   }
+  const singleDay=dmin && dmin===dmax ? dmin : "";
+  const singleDaySeq=singleDay ? getDayOccurrences(singleDay) : null;
   const colorOf=code=>{
     const regionPlacesList=byRegion[code];
     if(!regionPlacesList || !regionPlacesList.length) return null;
     if(choroMetric==="level"){
-      let best=-1;
-      for(const place of regionPlacesList){
-        const index=LEVEL_ORDER.indexOf(effLevel(place));
-        if(index>best) best=index;
-      }
-      return best<0 ? null : levelColors[LEVEL_ORDER[best]];
+      const deepest=deepestFilteredLevel(regionPlacesList);
+      return deepest ? (levelColors[deepest] || null) : null;
     }
     const metrics=metricsByRegion[code];
     if(choroMetric==="count") return countColor(metrics.placeCount,countBounds);
     if(choroMetric==="visitCount") return countColor(metrics.visitCount,countBounds);
     if(choroMetric==="categoryMode") return metrics.categoryMode ? catColor(metrics.categoryMode) : null;
-    const date=choroMetric==="first" ? metrics.earliest : metrics.latest;
-    return date ? dateColor(date,dmin,dmax) : null;
+    if(choroMetric==="first" || choroMetric==="last"){
+      if(singleDay) return singleDayOrderColor(regionPlacesList,choroMetric,singleDaySeq);
+      const date=choroMetric==="first" ? metrics.earliest : metrics.latest;
+      return date ? dateColor(date,dmin,dmax) : null;
+    }
+    return null;
   };
   const selectedCodes=new Set(filter.regions
     .filter(region=>region.key===CODEKEY[level])

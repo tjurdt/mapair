@@ -7,6 +7,7 @@ import {
 } from "../src/visit-area-metrics.js";
 import {
   VISIT_DATE_RAINBOW,
+  deepestLevel,
   multiStopColor,
   orderedVisitDateColor,
   positiveExtrema,
@@ -104,6 +105,14 @@ assert.equal(
   multiStopColor(VISIT_DATE_RAINBOW,0.5),
   "one single-day occurrence receives a deterministic rainbow color"
 );
+
+const LEVELS=["經過","接地","旅遊","住宿","居住"];
+assert.equal(deepestLevel(["經過","居住","旅遊"],LEVELS),"居住","deepest level wins regardless of order");
+assert.equal(deepestLevel(["經過","接地"],LEVELS),"接地");
+assert.equal(deepestLevel(["旅遊"],LEVELS),"旅遊","a single level resolves to itself");
+assert.equal(deepestLevel([],LEVELS),null,"no levels -> null (region stays uncoloured)");
+assert.equal(deepestLevel(["unknown","經過"],LEVELS),"經過","unrecognised values are ignored, not deepest");
+assert.equal(deepestLevel(["unknown"],LEVELS),null);
 
 const mainSource=await readFile(new URL("../src/main.js",import.meta.url),"utf8");
 const mapColorSource=await readFile(new URL("../src/map-color-scales.js",import.meta.url),"utf8");
