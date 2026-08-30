@@ -1,5 +1,12 @@
 # Vite and ES Module Migration Plan
 
+> **Status: partially done.** Stages 0–3 landed (Vite shell, config/vendor
+> adapters, and several pure domain modules under `src/`). Stages 4–8 (explicit
+> store, incremental rendering extraction, map isolation, CSS extraction,
+> removing the monolith scaffold) are **not** done — `src/main.js` is still a
+> ~2,500-line module with all CSS inline in `index.html`. The remaining stages
+> are the reference for the planned `src/main.js` decomposition.
+
 ## Objective and constraints
 
 Migrate Mapair from a monolithic static `index.html` to Vite and ES modules while preserving current behavior.
@@ -160,4 +167,4 @@ Validation criteria:
 
 The following may be valuable but are not part of this migration: moving Visits to a subcollection, schema versioning, data backfills, multi-member redesign, transaction semantics, offline support, new features, visual redesign, geographic-data replacement, or changing Firebase security rules. Address these only after the module migration is stable and as separately scoped work.
 
-The previously deferred multi-member redesign is now planned separately in [MULTI_USER_DESIGN.md](MULTI_USER_DESIGN.md) and [MULTI_USER_MIGRATION_PLAN.md](MULTI_USER_MIGRATION_PLAN.md); it remains outside the scope of this Vite and ES module migration.
+The multi-member redesign was pursued separately and then abandoned in favour of the No-Space architecture ([NO_SPACE_CORE.md](NO_SPACE_CORE.md)); the old `spaces/{spaceId}` design docs are in [archive/](archive/). It was always outside the scope of this Vite and ES module migration.

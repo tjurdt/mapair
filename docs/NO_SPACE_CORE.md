@@ -1,10 +1,20 @@
-# No-Space Core — v0.3 release candidate
+# No-Space Core
+
+> "Phase A" throughout this document names the currently-shipped scope. The
+> production data migration and the candidate Firestore rules are separate,
+> not-yet-executed operations (see [MAPAIR_V0_3_RELEASE.md](MAPAIR_V0_3_RELEASE.md)).
 
 ## Status and safety boundary
 
-On `release/mapair-v0.3-no-space`, No-Space is the production-default architecture. Production needs no query parameter. LOCAL development retains the fixed-Space baseline at `?firebaseEnv=local`, the legacy multi-Space harness at `?firebaseEnv=local&multiSpace=1`, and No-Space at `?firebaseEnv=local&noSpace=1`; the two feature flags remain mutually exclusive. Legacy Space runtime code and `spaces/us` are retained only for rollback and are not exposed as a production write mode.
+No-Space is the only architecture. Production needs no query parameter. LOCAL
+development uses `?firebaseEnv=local` (localhost only, exactly that value), which
+connects the Auth and Firestore emulators and otherwise runs the identical
+No-Space client. There are no architecture feature flags; the earlier
+`spaces/{spaceId}` / `multiSpace` / `noSpace` runtime paths and their modules
+have been removed. `spaces/us` still exists in production Firestore but is not
+read by the client — it is migration input only.
 
-Development on this branch performs no production migration, rule deployment, data copy, or deletion. The migration and candidate rules require separate review and explicit operator action.
+Development performs no production migration, rule deployment, data copy, or deletion. The migration and candidate rules require separate review and explicit operator action.
 
 ## Domain model
 

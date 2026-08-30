@@ -1,8 +1,13 @@
 # Multi-User Migration Plan
 
+> **ARCHIVED — abandoned, never executed.** The reversible migration plan for
+> the multi-user `spaces/{spaceId}` design. Superseded by the No-Space
+> architecture ([../NO_SPACE_CORE.md](../NO_SPACE_CORE.md)). Kept for historical
+> reference only. See [README.md](README.md).
+
 ## Objective and constraints
 
-Migrate Mapair from one configured two-person Space to the multi-user model in [MULTI_USER_DESIGN.md](MULTI_USER_DESIGN.md) without relocating or rewriting existing shared history. This is a plan only. The current implementation remains documented in [DATA_MODEL.md](DATA_MODEL.md).
+Migrate Mapair from one configured two-person Space to the multi-user model in [MULTI_USER_DESIGN.md](MULTI_USER_DESIGN.md) without relocating or rewriting existing shared history. This is a plan only. The current implementation remains documented in [DATA_MODEL.md](../DATA_MODEL.md).
 
 Every phase must be independently reviewable, additive before subtractive, and reversible. Application behavior, Firebase configuration, Firestore rules, and production data remain unchanged until a separately approved implementation task explicitly changes them.
 

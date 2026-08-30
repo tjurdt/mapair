@@ -1,86 +1,45 @@
-# Current Data Model
+# Data Model
 
-> This file documents the retained **legacy Space model** used for rollback and migration input. On the v0.3 release branch, production runtime defaults to the top-level No-Space model documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). No production data has been migrated or deleted by development work.
-
-This document records the deployed-compatible data model implemented by the current application. Phase 1 additionally supports read-only, additive root Space and Membership documents when present, but it does not require them, migrate existing data, or implement the complete target model.
+> The running client uses the **No-Space** model: top-level `users`, `places`,
+> `visits`, `visits/{id}/contributions`, `users/{uid}/dayOrders`, and `trips`.
+> The authoritative specification of that model — Firestore paths, shared vs
+> personal facts, the no-clock-time rule, Place resolution, contributions, day
+> order, Trip defaults — is [NO_SPACE_CORE.md](NO_SPACE_CORE.md).
+>
+> This document covers what NO_SPACE_CORE.md does not: **the projected
+> Place/Visit/Trip shape** that the map/list/filter/stay pipeline consumes, and
+> the **legacy read-compatibility rules** that still apply to pre–No-Space
+> records and to migration input. It does not describe a `spaces/{spaceId}`
+> runtime — that architecture is archived (see [archive/](archive/)) and its
+> modules (`src/spaces.js`, `src/space-membership.js`) are deleted.
 
 ## Storage layout
 
-All shared data is under `spaces/{spaceId}`:
+Live reads and writes go through `src/no-space/repository.js` only. The paths are
+listed in [NO_SPACE_CORE.md](NO_SPACE_CORE.md#firestore-paths); nothing touches
+`spaces/…`.
 
-```text
-spaces/{spaceId}/places/{placeId}
-spaces/{spaceId}/trips/{tripId}
-spaces/{spaceId}/meta/config
-```
+Legacy shared history still lives at `spaces/us/{places,trips,meta}` in
+production. It is **not read by the client** and is untouched by development
+work; it exists only as input for the separately approved No-Space migration
+(`scripts/migrate-no-space-v1.mjs`, see [MAPAIR_V0_3_RELEASE.md](MAPAIR_V0_3_RELEASE.md)).
+The migration has not been run.
 
-The application adds Firestore document IDs as in-memory `id` fields after reading documents.
+The application adds each Firestore document's ID as an in-memory `id` field
+after reading it.
 
-The active application Space in production remains the single Space selected by runtime configuration. It is represented in memory as `currentSpaceId` (`us` in production). Production has no Space discovery, switching, Personal Space provisioning, or local active-Space preference — none of the Phase 3 surfaces are exposed there.
+## Projected runtime shape
 
-LOCAL TEST additionally accepts a strict development/test harness parameter, `?firebaseEnv=local&testSpace=group`, which selects `test-space-group` from a fixed two-entry allowlist (`baseline` → `test-space-baseline`, `group` → `test-space-group`). It is localhost-only, rejects unknown or duplicate values, fails closed in production, and never accepts an arbitrary Firestore Space ID. It is not a Space switcher.
+`projectNoSpaceRuntime()` (`src/no-space/visits.js`) folds the top-level
+documents into a `places` map where each Place carries an embedded `visits`
+array, so the pre-existing Place-oriented rendering, filtering, stay-anchor, and
+geography code needs no change. The field tables below describe that projected
+shape. A projected field that is *not* also a stored objective Place field
+(rating, `level`, embedded `visits`) is derived per current user and never
+written back to `places/{id}`.
 
-## Phase 3 — Personal Space and Space switcher (LOCAL only)
-
-Phase 3 is gated behind `?firebaseEnv=local&multiSpace=1` (localhost only, exactly `multiSpace=1`, rejects duplicate/unknown values, fails closed and never modifies config anywhere but LOCAL TEST). Production multi-Space support stays non-public until Phase 6 Membership-based Firestore rules exist. Without the flag every prior LOCAL workflow — including `?firebaseEnv=local` fixed-Space baseline testing that needs no formal Memberships — is unchanged.
-
-**Personal Space.** A Personal Space is one ordinary Space (`spaces/{id}` + `spaces/{id}/members`, `/places`, `/trips`, `/meta/config`) owned and managed by exactly one User; it is not a cross-Space aggregate and Visits are never copied into it. Every User has exactly one. It is discovered by `Space.type === "personal"` + `Space.ownerId === uid` + an active owner Membership — the discovered Space's stored ID is used as-is (fixtures do not use the deterministic ID). If none exists it is provisioned at the deterministic, path-safe ID `personal-${encodeURIComponent(uid)}` (never shown in normal UI) via one idempotent Firestore transaction that creates the root and the single owner Membership, refuses to overwrite a Shared Space or a foreign-owner document, and never uses `merge` to hide a conflict. More than one valid Personal Space fails closed with a LOCAL diagnostic. A Personal Space stays one-member in v0.2; sharing means creating a Shared Space.
-
-**Discovery.** `collectionGroup("members").where("userId","==",uid).where("status","==","active")` — one authenticated-User listener that outlives Space switches and is torn down on logout / auth change. Each result's parent `spaceId` is derived from the path and its root Space document fetched. Malformed Memberships (document ID ≠ `userId`, non-`owner`/`member` role, non-`active` status) and missing/invalid roots are excluded from the switcher and reported only in LOCAL diagnostics. Access is never inferred from Friendship, Visit/Trip participants, or `createdBy`. The Firestore Emulator serves this query unindexed; `firestore.indexes.json` declares the `members` `(userId, status)` collection-group composite index for the eventual (separately approved) Phase 6 deployment.
-
-**Active-Space preference.** `localStorage` key `mapair.activeSpace.v1:<projectId>:<uid>` — scoped by Firebase project/environment AND UID so accounts never share one active Space. Only written after confirming active Membership; an inaccessible saved value is ignored and replaced by the Personal Space. Storage failure never crashes the app.
-
-**Initial active Space** after sign-in: (A) an explicitly requested, accessible LOCAL `testSpace` — an explicit-but-inaccessible `testSpace` is a LOCAL TEST failure, never a silent fallback; (B) an accessible saved preference; (C) the Personal Space; (D) otherwise fail closed. A new User is never defaulted into every Shared Space.
-
-**Switch lifecycle.** One controlled `switchActiveSpace(spaceId)`: verify accessibility → close editors/modals/search suggestions, disable add-mode → unsubscribe all current-Space listeners → mint a fresh `spaceSession` token → clear every Space-scoped slice (`places`, `trips`, `spaceCats`, members/nicknames/colours, `currentSpace`/`currentMembership`/directory/removed Members, referenced historical participants, markers, admin/proximity layers + caches, editor write queues) → reset data-bound filters (`who`/`tripId`/`cats`/`regions` cleared, `dateScope="month"`, `tab="visited"`) while keeping visual prefs (marker mode, pins, layout collapse, proximity radius) → activate the new Space, save the preference, show a loading/empty state, then resubscribe.
-
-**Stale-session protection.** A monotonic `spaceSession` (`{ spaceId, version }`, a new object per switch). Every current-Space subscription and every Space-bound async callback (Places search, nearby search, reverse geocode, admin cache writes, editor autosave queues) captures the session in force when it started; a callback whose captured session is no longer current does not apply its result. Every deferred write also captures its originating Space ID and targets it through a `*For(spaceId)` path helper, so a queued write from Space A can never land in Space B.
-
-**Revised 2 hardening.**
-
-- *Ordered discovery.* Each discovery snapshot is stamped with a monotonically increasing request version alongside the listener generation and the authenticated UID. After every `await`, a result is applied only if the listener generation is current, the UID is unchanged, **and** the snapshot's request version is still the newest — so slow async snapshots can never apply out of order and resurrect a removed Space.
-- *Root reads fail closed.* A Space-root `getDoc` that **rejects** is never treated as "root missing". Only a successful read that reports non-existence counts as genuinely missing; a read failure aborts the whole discovery cycle with a LOCAL diagnostic and never lets provisioning create a duplicate Personal Space.
-- *Exact membership path.* `collectionGroup("members")` can match any `members` collection; a discovered Membership is trusted only when its document path is exactly `spaces/{spaceId}/members/{uid}` for the authenticated UID (`resolveSpaceMembershipPath` in `src/spaces.js`). Anything else is rejected and only diagnosed.
-- *Stale listener errors / auth teardown.* Every current-Space `onSnapshot` error callback (space root, members, places, trips, meta) ignores errors once its Space session is stale; the discovery listener's error callback is guarded by generation + UID. On logout / auth change the Space session is invalidated (`nextSpaceSession(spaceSession, "")`) and the in-flight discovery request is bumped **before** old listeners are torn down.
-- *Search session capture.* Google autocomplete captures the Space session and a request generation **before** `searchPlace()` runs; a switch or a newer keystroke invalidates the result, and the check is repeated after `fetchFields()` and `reverseGeocode()` before an editor is opened.
-- *Write queue not blindly cleared.* `placeEditorWriteQueues` is **not** cleared on a Space switch — clearing the Map would abandon running Promise chains without cancelling them. Each entry removes itself via its own `.finally`, so a returned-to Space still serializes behind any unresolved write for the same `${spaceId}:${placeId}`.
-- *Stronger discovered-Space validation.* `normalizeDiscoveredSpace()` also rejects: a root with no usable `ownerId`; a Personal Space discovered only as `member`; a Personal Space whose `ownerId` ≠ the Membership UID; an `owner` Membership whose UID ≠ `Space.ownerId`; and `Space.ownerId === Membership UID` while the role is not `owner`.
-
-**Shared Space creation** (`＋ 新共享地圖`): asks only for a name, then one transaction creates `spaces/{autoId}` (`type: "shared"`) and the creator's single active owner Membership, then switches to it. No second Member; no invitation UI (Phase 5). No Personal → Shared conversion.
-
-**Not in Phase 3:** Trip participant defaults (`Trip.participantIds`) — Phase 4; Friends/invites/mentions/member-management UI — Phase 5; production rules/migration/exposure — Phase 6. In the legacy Space plan, **"我的足跡" / My Footprints** was reserved as a separate cross-Space surface and not a Personal Space. No-Space Phase A now implements the participant-scoped top-level Visit view under that title through a distinct LOCAL-only gate; it still does not move or copy `spaces/us` history.
-
-## Optional Phase 1 Space and Membership documents
-
-The application can now also read these additive paths:
-
-```text
-spaces/{currentSpaceId}
-spaces/{currentSpaceId}/members/{uid}
-```
-
-The optional root Space currently supports `name`, `type`, `ownerId`, `createdBy`, and `createdAt`. A formal Membership supports `userId`, `role`, `status`, `displayNameSnapshot`, optional `photoURLSnapshot`, `joinedAt`, and optional `removedAt`.
-
-These documents are not created, updated, or repaired by normal application startup, and are not required in production or in fixed-Space LOCAL modes. Existing production data may omit them. The one exception is Phase 3 LOCAL multi-Space mode, which creates a root Space document and a single active owner Membership when provisioning a Personal Space or creating a Shared Space (see above) — always transactional, never a repair, never `merge`. When both formal areas are absent, the client constructs temporary compatible Members in memory from `spaces/{currentSpaceId}/meta/config.members` and nicknames. Existing content remains at its current paths and is not moved.
-
-The normalized in-memory Member interface is:
-
-```text
-userId
-role
-status
-displayName
-photoURL
-source: formal | legacy-meta
-valid
-issues
-```
-
-The Membership document ID is the canonical formal Member identity; a stored `userId`, when present, must match it exactly. Formal Members are valid only when `role` explicitly equals `owner` or `member` and `status` explicitly equals `active` or `removed`. Malformed records retain structured issues for diagnostics but cannot become active, accessible, or valid owners. A stored root `id` field likewise cannot override the path-derived `currentSpaceId`.
-
-A legacy compatibility Member has no asserted formal role because `meta/config.members` does not encode ownership; it remains active for compatibility only. Only UIDs present in `meta/config.members` become legacy Members. Nicknames may override those Members' display names but cannot introduce nickname-only phantom Members. Formal display names prefer `Membership.displayNameSnapshot`, then a legacy-compatible name, then a generic non-UID fallback. The existing visible two-person UI still reads legacy meta directly in Phase 1, so distinguishable formal snapshots do not silently rename current surfaces.
-
-A pure ownership check reports whether there is exactly one active owner Membership and whether its `userId` matches `Space.ownerId`. Zero owners, multiple owners, a removed owner, and owner-ID mismatch are invalid diagnostic states; the application does not repair them. A removed current Membership is marked inaccessible in the target domain, but Phase 1 does not enforce Membership authorization in the UI or Firestore rules.
+The same shape is produced when normalising a genuinely legacy record, so the
+compatibility rules in **Legacy compatibility fields** below still matter.
 
 ## Place
 
@@ -95,15 +54,15 @@ A Place is the stable geographic entity. It owns properties that are shared acro
 | `source` | Observed values include `google` and `map`. |
 | `extId` | Google Place ID when available; used for duplicate detection. |
 | `admin` | Reverse-geocoded display metadata: `country`, `county`, and `city`. |
-| `status` | Legacy field. New/updated Visit-bearing Places may still carry `status:"visited"` as a mixed-client compatibility mirror, but no normal domain behaviour depends on it. Dormant legacy `status:"wishlist"` documents (see below) may still exist but are ignored everywhere. No new value is introduced and no field is physically removed. |
-| `level` | Shared visit depth: `經過`, `接地`, `旅遊`, `住宿`, or `居住`. |
-| `rating` | Shared Place rating, from 0.5 through 5 in 0.5 steps; absent/null means unrated. |
-| `review` | Shared free-text review. |
-| `visits` | Embedded Visit array for visited Places. This is the canonical current visit history. |
+| `status` | Legacy field. Not written by the No-Space client. Dormant legacy `status:"wishlist"` documents (see below) may still exist in migrated data but are ignored everywhere. |
+| `level` | Projected per-user visit depth (`經過`/`接地`/`旅遊`/`住宿`/`居住`) from the current user's Visit contribution; not a stored Place field. |
+| `rating` | Projected per-user rating (0.5–5 in 0.5 steps) from the current user's latest Visit contribution; not a stored Place field. |
+| `review` | Legacy shared free-text review. Replaced by the personal Visit contribution `memory`. |
+| `visits` | Embedded Visit array — **projection only**. Built from the `visits/{visitId}` documents referencing this Place; never stored on `places/{id}`. |
 | `createdBy` | UID of the creator. |
-| `createdAt` | Firestore server timestamp used for collection ordering and fallback list ordering. |
+| `createdAt` | Firestore server timestamp; used only as a fallback ordering tiebreak. |
 | `ord` | Legacy ordering value on old wishlist documents. Not written by current code. |
-| `countyCode`, `townCode`, `villCode` | Cached point-in-polygon administrative identifiers. |
+| `countyCode`, `townCode`, `villCode` | Cached point-in-polygon administrative identifiers (`updatePlaceCache`). |
 
 ### Place lifecycle
 
@@ -117,7 +76,10 @@ The "想去 / wishlist" feature has been removed. Legacy documents with `status:
 
 ## Visit
 
-A Visit is one dated occurrence at a Place. Multiple Visits can refer to the same Place because Visits are embedded in that Place document.
+A Visit is one dated occurrence at a Place, stored as its own `visits/{visitId}`
+document. Multiple Visits can reference the same `placeId`; the projection groups
+them under one Place with an embedded `visits` array (see **Projected runtime
+shape**).
 
 | Field | Meaning |
 | --- | --- |
@@ -127,17 +89,18 @@ A Visit is one dated occurrence at a Place. Multiple Visits can refer to the sam
 | `endDate` | Checkout date for a stay; empty for an ordinary Visit. |
 | `tripId` | Referenced Trip document ID, or an empty string for daily life. |
 | `category` | One category/purpose for this occurrence. |
-| `participantIds` | Array of participant UIDs. The modern authoritative participant field (Phase 2). |
-| `who` | Array of participant UIDs. Legacy participant field, still written as a mirror for mixed-client compatibility. |
-| `order` | Optional numeric ordering among ordinary Visits on the same day. |
+| `participantIds` | Array of participant UIDs. In the projection this equals the stored `visits/{id}.participantUserIds`. |
+| `who` | Array of participant UIDs. In the projection, set identical to `participantIds`. Only a genuine legacy record has a `who` that can differ. |
+| `order` | Projected per-user position among ordinary Visits on the same day, from `users/{uid}/dayOrders/{date}`. Not a stored Visit field. |
 
-Category, Trip, and participants are canonical at Visit level. Rating, review, depth, identity, and coordinates remain canonical at Place level.
+Category, Trip, and participants are canonical on the `visits/{id}` document. Identity and coordinates are canonical on `places/{id}`. Rating, memory, and depth are canonical on `visits/{id}/contributions/{uid}`.
 
 ### Visit participant resolution (Phase 2)
 
-Participants are arbitrary active or removed Space Members, not a fixed
-`me` / `partner` / `both` model. The domain resolves a Visit's participants in
-this precedence:
+Participants are an arbitrary UID set, not a fixed `me` / `partner` / `both`
+model. `resolveVisitParticipants` in `src/participants.js` resolves a Visit's
+participants in this precedence (used by the projection, legacy read paths, and
+the migration tool):
 
 1. If the Visit has its own `participantIds` and it is a valid UID array, that
    is authoritative. An explicit empty array (`participantIds: []`) is honoured
@@ -156,27 +119,24 @@ this precedence:
 Malformed `participantIds` produces a structured diagnostic, never a crash, and
 falls back to compatibility without being silently normalized.
 
-When a Visit carries both `participantIds` and `who` and they disagree, the
-disagreement is a detectable, reported condition (`同行者資料需確認` in the
-editor; a `console.warn` in LOCAL TEST). Domain, display, and filtering use
-`participantIds`. Unrelated edits (date, category, Trip, rating, review) must
-preserve both original arrays verbatim; only an explicit participant selection
-reconciles them, writing `participantIds` and `who` identically. A new Visit
-writes both fields identically from creation. Historical Visits are never bulk
-migrated.
+A No-Space Visit stores only `participantUserIds`, so it cannot carry a
+`who` / `participantIds` conflict. On a legacy record where the two disagree,
+`detectParticipantMismatch` reports it and domain/display/filtering use
+`participantIds`; the current No-Space editor does not surface a notice for it.
+Legacy `who`-only or mismatched Visits are never bulk migrated or backfilled by
+unrelated edits.
 
 ### Historical (removed / unknown) participants
 
-A participant UID on an existing record that is not an active Member is a
-*historical* participant. It stays on the record through unrelated edits, and is
-never offered as an unchecked candidate that could be re-added. The user may
-explicitly remove it; that removal is **one-way** and counts as a participant
-edit (it reconciles `participantIds` and `who` to the remaining selection). New
-data never gains a historical UID: every new-Visit participant seed is
-intersected with active valid Memberships first.
+A participant UID on an existing record that is not a currently-known participant
+is a *historical* participant. It stays on the record through unrelated edits,
+and is never offered as an unchecked candidate that could be re-added. The user
+may explicitly remove it; that removal is **one-way** and counts as a participant
+edit. New data never gains a historical UID: every new-Visit participant seed is
+intersected with the active participant set first.
 
-The UI distinguishes a **known removed Member** (`真實名稱（已離開）`, resolved
-from the retained Membership snapshot) from an **unknown historical UID**
+The UI distinguishes a **known removed participant** (`真實名稱（已離開）`,
+resolved from a retained `users/{uid}` profile) from an **unknown historical UID**
 (`未知成員`). A raw UID is never displayed. The authenticated User shows as
 `真實名稱（我）` where a name is known.
 
@@ -196,17 +156,23 @@ Thus checkout day has a morning departure anchor but no occupied-night anchor. T
 
 ## Visit ordering and occurrences
 
-Stored Visit ordering is represented by `visit.order`. Generated occurrence objects also carry their Place, Visit array index, effective sequence date, anchor type, and whether they are fixed.
+Per-user ordering within one date lives in `users/{uid}/dayOrders/{date}.visitIds`
+and is projected onto each Visit as `order`. Generated occurrence objects also
+carry their Place, Visit array index, effective sequence date, anchor type, and
+whether they are fixed.
 
 Occurrences sort by:
 
 1. Effective date.
 2. Stay anchor rank: morning, ordinary Visit, night.
-3. Numeric Visit order, with missing order last.
+3. Projected day-order position, with unpositioned Visits last.
 4. Place `ord` or `createdAt.seconds` fallback.
 5. Visit array index.
 
-Reordering is available for ordinary occurrences in day/Trip contexts. The application assigns consecutive order values across that day's ordinary Visits, groups changed Visits by Place, and rewrites each affected Place's complete `visits` array. Stay anchors remain fixed.
+Reordering is available for ordinary occurrences in day/Trip contexts. Moving a
+Visit rewrites only the current user's `dayOrders/{date}` document (optimistic
+local update, then `setDoc`); it never touches shared Visit or Place documents,
+and another user's ordering is unaffected. Stay anchors remain fixed.
 
 Trip labels use `D{day}-{position}`. Single-day labels use consecutive integers. Trip day numbering is based on the Trip start date, or on the earliest occurrence when the Trip has no start date.
 
@@ -222,53 +188,63 @@ Trip labels use `D{day}-{position}`. Single-day labels use consecutive integers.
 
 Trips do not own Places or Visit arrays. Membership is determined by `visit.tripId`. Trip counts distinguish Visit count from unique Place count. Deleting a Trip currently does not rewrite referencing Visits.
 
-## Visitor and companion logic
+## Participant directory
 
-The shared meta document contains a `members` object keyed by UID; `nicknames`
-can override member display names. Phase 2 removed the two-person assumption
-from the domain and UI: participant filters, pickers, marker colouring, legend,
-and name resolution all operate on arbitrary active Space Members resolved
-through the Membership foundation (`src/space-membership.js`), and removed
-Members are still resolved for historical display. There is no `partnerUid()` /
-`otherOf()` / `me` / `partner` / `both` logic in the domain any more.
+The client derives the known-participant set from the authenticated user plus
+every `participantUserIds` entry on visible Visits and Trips
+(`knownParticipantUserIds`), then reads those exact `users/{uid}` documents for
+display names and photos. It never lists the `users` collection. `main.js`
+projects this into a `participantMembers` array (all `status:"active"`, `valid`)
+and a `members` UID→name map. There is no `partnerUid()` / `otherOf()` /
+`me` / `partner` / `both` logic; participant filters, pickers, marker colouring,
+legend, and name resolution operate on this arbitrary-N set.
 
-Participant pickers and automatic defaults offer only active Members. A
-historical (removed / unknown) participant already on a record is preserved
-through unrelated edits, is shown with an explicit remove control, and once
-removed cannot be re-added — see **Historical (removed / unknown) participants**
-above. `meta/config.members` is still the two-person legacy universe used only
-to serialize a compatible `whoMode` (see below).
-
-The authenticated User's new-data default is fail-closed: it is selected only
-when that User is an active valid Member, otherwise the default is empty.
+A participant UID on a record that is not a currently-known participant is a
+*historical* participant: it is preserved through unrelated edits, shown with an
+explicit one-way remove control, and never offered as a re-addable candidate —
+see **Historical (removed / unknown) participants** above. The authenticated
+user's new-data default is `[uid]` only when that uid is an active member,
+otherwise empty (fail-closed).
 
 For the Visit-level resolution precedence, see **Visit participant resolution
 (Phase 2)** above.
 
 ## Legacy compatibility fields
 
-The current application preserves a prior Place-level representation. These fields are mirrored summaries or fallbacks, not the canonical source for a current visited history:
+The **No-Space client does not write any of these fields** — a stored Visit holds
+`participantUserIds` only, and Place identity/coordinates/region-cache only. The
+rules below apply when reading a genuinely legacy record (embedded `visits`,
+`visitedOn`, `who`/`whoMode`) or as migration input, and to the in-memory
+projection, where each projected Visit's `who` is set identical to
+`participantIds`.
+
+These Place-level fields are mirrored summaries or fallbacks on legacy records,
+not the canonical source for a current visited history:
 
 | Place field | Compatibility role |
 | --- | --- |
 | `visitedOn` | Latest Visit date. If `visits` is absent/empty, it creates one normalized legacy Visit. |
 | `tripId` | Latest Visit's Trip ID; used when constructing a legacy Visit and by Place-level marker fallback. |
 | `categories` | Latest Visit category, mirrored to Place level. Its first value is the Visit category fallback. |
-| `who` | Latest Visit participants, mirrored to Place level. Full arbitrary-Member UID array (no longer capped at two). |
-| `whoMode` | Legacy serialization only. Emitted as `me` / `partner` / `both` **only** when the legacy `meta/config.members` universe has exactly two distinct Members, `createdBy` is an explicit usable UID inside that universe, and the participant set exactly matches one historical meaning; otherwise `""` (no fallback anchor). Never read for domain, filter, marker, or UI behavior. |
+| `who` | Latest Visit participants, mirrored to Place level. Full arbitrary UID array (no longer capped at two). |
+| `whoMode` | Legacy serialization only (`deriveLegacyWhoMode`). Emitted as `me` / `partner` / `both` **only** when the supplied legacy member universe has exactly two distinct UIDs, `createdBy` is an explicit usable UID inside it, and the participant set exactly matches one historical meaning; otherwise `""` (no fallback anchor). Never read for domain, filter, marker, or UI behaviour. |
 
 Visit normalization also accepts legacy `visit.categories[0]`, missing Visit IDs, missing `kind`, missing `who`, string/number `order`, and Place records with only `visitedOn`. Normalization preserves a Visit's raw `participantIds` / `who` exactly and never synthesizes or collapses them.
 
-Whenever current Visit history is saved, reordered, or partially deleted, the latest Visit is projected back into `visitedOn`, `tripId`, `categories`, `who`, and `whoMode`. This mirroring and all read fallbacks are required compatibility behavior and must not be removed accidentally.
+The legacy write-back that mirrored the latest Visit into `visitedOn` / `tripId` /
+`categories` / `who` / `whoMode` belonged to the embedded-`visits` client and is
+**not performed by the No-Space client**. The `whoMode` derivation helper in
+`src/participants.js` is retained for the migration tool and for serializing a
+compatible value if such a write path is ever reintroduced.
 
-## Shared meta document
+## App defaults document
 
-`spaces/{spaceId}/meta/config` contains:
+`appConfig/defaults` holds the shared display defaults the client reads:
 
 - `categories`: shared category names.
-- `members`: UID-to-display-name map.
-- `nicknames`: UID-to-user-selected-name map.
-- `catColors`: category-to-color map.
-- `levelColors`: visit-depth-to-color overrides.
+- `catColors`: category-to-colour map.
+- `levelColors`: visit-depth-to-colour overrides.
 
-Marker visibility, marker mode, choropleth metric/opacity, active filters, and layout state are runtime-only and are not persisted by the current code.
+Participant display names come from `users/{uid}.displayName`, not from this
+document. Marker visibility, marker mode, choropleth metric/opacity, active
+filters, and layout state are runtime-only and are not persisted.

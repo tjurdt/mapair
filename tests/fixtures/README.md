@@ -1,5 +1,14 @@
 # Mapair test fixtures
 
+> **Status.** The client runs the No-Space architecture; `mapair-no-space.json`
+> is the current fixture. `mapair-baseline.json` is still used by the migration
+> and legacy-read-compat tests. `mapair-multi-user.json` and its
+> `MULTI_USER_EXPECTED_RESULTS.md` describe the **abandoned** `spaces/{spaceId}`
+> design (see `../../docs/archive/`); only the embedded `test-space-group` Visit
+> shapes are still consumed, by `tests/participants.test.mjs`. The multi-user
+> overlay, its seed path, and the sections below that describe Spaces /
+> Memberships / Friendships / invitations are pending cleanup.
+
 A fixture is a small, fixed set of input data used to put a test environment into a known state. `mapair-baseline.json`, `mapair-multi-user.json`, and `mapair-no-space.json` are completely invented Mapair datasets for the local Firestore Emulator. They contain no production export, real user identity, credential, Firebase configuration, or production-derived user content.
 
 Never seed these fixtures into production. The seed script is hard-coded to the Firestore Emulator at `http://127.0.0.1:8080` and the demo project `demo-mapair-local`; it has no production fallback. These files seed Firestore documents only. They do not create Firebase Authentication users, and Auth Emulator login buttons for Users C and D are outside Phase 0.

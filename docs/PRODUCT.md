@@ -1,12 +1,12 @@
 # Mapair Product
 
-> In the v0.3 release candidate, the primary object is Visit and the production product title is “我的足跡”; Space is hidden completely. Shared experience facts, personal records, and personal day order are separated as documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). The legacy product details below remain relevant to rollback and migration compatibility.
+> The primary object is the Visit and the product title is “我的足跡”. Shared experience facts, personal records, and personal day order are separated as documented in [NO_SPACE_CORE.md](NO_SPACE_CORE.md). There is no Space concept in the product. A few paragraphs below still say "Space" where they mean "the shared set of a user's visible Visits"; that framing is legacy wording, not a separate container.
 
 ## Purpose
 
 Mapair is a shared geographic memory and travel-history application. It lets a shared space record places its members have visited, repeated visits, accommodation stays, and trips. The primary experience combines a map with a filterable chronological list.
 
-The product model is **Space → Place → Visits[]**. A Place exists only because it has real Visit history; a Trip is an optional grouping over Visits.
+The product model is **Place → Visits**. A Place exists only because it has real Visit history; a Trip is an optional grouping over Visits.
 
 This document describes behavior observable in the current code. Statements marked **Inferred** describe intent suggested by that behavior rather than an explicit product specification.
 
@@ -44,9 +44,7 @@ A Trip is a named and optionally emoji-labeled date range with a color. Visits b
 
 ### People
 
-The shared space records authenticated members and optional nicknames. Each Visit records which members participated (arbitrary N members, plus one-way-removable historical participants). Space membership determines who may edit.
-
-In the legacy Space runtime, “我的足跡 / My Footprints” was reserved as a future cross-Space aggregate and is not the Personal Space. No-Space Phase A now uses that product title for the participant-scoped top-level Visit view, behind its separate LOCAL-only gate.
+Each Visit records which people participated (arbitrary N participants, plus one-way-removable historical participants). Participant identities and display names come from `users/{uid}` profiles of people who appear on the current user's visible Visits and Trips; there is no global user directory or search. A current participant on a Visit may edit its shared facts; only the stored creator may delete it.
 
 ### Map and regions
 
