@@ -222,7 +222,7 @@ function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
 function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
-let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
+let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
@@ -471,6 +471,7 @@ function getFilteredVisitOccurrences(){
   const out=[];
   Object.values(places).forEach(p=>{
     if(!hasVisitHistory(p) || !placeStaticFilter(p)) return;
+    if(filter.placeId && p.id!==filter.placeId) return;  // tapping a marker narrows the list to that Place
     placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push({p,v,visitIndex,seqDate:v.date,stayAnchor:"",fixed:false}); });
   });
   return out.sort(sortOccurrences);
@@ -841,7 +842,7 @@ async function renderApp(){
   document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
-    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
+    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
     dateScope = "all";
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
@@ -890,6 +891,12 @@ function setFocusedPlace(id){
     focusedPlaceTimer = setTimeout(() => { focusedPlaceId = null; renderMarkers(); }, 20000);
   }
   renderMarkers();
+}
+function clearPlaceFilter(){
+  if(!filter.placeId && !focusedPlaceId) return;
+  filter.placeId = "";
+  focusedPlaceId = null; clearTimeout(focusedPlaceTimer);
+  applyFilter({ fitViewport:false });
 }
 function showSelfMarker(at){
   if(!AdvMarker || !map) return;
@@ -960,7 +967,7 @@ function refreshFilterUI(){
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   updateProximityMaskControl();
-  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length;
+  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId;
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
@@ -973,12 +980,18 @@ function renderFilterChips(){
     html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
   }
   filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
+  if (filter.placeId){
+    const fp = places[filter.placeId];
+    html += `<span class="fchip active">📍 ${esc(fp?.name || "這個地標")} <b data-clearplace="1">✕</b></span>`;
+  }
   el.innerHTML = html;
   const op = document.getElementById("orderPinToggle");
   if (op) op.onclick = () => { numberPins=!numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
     filter.regions.splice(+x.dataset.rx, 1); applyFilter();
   });
+  const cp = el.querySelector('[data-clearplace]');
+  if (cp) cp.onclick = clearPlaceFilter;
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -1762,7 +1775,17 @@ function renderMarkers(){
       content = pin;
     }
     const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content, title, gmpClickable:true, ...extra });
-    m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
+    // Tapping a marker narrows the list to that Place and highlights the pin
+    // (a specific Visit is then opened from the list). Tapping it again, or the
+    // 📍 chip's ✕, clears it.
+    m.addListener("gmp-click", () => {
+      lastMarkerClick = Date.now();
+      if (filter.placeId === p.id){ clearPlaceFilter(); return; }
+      filter.placeId = p.id;
+      if (tab !== "visited") tab = "visited";
+      applyFilter({ fitViewport:false });
+      setFocusedPlace(p.id);
+    });
     markers.push(m);
   });
 }
@@ -2385,6 +2408,7 @@ function toggleMapSurface(control){
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
+  if (filter.placeId && !places[filter.placeId]) filter.placeId = "";  // Place gone (last Visit deleted)
   if (tab !== "visited" && tab !== "trips") tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
@@ -2397,6 +2421,7 @@ function renderList(){
 
   const tripId=specificTripId();
   let occ=tripId ? sequenceOccurrences() : getFilteredVisitOccurrences();
+  if(filter.placeId) occ=occ.filter(o=>o.p.id===filter.placeId);
   if(!tripId){
     occ.sort((a,b)=>{
       const d=occurrenceDate(b).localeCompare(occurrenceDate(a)); if(d) return d;
@@ -2458,7 +2483,8 @@ function stayAnchorCardHTML(o,label,date){
   </div></div>`;
 }
 function renderDayVisitList(el,date){
-  const seq=getDayOccurrences(date);
+  let seq=getDayOccurrences(date);
+  if(filter.placeId) seq=seq.filter(o=>o.p.id===filter.placeId);
   if(!seq.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
   const tripId=specificTripId(), labels=new Map(sequenceLabels().map(x=>[occurrenceKey(x.o),x.label]));
   let html=`<div class="daysep">${tripId?`D${tripDayNoByDate(date,tripId,seq)} · `:""}${esc(date)}</div>`;
