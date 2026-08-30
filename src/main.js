@@ -40,7 +40,6 @@ import {
   readProximityPreferences,
   resolveProximityMaskMode,
   selectEligibleProximitySeeds,
-  selectNearbyPlaces,
   selectRegionMaskCandidates,
   writeProximityPreferences
 } from "./proximity-geometry.js";
@@ -50,7 +49,6 @@ import {
   deepestLevel,
   lerpHex,
   multiStopColor,
-  orderedVisitDateColor,
   positiveExtrema,
   quantitativeColor
 } from "./map-color-scales.js";
@@ -166,7 +164,6 @@ let proximityEnabled = false;
 let proximityLayer = null, proximityLayerKey = "", proximityMaskIndex = null, proximityRenderVersion = 0;
 let selectedRegionMaskCache = { identity:"", maskIndex:null };
 let proximitySeedCount = 0, proximityRadiusTimer = null;
-let proximityAreaMetricState = null;
 const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
 const MAP_AREA_METRIC_OPTIONS = [["level","造訪深度"],["count","地標數"],["visitCount","造訪次數"],["first","最早造訪日期"],["last","最後造訪日期"],["categoryMode","造訪目的（眾數）"]];
@@ -1240,9 +1237,7 @@ function markerDateBounds(){
   const tid=specificTripId();
   if(tid){
     const b=tripSequenceBounds(tid);
-    const from=filter.from && filter.from>b.from ? filter.from : b.from;
-    const to=filter.to && filter.to<b.to ? filter.to : b.to;
-    if(from&&to&&from<=to) return {from,to};
+    if(b.from&&b.to&&b.from<=b.to) return b;
   }
   if(filter.from && filter.to) return {from:filter.from,to:filter.to};
   const ds=getFilteredVisitOccurrences().map(occurrenceDate).filter(Boolean).sort();
@@ -1257,12 +1252,9 @@ function dateOccurrenceColor(o,bounds=markerDateBounds()){
   const date=occurrenceDate(o), base=dateBaseColor(date,bounds);
   const day=getDayOccurrences(date), same=day.filter(x=>occurrenceDate(x)===date);
   const idx=Math.max(0,same.findIndex(x=>x.p.id===o.p.id && x.visitIndex===o.visitIndex && (x.stayAnchor||"")===(o.stayAnchor||"")));
-  return orderedVisitDateColor({
-    baseColor:base,
-    occurrenceIndex:idx,
-    occurrenceCount:same.length,
-    singleDay:!!bounds.from && bounds.from===bounds.to
-  });
+  const frac=same.length<=1?0.55:idx/(same.length-1);
+  // 同一天由淺到深；第一站仍保留足夠飽和度，最後一站接近基準色（單一色相，不跨彩虹）。
+  return lerpHex("#ffffff",base,0.48+0.50*frac);
 }
 function representativeDateOccurrence(p,mode){
   const arr=[];
@@ -1369,8 +1361,9 @@ function renderMarkers(){
 function dateMarkerLegendBody(){
   const b=markerDateBounds(), grad=VISIT_DATE_RAINBOW.join(",");
   if(b.from && b.from===b.to){
+    const base=dateBaseColor(b.from,b), lite=lerpHex("#ffffff",base,0.48);
     return `<div class="legendsection"><div class="legendtitle">地標 · ${esc(b.from.replaceAll("-","/"))} 造訪順序</div>`+
-      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
+      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${lite},${base})"></div>`+
       `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>第一站</span><span>最後一站</span></div></div>`;
   }
   return `<div class="legendsection"><div class="legendtitle">地標 · ${markerMode==="dateFirst"?"最早造訪":"最後造訪"}</div>`+
@@ -1417,8 +1410,11 @@ function areaMetricLegendBody(surface,metric,ctx={}){
     const ends=singleDay
       ? `<span>第一站</span><span>最後一站</span>`
       : `<span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span>`;
+    const ramp=singleDay
+      ? `${lerpHex("#ffffff",VISIT_DATE_RAINBOW[0],0.48)},${VISIT_DATE_RAINBOW[0]}`
+      : grad;
     return `<div class="legendsection"><div class="legendtitle">${surface} · ${lab}</div>`+
-      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
+      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${ramp})"></div>`+
       `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px">${ends}</div></div>`;
   }
   if(metric==="categoryMode"){
@@ -1458,11 +1454,8 @@ function proximityLegendBody(){
   const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
     : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
   const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
-  const bounds=markerDateBounds();
-  const countBounds=choroMetric==="count" ? proximityAreaMetricState?.placeCountBounds : proximityAreaMetricState?.visitCountBounds;
   return `<div class="legendsection"><div class="legendtitle">鄰近涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
-    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點。</div></div>`+
-    areaMetricLegendBody("鄰近",choroMetric,{dmin:bounds.from,dmax:bounds.to,...countBounds});
+    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
 }
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
@@ -1610,12 +1603,9 @@ function singleDayOrderColor(placeList,mode,daySequence){
     else slot=index;
   });
   if(slot<0) return null;
-  return orderedVisitDateColor({
-    baseColor:VISIT_DATE_RAINBOW[0],
-    occurrenceIndex:slot,
-    occurrenceCount:daySequence.length,
-    singleDay:true
-  });
+  // Single hue, light -> dark by position in the day's sequence (no rainbow).
+  const frac=daySequence.length<=1?0.55:slot/(daySequence.length-1);
+  return lerpHex("#ffffff",VISIT_DATE_RAINBOW[0],0.48+0.50*frac);
 }
 const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
 function countColor(value,bounds){ return quantitativeColor(COUNT_SHADES,value,bounds); }
@@ -1669,24 +1659,14 @@ function removeProximityLayer(){
     proximityLayer=null;
     proximityLayerKey="";
   }
-  proximityAreaMetricState=null;
 }
 function restyleProximityLayer(){
   if(!proximityLayer) return;
-  const state=proximityAreaMetricState;
-  const bounds=markerDateBounds();
   proximityLayer.setStyle(feature=>{
-    const metrics=state?.bySeed?.[String(feature.getProperty("seedId"))] || null;
-    let color=(choroMetric==="count" || choroMetric==="visitCount") ? null : getCSS("--visited");
-    if(metrics){
-      if(choroMetric==="level" && metrics.deepestLevel) color=levelColors[metrics.deepestLevel]||color;
-      else if(choroMetric==="count") color=countColor(metrics.placeCount,state.placeCountBounds);
-      else if(choroMetric==="visitCount") color=countColor(metrics.visitCount,state.visitCountBounds);
-      else if(choroMetric==="first") color=metrics.firstDayColor || (metrics.earliest ? dateColor(metrics.earliest,bounds.from,bounds.to) : color);
-      else if(choroMetric==="last") color=metrics.lastDayColor || (metrics.latest ? dateColor(metrics.latest,bounds.from,bounds.to) : color);
-      else if(choroMetric==="categoryMode" && metrics.categoryMode) color=catColor(metrics.categoryMode);
-    }
-    if(!color) color="#e5e0d6";
+    // Each coverage territory takes its seed Place's own marker colour, so the
+    // area around a pin always matches the pin (no separate metric selector).
+    const place=places[String(feature.getProperty("seedId"))];
+    const color=place ? effectiveMarkerColor(place) : getCSS("--visited");
     return {
       fillColor:color,
       fillOpacity:choroAlpha,
@@ -1752,22 +1732,6 @@ async function renderProximityCoverage(requestVersion){
   const seeds=selectEligibleProximitySeeds(places, mapAreaPlacePassFilter);
   const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
-  const bounds=markerDateBounds();
-  const singleDaySeq=(bounds.from && bounds.from===bounds.to) ? getDayOccurrences(bounds.from) : null;
-  const bySeed=Object.fromEntries(seeds.map(seed=>{
-    const nearby=selectNearbyPlaces(seed,places,proximityRadius,mapAreaPlacePassFilter);
-    return [seed.id,{
-      ...visitAreaMetrics(nearby),
-      deepestLevel:deepestFilteredLevel(nearby),
-      firstDayColor:singleDaySeq ? singleDayOrderColor(nearby,"first",singleDaySeq) : null,
-      lastDayColor:singleDaySeq ? singleDayOrderColor(nearby,"last",singleDaySeq) : null
-    }];
-  }));
-  proximityAreaMetricState={
-    bySeed,
-    placeCountBounds:countMetricBounds(bySeed,"count"),
-    visitCountBounds:countMetricBounds(bySeed,"visitCount")
-  };
   updateProximityMaskControl();
   renderUnifiedLegend();
   let maskIndex=null;
