@@ -12,7 +12,7 @@
     "test:migration": "node tests/migration.test.mjs",
     "test:rules": "firebase emulators:exec --project demo-mapair-no-space-rules --only firestore --config firebase.no-space-test.json \"node tests/firestore-no-space.rules.test.mjs\"",
     "dev:e2e": "vite --port 5173 --strictPort",
-    "test:e2e": "firebase emulators:exec --project demo-mapair-local --only auth,firestore \"node scripts/e2e-run.mjs\""
+    "test:e2e": "node scripts/e2e.mjs"
   },
   "engines": {
     "node": ">=20.19"

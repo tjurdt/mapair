@@ -3,13 +3,12 @@
 /**
  * Runs the Playwright end-to-end suite against emulators that are already up.
  *
- * Intended to be invoked by `firebase emulators:exec` (see the `test:e2e`
- * script in package.json), which guarantees the Auth and Firestore emulators
- * are running on their configured ports. This script:
+ * Invoked by `firebase emulators:exec` from scripts/e2e.mjs, so the Auth and
+ * Firestore emulators are guaranteed to be running. This script:
  *
  *   1. seeds tests/fixtures/mapair-no-space.json into the Firestore emulator
  *      (scripts/seed-emulator.mjs, hard-coded to 127.0.0.1:8080 / demo project),
- *   2. runs `playwright test`, forwarding any extra CLI arguments.
+ *   2. runs `playwright test`, forwarding args passed via E2E_PLAYWRIGHT_ARGS.
  *
  * It never touches production; all safety boundaries live in seed-emulator.mjs.
  */
@@ -32,7 +31,14 @@ if (seed.status !== 0) {
   process.exit(seed.status ?? 1);
 }
 
-const playwright = spawnSync("npx", ["playwright", "test", ...process.argv.slice(2)], {
+let passthrough = [];
+try {
+  passthrough = JSON.parse(process.env.E2E_PLAYWRIGHT_ARGS || "[]");
+} catch {
+  passthrough = [];
+}
+
+const playwright = spawnSync("npx", ["playwright", "test", ...passthrough], {
   cwd: repoRoot,
   stdio: "inherit",
   shell: process.platform === "win32",
