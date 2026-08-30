@@ -81,6 +81,7 @@ import {
   tripPass,
   visitPasses
 } from "./domain/filter.js";
+import { resolveMarkerColor } from "./domain/marker-color.js";
 
 /* ============================================================
    1) 設定
@@ -1669,25 +1670,38 @@ function representativeDateOccurrence(p,mode){
   arr.sort(sortOccurrences);
   return mode==="dateFirst"?arr[0]:arr[arr.length-1];
 }
-function markerColor(p){
-  if (markerMode === "cat"){ const c=(p.categories||[])[0]; return c ? catColor(c) : CATEGORY_NONE_COLOR; }
-  else if (markerMode === "level" && p.level) return levelColors[p.level];
-  else if (markerMode === "who") return whoColor(p);
-  else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
-  else if (markerMode === "rating" && p.rating) return ratingColor(p.rating);
-  return getCSS("--visited");
+// Field readers for domain/marker-color.js. See resolveMarkerColor for the
+// contract; the empty-string returns let the Visit source fall through to the
+// Place source and the Place source fall through to the CSS default.
+function placeColorSource(p){
+  return {
+    category:() => (p.categories||[])[0] || "",
+    categoryColor:catColor,
+    noCategoryColor:CATEGORY_NONE_COLOR,
+    level:() => p.level,
+    levelColor:l => levelColors[l],
+    participantColor:() => whoColor(p),
+    tripColor:() => (p.tripId && trips[p.tripId]?.color) || "",
+    rating:() => p.rating,
+    ratingColor
+  };
 }
-function markerColorForVisit(p,v){
-  if (markerMode === "cat"){
-    const c=visitCategory(p,v); return c ? catColor(c) : CATEGORY_NONE_COLOR;
-  }
-  const personal=v?._contributions?.[user?.uid]||{};
-  if (markerMode === "level" && v?.level) return levelColors[v.level] || markerColor(p);
-  if (markerMode === "rating" && personal.rating) return ratingColor(personal.rating);
-  if (markerMode === "who") return visitWhoColor(p,v);
-  if (markerMode === "trip" && v?.tripId && trips[v.tripId]?.color) return trips[v.tripId].color;
-  return markerColor(p);
+function visitColorSource(p,v){
+  const personal = v?._contributions?.[user?.uid] || {};
+  return {
+    category:() => visitCategory(p,v),
+    categoryColor:catColor,
+    noCategoryColor:CATEGORY_NONE_COLOR,
+    level:() => v?.level,
+    levelColor:l => levelColors[l],
+    participantColor:() => visitWhoColor(p,v),
+    tripColor:() => (v?.tripId && trips[v.tripId]?.color) || "",
+    rating:() => personal.rating,
+    ratingColor
+  };
 }
+function markerColor(p){ return resolveMarkerColor(markerMode, placeColorSource(p)) || getCSS("--visited"); }
+function markerColorForVisit(p,v){ return resolveMarkerColor(markerMode, visitColorSource(p,v)) || markerColor(p); }
 function markerColorForOccurrence(o){
   if(markerMode==="dateFirst" || markerMode==="dateLast") return dateOccurrenceColor(o);
   return markerColorForVisit(o.p,o.v);

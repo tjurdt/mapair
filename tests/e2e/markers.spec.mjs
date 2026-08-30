@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { signIn, reseed, setDateRange, expectNoPageErrors, FIXTURE_MONTH } from "./helpers.mjs";
+import {
+  signIn,
+  reseed,
+  setDateRange,
+  expectNoPageErrors,
+  markerBackgroundByTitle,
+  FIXTURE_MONTH
+} from "./helpers.mjs";
 
 // Exercises the map/marker code path — renderMarkers, effectiveMarkerColor,
 // the per-mode colour resolvers, and sequence markers — which the other specs
@@ -29,6 +36,26 @@ test("every marker colour mode re-renders without error", async ({ page }) => {
     const errors = (page.__mapairPageErrors || []).map((e) => e.message);
     expect(errors, `marker mode "${mode}" threw`).toEqual([]);
   }
+});
+
+test("marker colour follows the latest visit's data per mode", async ({ page }) => {
+  await signIn(page);
+  await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
+  await page.click("#setBtn");
+
+  // 河畔咖啡's latest fixture Visit (2026-08-05) is category 咖啡, level 旅遊,
+  // participants A+B.
+  await page.selectOption("#ns_markermode", "cat");
+  await page.waitForTimeout(40);
+  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#a9724a"); // 咖啡 preset
+
+  await page.selectOption("#ns_markermode", "level");
+  await page.waitForTimeout(40);
+  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#d98b3f"); // 旅遊
+
+  await page.selectOption("#ns_markermode", "who");
+  await page.waitForTimeout(40);
+  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#b25b6b"); // group (A+B)
 });
 
 test("trip sequence numbered markers render without error", async ({ page }) => {

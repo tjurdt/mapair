@@ -57,8 +57,9 @@ emulator database** first.
   repeated Visits, participant/category/Trip filters, stay rendering, editor +
   settings open.
 - `mutations.spec.mjs` — Visit delete, day reorder.
-- `markers.spec.mjs` — renderMarkers, every marker colour mode, trip and
-  single-day numbered sequence markers (all via the Maps stub).
+- `markers.spec.mjs` — renderMarkers, every marker colour mode (plus exact
+  pin-colour assertions for cat / level / who via the stub), trip and
+  single-day numbered sequence markers, and the county-choropleth area path.
 
 These track the "Automation: Yes" rows of
 `docs/archive/baseline/BEHAVIOR_CHECKLIST.md`. Real map pixels, viewport
