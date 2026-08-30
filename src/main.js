@@ -68,7 +68,7 @@ import { tripReferenceState, visitParticipantsFromTrip } from "./no-space/trips.
 import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visits.js";
 import {
   compareOccurrences,
-  occurrence,
+  occurrence as buildOccurrence,
   occurrenceDate,
   occurrenceKey,
   stayAnchorsOnDate
@@ -450,16 +450,16 @@ function getDayOccurrences(date){
     placeVisits(p).forEach((v,visitIndex)=>{
       if(!visitMatchesWho(p,v) || !visitMatchesTrip(v) || !visitMatchesCategory(p,v)) return;
       if(visitKind(v)!=="stay"){
-        if(v.date===date) out.push(occurrence(p,v,visitIndex,date));
+        if(v.date===date) out.push(buildOccurrence(p,v,visitIndex,date));
         return;
       }
       const co=stayCheckout(v);
       if(!co){
-        if(v.date===date) out.push(occurrence(p,v,visitIndex,date,"night",true));
+        if(v.date===date) out.push(buildOccurrence(p,v,visitIndex,date,"night",true));
         return;
       }
       // 每一晚：飯店是當天最後一站；隔天早上：同一飯店是第一站。
-      for(const anchor of stayAnchorsOnDate(v.date,co,date)) out.push(occurrence(p,v,visitIndex,date,anchor,true));
+      for(const anchor of stayAnchorsOnDate(v.date,co,date)) out.push(buildOccurrence(p,v,visitIndex,date,anchor,true));
     });
   });
   return out.sort(sortOccurrences);
@@ -469,7 +469,7 @@ function getFilteredVisitOccurrences(){
   Object.values(places).forEach(p=>{
     if(!hasVisitHistory(p) || !placeStaticFilter(p)) return;
     if(filter.placeId && p.id!==filter.placeId) return;  // tapping a marker narrows the list to that Place
-    placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push(occurrence(p,v,visitIndex,v.date,"",false)); });
+    placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push(buildOccurrence(p,v,visitIndex,v.date,"",false)); });
   });
   return out.sort(sortOccurrences);
 }
@@ -545,7 +545,7 @@ function fullDayOrdinaryOccurrences(date){
   Object.values(places).forEach(p=>{
     if(!hasVisitHistory(p)) return;
     placeVisits(p).forEach((v,visitIndex)=>{
-      if(visitKind(v)==="visit" && v.date===date) out.push(occurrence(p,v,visitIndex,date,"",false));
+      if(visitKind(v)==="visit" && v.date===date) out.push(buildOccurrence(p,v,visitIndex,date,"",false));
     });
   });
   return ordinaryOccurrences(out.sort(sortOccurrences));
@@ -1663,7 +1663,7 @@ function representativeDateOccurrence(p,mode){
   placeVisits(p).forEach((v,visitIndex)=>{
     if(!placeStaticFilter(p)||!visitMatchesWho(p,v)||!visitMatchesTrip(v)||!visitMatchesCategory(p,v)) return;
     if(visitKind(v)!=="stay"){
-      if(visitPassFilter(p,v)) arr.push(occurrence(p,v,visitIndex,v.date,"",false));
+      if(visitPassFilter(p,v)) arr.push(buildOccurrence(p,v,visitIndex,v.date,"",false));
       return;
     }
     const co=stayCheckout(v); if(!co) return;
@@ -1671,7 +1671,7 @@ function representativeDateOccurrence(p,mode){
     if(filter.from&&filter.from>from) from=filter.from;
     if(filter.to&&filter.to<to) to=filter.to;
     enumerateDates(from,to).forEach(d=>{
-      for(const anchor of stayAnchorsOnDate(v.date,co,d)) arr.push(occurrence(p,v,visitIndex,d,anchor,true));
+      for(const anchor of stayAnchorsOnDate(v.date,co,d)) arr.push(buildOccurrence(p,v,visitIndex,d,anchor,true));
     });
   });
   if(!arr.length) return null;
@@ -1709,7 +1709,7 @@ function effectiveMarkerColor(p){
     return occurrence ? dateOccurrenceColor(occurrence) : color;
   }
   const visits=placeVisits(p)
-    .map((v,visitIndex)=>occurrence(p,v,visitIndex,v.date,visitKind(v)==="stay"?"night":"",false))
+    .map((v,visitIndex)=>buildOccurrence(p,v,visitIndex,v.date,visitKind(v)==="stay"?"night":"",false))
     .filter(o=>visitPassFilter(p,o.v))
     .sort(sortOccurrences);
   const occurrence=visits[visits.length-1];
