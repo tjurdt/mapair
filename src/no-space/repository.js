@@ -12,7 +12,8 @@ export const noSpacePaths = Object.freeze({
   legacyImport:(placeId, sourceSpace="us") => `places/${placeId}/legacyImports/space-${sourceSpace}`,
   contribution:(visitId, uid) => `visits/${visitId}/contributions/${uid}`,
   dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`,
-  friend:(uid, friendUid) => `users/${uid}/friends/${friendUid}`
+  friend:(uid, friendUid) => `users/${uid}/friends/${friendUid}`,
+  friendRequest:(fromUid, toUid) => `friendRequests/${fromUid}__${toUid}`
 });
 
 export function createNoSpaceRepository({ db, firestore, uid }){
@@ -188,13 +189,50 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     },
     // Per-user friend address book at users/{uid}/friends/{friendUid}. Owned
     // entirely by the authenticated user; a friend entry only makes a person
-    // selectable and never touches any Visit/Trip. See docs/FRIENDS.md.
+    // selectable and never touches any Visit/Trip. A mutual link is reached
+    // through a friendRequests/{from}__{to} handshake. See docs/FRIENDS.md.
     listenFriends(next, error){ return onSnapshot(col(noSpacePaths.user(uid) + "/friends"), next, error); },
-    addFriend(friendUid){
-      const id = assertDocumentId(friendUid, "friendUid");
+    listenIncomingFriendRequests(next, error){
+      return onSnapshot(query(col("friendRequests"), where("to", "==", uid)), next, error);
+    },
+    listenOutgoingFriendRequests(next, error){
+      return onSnapshot(query(col("friendRequests"), where("from", "==", uid)), next, error);
+    },
+    // Ask `toUid` to become a friend: create the request they will see, and a
+    // local pending_out marker (held out of the pickers until it links).
+    async sendFriendRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
       if (id === uid) throw new Error("You cannot add yourself as a friend.");
-      return setDoc(ref(noSpacePaths.friend(uid, id)),
-        { nickname:"", pinned:false, state:"linked", createdAt:stamp() }, { merge:true });
+      const batch = writeBatch(db);
+      batch.set(ref(noSpacePaths.friendRequest(uid, id)), { from:uid, to:id, state:"pending", createdAt:stamp() });
+      batch.set(ref(noSpacePaths.friend(uid, id)), { nickname:"", pinned:false, state:"pending_out", createdAt:stamp() }, { merge:true });
+      return batch.commit();
+    },
+    // Accept an incoming request from `fromUid`: link them on my side and mark
+    // the request accepted so their client can finalise.
+    async acceptFriendRequest(fromUid){
+      const id = assertDocumentId(fromUid, "fromUid");
+      const batch = writeBatch(db);
+      batch.set(ref(noSpacePaths.friend(uid, id)), { nickname:"", pinned:false, state:"linked", createdAt:stamp() }, { merge:true });
+      batch.update(ref(noSpacePaths.friendRequest(id, uid)), { state:"accepted" });
+      return batch.commit();
+    },
+    declineFriendRequest(fromUid){
+      const id = assertDocumentId(fromUid, "fromUid");
+      return updateDoc(ref(noSpacePaths.friendRequest(id, uid)), { state:"declined" });
+    },
+    // My outgoing request was accepted: promote the pending_out marker and drop
+    // the resolved request doc.
+    async finalizeAcceptedRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
+      await setDoc(ref(noSpacePaths.friend(uid, id)), { state:"linked" }, { merge:true });
+      try { await deleteDoc(ref(noSpacePaths.friendRequest(uid, id))); } catch(e) {}
+    },
+    // Cancel my outgoing request, or clear it after a decline.
+    async discardOutgoingRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
+      await deleteDoc(ref(noSpacePaths.friend(uid, id)));
+      try { await deleteDoc(ref(noSpacePaths.friendRequest(uid, id))); } catch(e) {}
     },
     removeFriend(friendUid){
       return deleteDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))));

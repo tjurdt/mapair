@@ -109,6 +109,29 @@ service cloud.firestore {
       }
     }
 
+    // Friend-request handshake (docs/FRIENDS.md). Doc id is "{from}__{to}".
+    // Only the two parties can see it; the sender opens it as "pending", only
+    // the recipient can move it to "accepted"/"declined", either can delete it.
+    match /friendRequests/{requestId} {
+      function party() {
+        return signedIn()
+          && (resource.data.get('from', '') == request.auth.uid
+            || resource.data.get('to', '') == request.auth.uid);
+      }
+      allow get, list: if party();
+      allow create: if signedIn()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to is string
+        && request.resource.data.to != request.auth.uid
+        && request.resource.data.state == 'pending'
+        && request.resource.data.keys().hasOnly(['from','to','state','createdAt']);
+      allow update: if signedIn()
+        && request.auth.uid == resource.data.to
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state'])
+        && request.resource.data.state in ['accepted','declined'];
+      allow delete: if party();
+    }
+
     match /places/{placeId} {
       function objective(data) {
         return data.keys().hasOnly([

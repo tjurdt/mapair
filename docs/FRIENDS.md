@@ -131,14 +131,14 @@ The participant **filter** dropdown (`participantFilterCandidateIds()`) will now
 also include friends with no shared Visits. That is harmless but slightly noisy;
 Batch 2 may restrict the filter list to UIDs actually referenced by loaded data.
 
-## Invitation / handshake (Batch 3)
+## Invitation / handshake (Batch 3, implemented)
 
-Batch 1 has **no consent step**: `addFriend` immediately writes
-`users/{me}/friends/{friendUid}` with `state:"linked"`. It is a one-directional
-address-book entry. The friend is not notified and gets no reciprocal entry; the
-existing array-contains query still delivers any Visit you tag them in.
+Batches 1–2 had **no consent step**: `addFriend` wrote `users/{me}/friends/{uid}`
+straight to `state:"linked"`. Batch 3 replaces that with a mutual handshake over a
+top-level `friendRequests` collection. Existing `linked` entries (created before
+Batch 3) are untouched — only new adds go through the request flow.
 
-Batch 3 adds a mutual handshake via a top-level `friendRequests` collection:
+`friendRequests/{from}__{to}` (deterministic id, one per ordered pair):
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -149,18 +149,24 @@ Batch 3 adds a mutual handshake via a top-level `friendRequests` collection:
 
 Flow:
 
-1. `A` adds `B` → `A` creates `friendRequests/{autoId}` (`from:A, to:B,
-   state:"pending"`) and writes `users/A/friends/B` with `state:"pending_out"`.
-2. `B`'s client queries `friendRequests where to == B && state == "pending"`,
-   shows it on the management page.
-3. `B` accepts → `B` writes `users/B/friends/A` (`state:"linked"`) and sets the
-   request `state:"accepted"`.
-4. `A`'s client observes `state:"accepted"`, promotes `users/A/friends/B` to
-   `state:"linked"`, and deletes the request. Decline just sets
-   `state:"declined"`; `A` removes the `pending_out` entry.
+1. `A` adds `B` (`sendFriendRequest`) → one batch: create `friendRequests/A__B`
+   (`state:"pending"`) **and** `users/A/friends/B` with `state:"pending_out"`.
+   If `A` already has an incoming `pending` request from `B`, `addFriend`
+   auto-accepts instead of sending.
+2. `B`'s client lists `friendRequests where to == B`; the manager shows pending
+   ones under "好友邀請", and the 👥 button carries a count badge.
+3. `B` accepts (`acceptFriendRequest`) → one batch: `users/B/friends/A`
+   `state:"linked"` **and** request `state:"accepted"`. Decline sets
+   `state:"declined"`.
+4. `A`'s outgoing-request listener runs `reconcileFriendRequests()`:
+   `accepted` → `finalizeAcceptedRequest` (promote `users/A/friends/B` to
+   `linked`, delete the request); `declined` → `discardOutgoingRequest` (delete
+   the marker and the request). A guard set stops a snapshot burst re-firing the
+   same write.
 
-`pending_out` friends are shown on the management page but are **not** offered in
-companion pickers.
+`pending_out` markers appear in the manager's "邀請中（待對方確認）" section
+(with a cancel action) but are held out of the companion pickers —
+`friendUserIds()` / `friendPinnedUids()` filter `state === "linked"`.
 
 ## Firestore rules delta
 
@@ -188,26 +194,37 @@ No change is needed to look a user up by ID: `users/{uid}` already allows
 
 ### Batch 3 — friend requests
 
+Doc id is `"{from}__{to}"` (deterministic — one request per ordered pair, no
+`addDoc`). `party()` uses `resource.data.get(...)` so a `get` of a missing doc or
+a `list` phantom resolves to a clean deny instead of an evaluation error.
+
 ```
 match /friendRequests/{requestId} {
-  function party() { return request.auth.uid in [resource.data.from, resource.data.to]; }
-  allow get, list: if signedIn() && party();
+  function party() {
+    return signedIn()
+      && (resource.data.get('from', '') == request.auth.uid
+        || resource.data.get('to', '') == request.auth.uid);
+  }
+  allow get, list: if party();
   allow create: if signedIn()
     && request.resource.data.from == request.auth.uid
     && request.resource.data.to is string
+    && request.resource.data.to != request.auth.uid
     && request.resource.data.state == 'pending'
     && request.resource.data.keys().hasOnly(['from','to','state','createdAt']);
   allow update: if signedIn()
     && request.auth.uid == resource.data.to
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state'])
     && request.resource.data.state in ['accepted','declined'];
-  allow delete: if signedIn() && party();
+  allow delete: if party();
 }
 ```
 
-The rules test `tests/firestore-no-space.rules.test.mjs` gains coverage for both
-blocks (owner allowed, third party denied; requester cannot pre-set
-`accepted`; only `to` can accept).
+Both this block and the Batch 1 friends block are **implemented** in
+`firestore.no-space.rules` and covered by `tests/firestore-no-space.rules.test.mjs`
+(owner allowed, third party denied; `from` cannot be spoofed; requester cannot
+pre-set `accepted`; only `to` can answer). They await the same operator deploy as
+the pending `validVisit` `level` fix.
 
 ## Privacy
 
@@ -227,7 +244,7 @@ blocks (owner allowed, third party denied; requester cannot pre-set
 | **0** | ✅ This document. | — | none |
 | **1** | ✅ `users/{uid}/friends` storage, `noSpaceState.friends` listener, repository `addFriend`/`removeFriend`/`setFriendNickname`/`setFriendPinned`, directory union at both call sites, `participantName` nickname rule, "add by ID" UI. Pinned-first `orderedActiveMembers()` ordering also landed here (it needs only Batch 1 data). | friends subcollection block | friends selectable in Visit/Trip pickers without shared history; picker order |
 | **2** | ✅ Dedicated `openFriendsManager()` modal (👥 button in the map controls, plus a "管理好友" link in Settings): add by ID, nickname editing, pin/unpin, remove, and a "曾一起記錄、還沒加好友" suggestions section (`knownParticipantUserIds − self − friends`, one-tap add). The Batch 1 inline Settings section was removed in favour of this. | — | new manager page |
-| **3** | `friendRequests` collection, mutual handshake, incoming/outgoing lists, `pending_out` state. | friendRequests block | consent step before a friend is mutual |
+| **3** | ✅ `friendRequests/{from}__{to}` collection + `listenIncoming/OutgoingFriendRequests`. `addFriend` → `sendFriendRequest` (writes a `pending_out` marker + the request); if an incoming request already exists it auto-accepts. Manager gains "好友邀請" (accept/decline) and "邀請中（待對方確認）" (cancel) sections; 👥 button shows an incoming-count badge. `reconcileFriendRequests()` runs from the outgoing listener: on `accepted` it promotes the marker to `linked` and deletes the request, on `declined` it clears both. `pending_out` markers stay out of the pickers (`friendUserIds()` filters `state==="linked"`). | friendRequests block | consent step before a friend link is mutual |
 | **4** | Show own UID for sharing; optional filter-list tidy-up. | — | minor |
 
 ## Pure helpers (`src/friends.js`, tested in `tests/friends.test.mjs`)

@@ -57,6 +57,8 @@
   #setBtn{padding:0 10px;font-size:12px;font-weight:500;flex:0 0 auto}
   #locBtn,#addBtn,#friendsBtn{width:32px;flex:0 0 32px;padding:0}
   #locBtn,#friendsBtn{font-size:14px}
+  #friendsBtn{position:relative}
+  #friendsBtn.badged::after{content:attr(data-badge);position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;line-height:15px;padding:0 3px;border-radius:8px;background:var(--us);color:#fff;font-size:10px;font-weight:700;box-sizing:border-box}
   #addBtn{font-size:17px}
   #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
   #multiBtn{position:absolute;top:52px;left:12px;z-index:5;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink)}

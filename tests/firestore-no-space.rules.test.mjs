@@ -68,6 +68,23 @@ try{
   await assertSucceeds(deleteDoc(doc(dbA,"users/test-user-a/friends/test-user-b")));
   await assertSucceeds(getDoc(doc(dbA,"places/place-1")));
 
+  // Friend-request handshake (friendRequests/{from}__{to}).
+  const REQ="friendRequests/test-user-a__test-user-b";
+  await assertFails(setDoc(doc(dbA,REQ),{from:B,to:B,state:"pending",createdAt:new Date()}));        // from must be caller
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:A,state:"pending",createdAt:new Date()}));        // no self
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:B,state:"accepted",createdAt:new Date()}));       // must open as pending
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:B,state:"pending",createdAt:new Date(),x:1}));    // extra key
+  await assertSucceeds(setDoc(doc(dbA,REQ),{from:A,to:B,state:"pending",createdAt:new Date()}));
+  await assertSucceeds(getDoc(doc(dbB,REQ)));
+  await assertSucceeds(getDocs(query(collection(dbB,"friendRequests"),where("to","==",B))));
+  await assertFails(getDoc(doc(dbOut,REQ)));
+  await assertFails(updateDoc(doc(dbA,REQ),{state:"accepted"}));                                      // only the recipient answers
+  await assertFails(updateDoc(doc(dbB,REQ),{state:"maybe"}));                                         // bad state
+  await assertFails(updateDoc(doc(dbB,REQ),{from:B}));                                                // can only touch state
+  await assertSucceeds(updateDoc(doc(dbB,REQ),{state:"accepted"}));
+  await assertFails(deleteDoc(doc(dbOut,REQ)));
+  await assertSucceeds(deleteDoc(doc(dbA,REQ)));
+
   await assertSucceeds(getDoc(doc(dbB,"trips/trip-1")));
   await assertSucceeds(updateDoc(doc(dbB,"trips/trip-1"),{name:"同行旅程"}));
   await assertFails(updateDoc(doc(dbB,"trips/trip-1"),{participantUserIds:[A]}));
