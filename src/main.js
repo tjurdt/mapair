@@ -127,6 +127,27 @@ let spaceCats = [];
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
 
+/* 旅程圖示可選清單 */
+const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵","🚲","🏍️","🛵",
+  "🏔️","⛰️","🌋","🏕️","🏖️","🏝️","🏜️","🏞️","🌅","🌄","🌊","🗻","🗾",
+  "⛩️","🏯","🏰","🗼","🎡","🎢","🎑","🌸","🍁","🌺","🌴","🌲",
+  "🍜","🍣","🍶","🍵","☕","🍺","🍷","🍦","🍧","🧋","🍡","🍢",
+  "🎏","🎿","🏂","🏄","🚠","♨️","🦌","🐧","🐟","🦭","🐢","🦋",
+  "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
+
+/* 「做什麼」系統預設選項(name -> 預設顏色)。使用者可在設定勾選常用項目與改色。
+   「其他」為必備的萬用選項。 */
+const CATEGORY_PRESETS = [
+  ["餐飲","#d98b3f"],["咖啡","#a9724a"],["購物","#b25b6b"],["娛樂","#8f6bb2"],
+  ["藝文","#6b6bb2"],["景點","#3f7d78"],["自然","#4f9d5f"],["戶外","#7a9c3f"],
+  ["住宿","#b2506b"],["交通","#5f7fb2"],["教育","#3f6bb2"],["醫療","#c2513f"],
+  ["宗教","#b2953f"],["運動","#5fa38a"],["工作","#6b8296"],["社交","#c2603f"],
+  ["生活服務","#7a7a7a"],["住家","#5f8a6b"],["慶祝","#b23f7a"],["其他","#9aa5ad"]
+];
+const CATEGORY_PRESET_NAMES = CATEGORY_PRESETS.map(([name])=>name);
+const CATEGORY_PRESET_COLORS = Object.fromEntries(CATEGORY_PRESETS);
+const CATEGORY_DEFAULT_PICKS = ["餐飲","咖啡","購物","娛樂","景點","自然","交通","其他"];
+
 function renderSetup(){
   document.getElementById("app").innerHTML = `
     <div class="center"><div class="setup">
@@ -154,6 +175,8 @@ let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = 
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let levelColors = { ...LEVEL_COLORS }, addMode = false;
+// Per-user "做什麼" preferences: which presets appear in the picker, plus colour overrides.
+let categoryPicks = [...CATEGORY_DEFAULT_PICKS];
 let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
 let proximityStorage = null;
 try { proximityStorage = globalThis.localStorage; } catch(e) {}
@@ -952,30 +975,73 @@ async function initMap(){
 // session is no longer current must ignore its data.
 function openNoSpaceSettings(){
   const markerOpts = [["cat","活動"],["level","我的足跡深度"],["who","參與者"],["trip","旅程"],["rating","我的評分"],["dateFirst","首次造訪"],["dateLast","最近造訪"]];
+  const metricLocked = proximityEnabled;
+  const draftPicks = new Set(categoryPicks);
+  const draftCatColors = {};
+  const draftLevelColors = {};
+  const catColorValue = name => draftCatColors[name] || catColors[name] || CATEGORY_PRESET_COLORS[name] || "#9aa5ad";
+  const levelColorValue = level => draftLevelColors[level] || levelColors[level] || LEVEL_COLORS[level];
+  const categoryRows = CATEGORY_PRESETS.map(([name])=>`
+    <label class="srow" style="cursor:pointer">
+      <span><input type="checkbox" class="ns_catpick" data-cat="${esc(name)}" ${draftPicks.has(name)?'checked':''} style="width:16px;height:16px;margin-right:8px;vertical-align:middle">${esc(name)}</span>
+      <input type="color" class="ns_catcolor" data-cat="${esc(name)}" value="${catColorValue(name)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px">
+    </label>`).join("");
+  const levelRows = LEVEL_ORDER.slice().reverse().map(level=>`
+    <div class="colitem"><span>${esc(level)}</span>
+      <input type="color" class="ns_levelcolor" data-level="${esc(level)}" value="${levelColorValue(level)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px"></div>`).join("");
   modal(`
     <h2 style="margin-bottom:14px">設定</h2>
     <div class="sethead">顯示</div>
     <div class="srow"><span>顯示地點標記</span><input type="checkbox" id="ns_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
     <div class="srow"><span>標記顏色</span><select id="ns_markermode" class="sselect">${markerOpts.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
     <div class="sethead">地圖上色</div>
-    <div class="srow"><span>上色依據</span><select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
+    <div class="srow"><span>上色依據</span>${metricLocked
+      ? `<select class="sselect" disabled title="鄰近圖層開啟時，範圍會沿用地標顏色"><option>與標記顏色連動（鄰近）</option></select>`
+      : `<select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select>`}</div>
+    ${metricLocked?`<div class="admin" style="margin:-2px 0 4px">鄰近圖層開啟時，周圍範圍會直接沿用地標的顏色。</div>`:""}
     <div class="srow"><span>透明度</span><input type="range" id="ns_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
+    <div class="sethead">「做什麼」選項</div>
+    <div class="admin" style="margin-bottom:4px">勾選的項目會出現在新增造訪的「做什麼」下拉選單；右側可改顏色。</div>
+    ${categoryRows}
+    <div class="sethead">造訪深度顏色</div>
+    <div class="colgrid">${levelRows}</div>
     <div class="sethead">個人資料</div>
     <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
     <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
   `);
   const mode = document.getElementById("ns_markermode");
   mode.value = markerMode;
-  const metric = document.getElementById("ns_metric");
-  metric.value = choroMetric;
-  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
   mode.onchange = event => { markerMode=event.target.value; renderMarkers(); };
-  metric.onchange = event => setMapAreaMetric(event.target.value);
+  const metric = document.getElementById("ns_metric");
+  if (metric){
+    metric.value = choroMetric;
+    metric.onchange = event => setMapAreaMetric(event.target.value);
+  }
+  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
   document.getElementById("ns_alpha").oninput = event => { choroAlpha=(+event.target.value)/100; refreshMapSurfaces(); };
+  document.querySelectorAll(".ns_catpick").forEach(box => box.onchange = () => {
+    if (box.checked) draftPicks.add(box.dataset.cat); else draftPicks.delete(box.dataset.cat);
+  });
+  document.querySelectorAll(".ns_catcolor").forEach(input => input.oninput = () => { draftCatColors[input.dataset.cat] = input.value; });
+  document.querySelectorAll(".ns_levelcolor").forEach(input => input.oninput = () => { draftLevelColors[input.dataset.level] = input.value; });
   document.getElementById("ns_done").onclick = async() => {
     const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
+    const nextPicks = CATEGORY_PRESET_NAMES.filter(name => draftPicks.has(name));
+    const nextCatColors = {};
+    for (const name of CATEGORY_PRESET_NAMES){
+      const value = draftCatColors[name] || catColors[name];
+      if (value && value.toLowerCase() !== String(CATEGORY_PRESET_COLORS[name] || "").toLowerCase()) nextCatColors[name] = value;
+    }
+    const nextLevelColors = {};
+    for (const level of LEVEL_ORDER){
+      const value = draftLevelColors[level] || levelColors[level];
+      if (value && value.toLowerCase() !== LEVEL_COLORS[level].toLowerCase()) nextLevelColors[level] = value;
+    }
     if (repo && runtimeSessionIsCurrent(session,uid)){
       await repo.updateOwnProfile({ displayName:document.getElementById("ns_name").value, photoURL:user.photoURL || "" });
+      await repo.updateOwnPreferences({ categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors });
+      noSpaceState.profiles[uid] = { ...(noSpaceState.profiles[uid] || {}), categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors };
+      refreshNoSpaceProjection();
     }
     closeModal();
   };
@@ -1136,9 +1202,15 @@ function applyNoSpaceProjection(){
     ...trip,
     participantIds:[...(trip.participantUserIds || [])]
   }]));
+  const ownProfile = noSpaceState.profiles[user.uid] || {};
+  categoryPicks = Array.isArray(ownProfile.categoryPicks) && ownProfile.categoryPicks.length
+    ? ownProfile.categoryPicks.filter(category => typeof category === "string" && category.trim())
+    : [...CATEGORY_DEFAULT_PICKS];
+  // Filter chips / legends reflect categories actually in use (plus any shared
+  // defaults); the personal `categoryPicks` only drive the editor's dropdown.
   spaceCats = [...new Set([...(noSpaceState.defaults.categories || []), ...visitList.map(visit => visit.category)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-  catColors = { ...(noSpaceState.defaults.catColors || {}) };
-  levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}) };
+  catColors = { ...CATEGORY_PRESET_COLORS, ...(noSpaceState.defaults.catColors || {}), ...(ownProfile.categoryColors || {}) };
+  levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}), ...(ownProfile.levelColors || {}) };
   const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
   participantMembers = profileIds.map(uid => ({
     userId:uid,
@@ -1177,6 +1249,7 @@ function resetRuntimeState(){
   spaceCats = [];
   members = {};
   catColors = {};
+  categoryPicks = [...CATEGORY_DEFAULT_PICKS];
   levelColors = { ...LEVEL_COLORS };
   participantMembers = [];
   referencedHistoricalIds = [];
@@ -2307,7 +2380,14 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
         : `<div class="field"><label>地點</label><select id="ns_place">${placeOptions}</select></div>`}
       <div class="row">
         <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
-        <div class="field" style="flex:1"><label>做什麼</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：喝咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
+        <div class="field" style="flex:1"><label>做什麼</label>
+          <select id="ns_category">
+            <option value="">未指定</option>
+            ${CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)).map(name=>`<option value="${esc(name)}" ${name===(rawVisit?.category||"")?'selected':''}>${esc(name)}</option>`).join("")}
+            ${(rawVisit?.category||"") && !CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)).includes(rawVisit.category)?`<option value="${esc(rawVisit.category)}" selected>${esc(rawVisit.category)}</option>`:""}
+            <option value="__custom__">＋ 自訂…</option>
+          </select>
+          <input id="ns_category_custom" placeholder="自訂活動" style="display:none;margin-top:6px"></div>
       </div>
       <div class="field"><label>同行者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
       <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
@@ -2330,6 +2410,12 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const refreshStay=()=>{ endWrap.style.display=g("ns_level").value==="住宿"?"block":"none"; };
   refreshStay();
   g("ns_level").onchange=refreshStay;
+  const categoryCustom=g("ns_category_custom");
+  g("ns_category").onchange=()=>{
+    const custom=g("ns_category").value==="__custom__";
+    categoryCustom.style.display=custom?"block":"none";
+    if(custom) categoryCustom.focus();
+  };
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
   const refreshContributionVisibility=()=>{
     if(g("ns_average")) g("ns_average").textContent=averageText();
@@ -2368,7 +2454,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     const shared={
       placeId:selectedPlaceId,
       date,
-      category:g("ns_category").value.trim(),
+      category:(g("ns_category").value==="__custom__"?g("ns_category_custom").value:g("ns_category").value).trim(),
       participantUserIds:retainCurrentParticipant(selected,editorUid),
       tripId:g("ns_trip").value||null,
       level,
@@ -2460,8 +2546,17 @@ function openNoSpaceTripEditor(id,onDone){
   modal(`
     <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
     <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
-    <div class="field"><label>名稱</label><input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行"></div>
-    <div class="field"><label>圖示</label><input id="nst_emoji" value="${esc(trip?.emoji||"")}" maxlength="8" placeholder="🧳"></div>
+    <div class="field"><label>圖示 + 名稱</label>
+      <div class="row" style="gap:8px;position:relative;align-items:stretch">
+        <button type="button" id="nst_emoji_btn" style="flex:0 0 52px;font-size:22px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer">${esc(trip?.emoji||"")||"➕"}</button>
+        <input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行" style="flex:1">
+        <input type="hidden" id="nst_emoji" value="${esc(trip?.emoji||"")}">
+        <div id="nst_emoji_pop" style="display:none;position:absolute;top:52px;left:0;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px;grid-template-columns:repeat(7,1fr);gap:2px;width:264px;max-height:220px;overflow:auto">
+          <button type="button" class="nst-emojibtn" data-e="" style="font-size:14px;border:none;background:none;cursor:pointer;padding:4px">無</button>
+          ${EMOJIS.map(e=>`<button type="button" class="nst-emojibtn" data-e="${e}" style="font-size:20px;border:none;background:none;cursor:pointer;padding:4px">${e}</button>`).join("")}
+        </div>
+      </div>
+    </div>
     <div class="row">
       <div class="field" style="flex:1"><label>開始日期</label><input type="date" id="nst_start" value="${trip?.startDate||""}"></div>
       <div class="field" style="flex:1"><label>結束日期</label><input type="date" id="nst_end" value="${trip?.endDate||""}"></div>
@@ -2471,6 +2566,13 @@ function openNoSpaceTripEditor(id,onDone){
     <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
+  const emojiBtn=g("nst_emoji_btn"), emojiPop=g("nst_emoji_pop");
+  emojiBtn.onclick=()=>{ emojiPop.style.display=emojiPop.style.display==="none"?"grid":"none"; };
+  emojiPop.querySelectorAll(".nst-emojibtn").forEach(btn=>btn.onclick=()=>{
+    g("nst_emoji").value=btn.dataset.e;
+    emojiBtn.textContent=btn.dataset.e||"➕";
+    emojiPop.style.display="none";
+  });
   g("nst_participants").querySelectorAll("[data-uid]").forEach(chip=>{
     const toggle=()=>{
       const participantUid=chip.dataset.uid;

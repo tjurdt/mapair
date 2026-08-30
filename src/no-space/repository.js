@@ -167,6 +167,23 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       const displayName = typeof input?.displayName === "string" ? input.displayName.trim() : "";
       const photoURL = typeof input?.photoURL === "string" ? input.photoURL.trim() : "";
       return setDoc(ref(noSpacePaths.user(uid)), { displayName, photoURL, updatedAt:stamp() }, { merge:true });
+    },
+    // Personal display preferences on the User document (not shared Visit data).
+    // setDoc(merge) creates the doc if absent, then updateDoc replaces each map
+    // field wholesale so a cleared colour override is actually removed.
+    async updateOwnPreferences(prefs){
+      const hexMap = value => Object.fromEntries(Object.entries(value || {})
+        .filter(([key, hex]) => typeof key === "string" && /^#[0-9a-fA-F]{6}$/.test(String(hex))));
+      const payload = {
+        categoryPicks:[...new Set((Array.isArray(prefs?.categoryPicks) ? prefs.categoryPicks : [])
+          .filter(item => typeof item === "string" && item.trim()).map(item => item.trim()))],
+        categoryColors:hexMap(prefs?.categoryColors),
+        levelColors:hexMap(prefs?.levelColors),
+        updatedAt:stamp()
+      };
+      const userRef = ref(noSpacePaths.user(uid));
+      await setDoc(userRef, payload, { merge:true });
+      await updateDoc(userRef, payload);
     }
   };
 }
