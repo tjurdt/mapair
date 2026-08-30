@@ -34,9 +34,10 @@ after reading it.
 documents into a `places` map where each Place carries an embedded `visits`
 array, so the pre-existing Place-oriented rendering, filtering, stay-anchor, and
 geography code needs no change. The field tables below describe that projected
-shape. A projected field that is *not* also a stored objective Place field
-(rating, `level`, embedded `visits`) is derived per current user and never
-written back to `places/{id}`.
+shape. Projected fields that are *not* stored on `places/{id}` — the current
+user's `rating`, a Place-level `level` fallback (the latest Visit's shared
+depth), and the embedded `visits` array — are derived at projection time and
+never written back to the Place.
 
 The same shape is produced when normalising a genuinely legacy record, so the
 compatibility rules in **Legacy compatibility fields** below still matter.
@@ -55,7 +56,7 @@ A Place is the stable geographic entity. It owns properties that are shared acro
 | `extId` | Google Place ID when available; used for duplicate detection. |
 | `admin` | Reverse-geocoded display metadata: `country`, `county`, and `city`. |
 | `status` | Legacy field. Not written by the No-Space client. Dormant legacy `status:"wishlist"` documents (see below) may still exist in migrated data but are ignored everywhere. |
-| `level` | Projected per-user visit depth (`經過`/`接地`/`旅遊`/`住宿`/`居住`) from the current user's Visit contribution; not a stored Place field. |
+| `level` | Place-level fallback = the latest Visit's **shared** depth (`經過`/`接地`/`旅遊`/`住宿`/`居住`). Not a stored Place field; the same for every viewer. |
 | `rating` | Projected per-user rating (0.5–5 in 0.5 steps) from the current user's latest Visit contribution; not a stored Place field. |
 | `review` | Legacy shared free-text review. Replaced by the personal Visit contribution `memory`. |
 | `visits` | Embedded Visit array — **projection only**. Built from the `visits/{visitId}` documents referencing this Place; never stored on `places/{id}`. |
@@ -84,16 +85,17 @@ shape**).
 | Field | Meaning |
 | --- | --- |
 | `id` | UUID when available, otherwise a timestamp/random fallback. Legacy normalized Visits receive an in-memory `legacy_{index}` ID. |
-| `kind` | `visit` or `stay`. Unknown/missing values are treated as `visit`, unless a valid legacy `endDate` implies `stay`. |
+| `level` | Shared visit depth ("造訪深度"): `經過` / `接地` / `旅遊` / `住宿` / `居住`. Everyone on the Visit sees the same value; missing/unknown → `旅遊` (or `住宿` if a legacy `kind:"stay"`). |
+| `kind` | `visit` or `stay`, **derived** from `level` (`住宿` → `stay`). Still written for mixed-client compatibility. A legacy `kind:"stay"` with no `level` is read as `住宿`. |
 | `date` | Visit date or stay arrival date, formatted `YYYY-MM-DD`. Visits without a date are omitted when saving. |
-| `endDate` | Checkout date for a stay; empty for an ordinary Visit. |
+| `endDate` | Checkout date, required when `level` is `住宿`; empty otherwise. Must be after `date`. |
 | `tripId` | Referenced Trip document ID, or an empty string for daily life. |
 | `category` | One category/purpose for this occurrence. |
 | `participantIds` | Array of participant UIDs. In the projection this equals the stored `visits/{id}.participantUserIds`. |
 | `who` | Array of participant UIDs. In the projection, set identical to `participantIds`. Only a genuine legacy record has a `who` that can differ. |
 | `order` | Projected per-user position among ordinary Visits on the same day, from `users/{uid}/dayOrders/{date}`. Not a stored Visit field. |
 
-Category, Trip, and participants are canonical on the `visits/{id}` document. Identity and coordinates are canonical on `places/{id}`. Rating, memory, and depth are canonical on `visits/{id}/contributions/{uid}`.
+Category, Trip, participants, and visit depth are canonical on the `visits/{id}` document. Identity and coordinates are canonical on `places/{id}`. Rating and memory are canonical on `visits/{id}/contributions/{uid}`.
 
 ### Visit participant resolution (Phase 2)
 
@@ -145,7 +147,7 @@ deterministic colour, and legacy `whoMode` helpers live in `src/participants.js`
 
 ## Stay semantics
 
-A Visit is a valid stay when `kind` is `stay` and `endDate` is later than `date`. The stored range uses arrival as inclusive and checkout as exclusive for occupied nights. Night count is the day difference, with a minimum display value of one.
+A Visit is a stay when its shared depth (`level`) is `住宿`; it then requires an `endDate` later than `date`. The stored range uses arrival as inclusive and checkout as exclusive for occupied nights. Night count is the day difference, with a minimum display value of one.
 
 For daily and Trip sequences, each occupied night produces two fixed anchors around ordinary Visits:
 
@@ -211,12 +213,13 @@ For the Visit-level resolution precedence, see **Visit participant resolution
 
 ## Legacy compatibility fields
 
-The **No-Space client does not write any of these fields** — a stored Visit holds
-`participantUserIds` only, and Place identity/coordinates/region-cache only. The
-rules below apply when reading a genuinely legacy record (embedded `visits`,
-`visitedOn`, `who`/`whoMode`) or as migration input, and to the in-memory
-projection, where each projected Visit's `who` is set identical to
-`participantIds`.
+The **No-Space client does not write any of these Place-level fields**. A stored
+Visit holds its own facts (`placeId`, `date`, `category`, `participantUserIds`,
+`tripId`, `level`, `kind`, `endDate`, `createdBy`); a stored Place holds
+identity / coordinates / region-cache only. The rules below apply when reading a
+genuinely legacy record (embedded `visits`, `visitedOn`, `who`/`whoMode`) or as
+migration input, and to the in-memory projection, where each projected Visit's
+`who` is set identical to `participantIds`.
 
 These Place-level fields are mirrored summaries or fallbacks on legacy records,
 not the canonical source for a current visited history:

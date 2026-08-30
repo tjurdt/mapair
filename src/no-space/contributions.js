@@ -7,12 +7,13 @@ export function normalizeRating(value){
   return rating;
 }
 
+// A contribution is a person's private rating + memory for one Visit. Visit
+// depth ("造訪深度") is a shared Visit fact, not a contribution.
 export function contributionFields(input={}){
   const rating = normalizeRating(input.rating);
   return {
     rating,
-    memory:typeof input.memory === "string" ? input.memory.trim() : "",
-    ...(typeof input.level === "string" && input.level.trim() ? { level:input.level.trim() } : {})
+    memory:typeof input.memory === "string" ? input.memory.trim() : ""
   };
 }
 

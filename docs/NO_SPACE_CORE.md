@@ -38,14 +38,19 @@ Shared Visit facts are:
 - date;
 - activity/category;
 - participants;
-- stay kind and checkout date;
+- **visit depth ("造訪深度" / `level`)** — one of 經過 / 接地 / 旅遊 / 住宿 / 居住, shared by everyone on the Visit;
+- checkout date, when the depth is 住宿;
 - optional Trip reference.
+
+There is no separate stay toggle: a Visit is a stay **iff** its shared depth is
+住宿, and only then does it carry (and require) a checkout date. `kind`
+(`visit` / `stay`) is still written for compatibility but is derived from the
+depth.
 
 Personal facts/state are:
 
 - rating;
 - memory (the product-facing replacement for legacy “review”);
-- visit-depth assessment (`level` compatibility concept);
 - manual ordering within one date.
 
 ## Intentional no-clock-time rule
@@ -122,7 +127,7 @@ Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tr
 | --- | --- |
 | `rating` | Personal `Visit` contribution `rating`; never global Place data. |
 | `review` | Renamed “memory” and stored in the personal Visit contribution. |
-| `level` | Treated as a subjective visit-depth assessment and stored as personal contribution `level`; runtime map compatibility may project the current User's value without writing it to Place. |
+| `level` | A **shared** Visit fact ("造訪深度") on `visits/{visitId}`, and the sole trigger for a stay (住宿). The runtime projects the latest Visit's depth as a Place-level fallback without writing it to Place. Legacy per-person contribution `level` values are no longer written or read. |
 | `ord` / embedded `visit.order` | Replaced by the current User's date-specific day-order document. |
 | `status` / wishlist | Not copied or read. Visible Visits are product truth; Wishlist remains absent. |
 | `visits`, `visitedOn` | Not copied to Place. Every occurrence is `visits/{visitId}`. |

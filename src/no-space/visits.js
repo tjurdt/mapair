@@ -1,5 +1,6 @@
 import { averageSubmittedRating, participantContributions } from "./contributions.js";
 import { personalOrderPositions } from "./day-order.js";
+import { normalizeLevel } from "./schema.js";
 
 export function knownParticipantUserIds(currentUserId, visits=[], trips=[]){
   const ids = new Set(currentUserId ? [currentUserId] : []);
@@ -31,9 +32,11 @@ export function projectNoSpaceRuntime({
         _noSpace:true
       };
     }
+    const level = normalizeLevel(visit.level, visit.kind === "stay" ? "住宿" : "旅遊");
     grouped[visit.placeId].visits.push({
       id:visit.id,
-      kind:visit.kind === "stay" ? "stay" : "visit",
+      level,
+      kind:level === "住宿" ? "stay" : "visit",
       date:visit.date || "",
       endDate:visit.endDate || "",
       tripId:visit.tripId || "",
@@ -49,13 +52,13 @@ export function projectNoSpaceRuntime({
   }
   for (const place of Object.values(grouped)){
     place.visits.sort((a,b)=>a.date.localeCompare(b.date)||(a.order||1e9)-(b.order||1e9)||a.id.localeCompare(b.id));
-    // Existing map/list helpers are Place-oriented. Deterministically project
-    // the current User's latest submitted values for marker compatibility;
-    // these runtime fields are never written to the global Place document.
+    // Existing map/list helpers are Place-oriented. Project a Place-level
+    // fallback: the latest Visit's shared depth ("造訪深度"), and the current
+    // User's latest rating. Neither is written to the global Place document.
     const latestRating=[...place.visits].reverse().find(visit=>visit._contributions?.[currentUserId]?.rating!=null);
-    const latestLevel=[...place.visits].reverse().find(visit=>visit._contributions?.[currentUserId]?.level);
+    const latestLevel=[...place.visits].reverse().find(visit=>visit.level);
     if(latestRating) place.rating=latestRating._contributions[currentUserId].rating;
-    if(latestLevel) place.level=latestLevel._contributions[currentUserId].level;
+    if(latestLevel) place.level=latestLevel.level;
   }
   return grouped;
 }
