@@ -7,16 +7,11 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
 import { resolveRuntimeConfig } from "./config.js";
 import {
   classifyParticipants,
-  deriveLegacyWhoMode,
-  detectParticipantMismatch,
   formatParticipantSummary,
   isUsableUid,
-  nextVisitParticipantFields,
-  orderParticipantSelection,
   participantColorIndex,
   resolvePlaceCompatParticipants,
-  resolveVisitParticipants,
-  sanitizeParticipantsForNewSelection
+  resolveVisitParticipants
 } from "./participants.js";
 import {
   MAP_SURFACE_Z_INDEX,
@@ -24,8 +19,6 @@ import {
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
-  placeSharedFields,
-  reorderWithinSlots,
   resolveVisitMoveTarget,
   shouldShowReorderControls,
   shouldAutoFitViewport,
@@ -162,8 +155,8 @@ const noSpaceState = {
   visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{},
   placeUnsubs:new Map(), legacyImportUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
 };
-let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
-let markers = [], tripLine = null, sessionToken = null;
+let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
+let markers = [], sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
@@ -237,7 +230,6 @@ function defaultDateForNewVisit(){
   return today;
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
-const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
 const REGION_GEO = {
   countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
   townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
@@ -386,9 +378,7 @@ function visitIntersects(v,from,to){
   if (to && v.date>to) return false;
   return true;
 }
-const placeDates = p => placeVisits(p).flatMap(v=>visitKind(v)==="stay" ? [v.date,stayCheckout(v)].filter(Boolean) : [v.date]).filter(Boolean);
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
-const primaryDate = p => latestVisit(p)?.date || "";
 const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
 function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : ""; }
 function visitMatchesTrip(v){
@@ -489,7 +479,6 @@ function tripDayNoByDate(date,tripId,all=[]){
   if(!start||!date) return 1;
   return Math.max(1,Math.round((new Date(date+"T00:00:00")-new Date(start+"T00:00:00"))/86400000)+1);
 }
-function tripDayNo(v,tripId,all){ return tripDayNoByDate(v?.date||"",tripId,all); }
 function sequenceContext(){
   const tid=specificTripId();
   if(tid) return {type:"trip",tripId:tid};
@@ -961,7 +950,7 @@ async function initMap(){
     google.maps.importLibrary("places"),
     google.maps.importLibrary("geocoding"),
   ]);
-  MapCtor = Map; AdvMarker = AdvancedMarkerElement; Pin = PinElement;
+  AdvMarker = AdvancedMarkerElement; Pin = PinElement;
   AutocompleteSuggestion = placesLib.AutocompleteSuggestion;
   AutocompleteSessionToken = placesLib.AutocompleteSessionToken;
   PlaceClass = placesLib.Place;
@@ -1198,10 +1187,8 @@ function resetRuntimeState(){
   levelColors = { ...LEVEL_COLORS };
   participantMembers = [];
   referencedHistoricalIds = [];
-  dayVisitItems = [];
   markers.forEach(marker => { try { marker.map = null; } catch(e){} });
   markers = [];
-  if (tripLine){ try { tripLine.setMap(null); } catch(e){} tripLine = null; }
   removeAdministrativeLayer();
   removeProximityLayer();
   adminLevel = "off";
@@ -1974,7 +1961,6 @@ function toggleMapSurface(control){
 /* ============================================================
    4) 清單
    ============================================================ */
-let dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
@@ -1998,7 +1984,6 @@ function renderList(){
       return effOrd(a.p)-effOrd(b.p);
     });
   }
-  dayVisitItems=occ;
   if(!occ.length){
     // A Space with no actual Visit history at all is simply empty — regardless
     // of the default month filter, and regardless of dormant legacy wishlist
@@ -2053,7 +2038,6 @@ function stayAnchorCardHTML(o,label,date){
 }
 function renderDayVisitList(el,date){
   const seq=getDayOccurrences(date);
-  dayVisitItems=seq;
   if(!seq.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
   const tripId=specificTripId(), labels=new Map(sequenceLabels().map(x=>[occurrenceKey(x.o),x.label]));
   let html=`<div class="daysep">${tripId?`D${tripDayNoByDate(date,tripId,seq)} · `:""}${esc(date)}</div>`;
