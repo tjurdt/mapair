@@ -85,6 +85,16 @@ try{
   await assertFails(deleteDoc(doc(dbOut,REQ)));
   await assertSucceeds(deleteDoc(doc(dbA,REQ)));
 
+  // Public short friend codes (friendCodes/{code} -> { uid }).
+  await assertFails(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:B}));                  // can only claim your own
+  await assertFails(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:A,note:"x"}));         // extra key
+  await assertSucceeds(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:A}));
+  await assertSucceeds(getDoc(doc(dbB,"friendCodes/ABCD23")));                       // recipient resolves a shared code
+  await assertSucceeds(getDoc(doc(dbOut,"friendCodes/ABCD23")));                     // any signed-in user may resolve
+  await assertFails(getDocs(collection(dbA,"friendCodes")));                         // not enumerable
+  await assertFails(setDoc(doc(dbB,"friendCodes/ABCD23"),{uid:B}));                  // code is permanent
+  await assertFails(deleteDoc(doc(dbA,"friendCodes/ABCD23")));
+
   await assertSucceeds(getDoc(doc(dbB,"trips/trip-1")));
   await assertSucceeds(updateDoc(doc(dbB,"trips/trip-1"),{name:"同行旅程"}));
   await assertFails(updateDoc(doc(dbB,"trips/trip-1"),{participantUserIds:[A]}));

@@ -1,6 +1,7 @@
 import { contributionFields } from "./contributions.js";
 import { externalPlaceDocumentId } from "./places.js";
 import { assertDocumentId, placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
+import { normalizeFriendCode, randomFriendCode } from "../friends.js";
 import { canDeleteTrip, canDeleteVisit, canEditTripSharedFacts, canEditVisitSharedFacts, canViewVisit } from "./policies.js";
 
 export const noSpacePaths = Object.freeze({
@@ -19,7 +20,7 @@ export const noSpacePaths = Object.freeze({
 export function createNoSpaceRepository({ db, firestore, uid }){
   if (!db || !firestore || !uid) throw new Error("No-Space repository requires db, Firestore helpers, and uid.");
   const {
-    addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction,
+    addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, runTransaction,
     serverTimestamp, setDoc, updateDoc, where, writeBatch
   } = firestore;
   const stamp = () => serverTimestamp();
@@ -245,6 +246,33 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     setFriendPinned(friendUid, pinned){
       return setDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))),
         { pinned: pinned === true }, { merge:true });
+    },
+    // Short friend code: a public 6-char handle at friendCodes/{code} -> uid, so
+    // people can be added without pasting a 28-char UID. Codes are permanent and
+    // claimed once; a claim collision just retries with a fresh code.
+    async ensureFriendCode(){
+      const userRef = ref(noSpacePaths.user(uid));
+      return runTransaction(db, async transaction => {
+        const userSnap = await transaction.get(userRef);
+        const existing = userSnap.exists() ? userSnap.data().friendCode : "";
+        if (typeof existing === "string" && normalizeFriendCode(existing)) return existing;
+        for (let attempt = 0; attempt < 5; attempt++){
+          const code = randomFriendCode();
+          const codeRef = doc(db, "friendCodes", code);
+          if ((await transaction.get(codeRef)).exists()) continue;
+          transaction.set(codeRef, { uid });
+          transaction.set(userRef, { friendCode:code }, { merge:true });
+          return code;
+        }
+        throw new Error("Could not allocate a friend code. Please try again.");
+      });
+    },
+    async uidForFriendCode(code){
+      const clean = normalizeFriendCode(code);
+      if (!clean) return null;
+      const snap = await getDoc(doc(db, "friendCodes", clean));
+      const value = snap.exists() ? snap.data().uid : "";
+      return (typeof value === "string" && value.trim()) ? value.trim() : null;
     }
   };
 }

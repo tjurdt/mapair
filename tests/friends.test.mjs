@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import {
+  FRIEND_CODE_ALPHABET,
+  formatFriendCode,
   isPathSafeId,
+  looksLikeFriendCode,
   mergeFriendIdsIntoDirectory,
+  normalizeFriendCode,
   normalizeFriendDoc,
   orderMembersForPicker,
+  randomFriendCode,
   validateFriendInput
 } from "../src/friends.js";
 
@@ -82,5 +87,28 @@ assert.deepEqual(mergeFriendIdsIntoDirectory([SELF], [""]), [SELF], "unusable fr
   assert.deepEqual(ordered.map(m => m.userId), [A, B]);
   assert.deepEqual(members.map(m => m.userId), [B, A], "does not mutate the input array");
 }
+
+/* ------------------------------------------------------------
+   short friend codes
+   ------------------------------------------------------------ */
+{
+  for (let i = 0; i < 200; i++){
+    const code = randomFriendCode();
+    assert.equal(code.length, 6, "code is 6 chars");
+    assert.ok([...code].every(c => FRIEND_CODE_ALPHABET.includes(c)), "code stays in the alphabet");
+    assert.equal(normalizeFriendCode(code), code, "a generated code round-trips");
+  }
+}
+assert.equal(normalizeFriendCode("abc-d23"), "ABCD23", "lower-case + dash normalises");
+assert.equal(normalizeFriendCode("  a b c d 2 3 "), "ABCD23", "spaces are stripped");
+assert.equal(normalizeFriendCode("ABCD2"), "", "too short is rejected");
+assert.equal(normalizeFriendCode("ABCD234"), "", "too long is rejected");
+assert.equal(normalizeFriendCode("ABCDE0"), "", "0 is not in the alphabet");
+assert.equal(normalizeFriendCode("ABCDEO"), "", "O is not in the alphabet");
+assert.equal(normalizeFriendCode("uid-self"), "", "a UID-ish string is not a code");
+assert.equal(looksLikeFriendCode("abc-d23"), true);
+assert.equal(looksLikeFriendCode("kK3mNp8QrS2tVw"), false, "a 28-char UID is not a code");
+assert.equal(formatFriendCode("abcd23"), "ABC-D23");
+assert.equal(formatFriendCode("nope"), "");
 
 console.log("friends assertions passed");

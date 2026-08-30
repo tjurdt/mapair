@@ -57,6 +57,40 @@ export function mergeFriendIdsIntoDirectory(knownIds = [], friendIds = []){
   return [...set].sort();
 }
 
+/* ------------------------------------------------------------
+   Short friend codes (docs/FRIENDS.md#short-codes). A 6-char code
+   over an unambiguous alphabet (no 0/O/1/I/L) that maps to a UID
+   via friendCodes/{code}. Not a secret — collisions are resolved
+   when the code is claimed.
+   ------------------------------------------------------------ */
+export const FRIEND_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const FRIEND_CODE_LENGTH = 6;
+
+export function randomFriendCode(){
+  let out = "";
+  for (let i = 0; i < FRIEND_CODE_LENGTH; i++){
+    out += FRIEND_CODE_ALPHABET[Math.floor(Math.random() * FRIEND_CODE_ALPHABET.length)];
+  }
+  return out;
+}
+
+/* Strip spaces/dashes, upper-case, and accept only a well-formed
+   code drawn entirely from the alphabet. Returns "" otherwise. */
+export function normalizeFriendCode(value){
+  const s = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (s.length !== FRIEND_CODE_LENGTH) return "";
+  return [...s].every(c => FRIEND_CODE_ALPHABET.includes(c)) ? s : "";
+}
+
+export function looksLikeFriendCode(value){
+  return normalizeFriendCode(value) !== "";
+}
+
+export function formatFriendCode(value){
+  const s = normalizeFriendCode(value);
+  return s ? `${s.slice(0, 3)}-${s.slice(3)}` : "";
+}
+
 /* Companion-picker order (docs/FRIENDS.md#picker-ordering): the
    authenticated user first, then pinned friends, then everyone
    else; each group ordered by display name. Pure — does not add or

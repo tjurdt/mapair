@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signOut, onAuthStateChanged, connectAuthEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
-         getDocs, onSnapshot, query, where, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
+         getDoc, getDocs, onSnapshot, query, where, serverTimestamp, runTransaction, writeBatch, connectFirestoreEmulator }
   from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
 import { resolveRuntimeConfig } from "./config.js";
 import {
@@ -14,6 +14,8 @@ import {
   resolveVisitParticipants
 } from "./participants.js";
 import {
+  formatFriendCode,
+  looksLikeFriendCode,
   mergeFriendIdsIntoDirectory,
   normalizeFriendDoc,
   orderMembersForPicker,
@@ -208,7 +210,10 @@ function textOn(hex){
 let members = {};
 const runtimeUnsubscribes = new Map();
 function memberById(uid){ return participantMembers.find(member => member.userId === uid) || null; }
-function activeParticipantMembers(){ return participantMembers.filter(member => member.valid === true && member.status === "active"); }
+// Members offered in the companion pickers: valid, active, and selectable
+// (self or a linked friend). Historical / former-friend members are excluded
+// here but still resolve for display via memberById / participantName.
+function activeParticipantMembers(){ return participantMembers.filter(member => member.valid === true && member.status === "active" && member.selectable !== false); }
 // Friend address book (users/{me}/friends). A friend only makes a person
 // selectable; `pending_out` entries (Batch 3) are held out of the pickers.
 function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
@@ -1119,11 +1124,14 @@ function openFriendsManager(){
   if (!runtimeReady()) return;
   const session = runtimeSession, uid = user.uid;
   const live = () => noSpaceRepository && runtimeSessionIsCurrent(session, uid);
+  const myCode0 = noSpaceState.profiles[uid]?.friendCode || "";
   modal(`
     <h2 style="margin-bottom:4px">好友</h2>
-    <div class="admin" style="margin-bottom:10px">送出邀請、對方接受後，「同行者」選單就能直接選到他。<br>你的 ID：<code style="user-select:all;word-break:break-all">${esc(uid)}</code></div>
+    <div class="admin" style="margin-bottom:10px">送出邀請、對方接受後，「同行者」選單就能直接選到他。<br>
+      你的好友碼：<code id="fm_mycode" style="user-select:all;font-size:14px;letter-spacing:1px">${esc(formatFriendCode(myCode0) || "產生中…")}</code>
+      <span style="opacity:.6"> · ID：<code id="fm_myid" style="user-select:all;word-break:break-all">${esc(uid)}</code></span></div>
     <div class="row" style="gap:6px">
-      <input id="fm_uid" placeholder="貼上好友的使用者 ID" style="flex:1;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px">
+      <input id="fm_uid" placeholder="輸入好友碼（例：ABC-D23）或使用者 ID" style="flex:1;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px">
       <button class="btn grey" id="fm_add">送出邀請</button>
     </div>
     <div id="fm_err" class="admin" style="color:#b25b6b;margin-top:4px"></div>
@@ -1155,9 +1163,20 @@ function openFriendsManager(){
     refreshNoSpaceProjection();
   }
 
-  function addOrAccept(raw){
-    const value = typeof raw === "string" ? raw.trim() : "";
+  async function addOrAccept(raw){
+    err.textContent = "";
+    let value = typeof raw === "string" ? raw.trim() : "";
+    // A 6-char short code (never a 28-char UID) → resolve it to a UID first.
+    if (looksLikeFriendCode(value)){
+      if (!live()) return;
+      let resolved = null;
+      try { resolved = await noSpaceRepository.uidForFriendCode(value); }
+      catch(e){ err.textContent = "查詢好友碼失敗：" + (e?.message || e); return; }
+      if (!resolved){ err.textContent = "找不到這個好友碼"; return; }
+      value = resolved;
+    }
     const existing = noSpaceState.friends[value];
+    if (value === uid){ err.textContent = "這是你自己"; return; }
     if (existing?.state === "linked"){ err.textContent = "你們已經是好友了"; return; }
     if (existing?.state === "pending_out"){ err.textContent = "已送出邀請，等待對方確認"; return; }
     if (pendingIncomingFrom(value)){
@@ -1168,9 +1187,9 @@ function openFriendsManager(){
       });
       return;
     }
-    const check = validateFriendInput(raw, { selfUid:uid, existingUids:friendEntries().map(f => f.friendUid) });
+    const check = validateFriendInput(value, { selfUid:uid, existingUids:friendEntries().map(f => f.friendUid) });
     if (!check.ok){ err.textContent = FRIEND_INPUT_ERRORS[check.reason] || "無法送出"; return; }
-    g("fm_uid").value = "";
+    if (g("fm_uid")) g("fm_uid").value = "";
     run(repo => repo.sendFriendRequest(check.friendUid), () => {
       noSpaceState.friends[check.friendUid] = { friendUid:check.friendUid, nickname:"", pinned:false, state:"pending_out" };
     });
@@ -1189,6 +1208,9 @@ function openFriendsManager(){
   }
   function render(){
     if (!g("fm_list")){ friendsManagerRefresh = null; return; }
+
+    const code = noSpaceState.profiles[uid]?.friendCode || "";
+    if (g("fm_mycode") && code) g("fm_mycode").textContent = formatFriendCode(code);
 
     const incoming = incomingFriendRequests();
     g("fm_incoming_wrap").style.display = incoming.length ? "block" : "none";
@@ -1249,9 +1271,20 @@ function openFriendsManager(){
   }
 
   g("fm_add").onclick = () => addOrAccept(g("fm_uid").value);
+  g("fm_uid").onkeydown = event => { if (event.key === "Enter"){ event.preventDefault(); addOrAccept(g("fm_uid").value); } };
   g("fm_done").onclick = () => { friendsManagerRefresh = null; closeModal(); };
   friendsManagerRefresh = render;
   render();
+
+  // Make sure this user has a shareable short code (generates one on first open).
+  if (!myCode0 && live()){
+    noSpaceRepository.ensureFriendCode().then(code => {
+      if (!runtimeSessionIsCurrent(session, uid)) return;
+      const profile = noSpaceState.profiles[uid] || {};
+      noSpaceState.profiles[uid] = { ...profile, friendCode:code };
+      if (g("fm_mycode")) g("fm_mycode").textContent = formatFriendCode(code);
+    }).catch(e => { if (g("fm_err")) g("fm_err").textContent = "無法產生好友碼：" + (e?.message || e); });
+  }
 }
 
 function runtimeSessionIsCurrent(session, uid){
@@ -1287,7 +1320,7 @@ function subscribeNoSpace(){
   noSpaceRepository = createNoSpaceRepository({
     db,
     uid,
-    firestore:{ addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch }
+    firestore:{ addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch }
   });
 
   runtimeUnsubscribes.set("visits", noSpaceRepository.listenVisibleVisits(snapshot => {
@@ -1450,18 +1483,29 @@ function applyNoSpaceProjection(){
   spaceCats = [...new Set([...(noSpaceState.defaults.categories || []), ...visitList.map(visit => visit.category)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   catColors = { ...CATEGORY_PRESET_COLORS, ...(noSpaceState.defaults.catColors || {}), ...(ownProfile.categoryColors || {}) };
   levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}), ...(ownProfile.levelColors || {}) };
-  const profileIds = mergeFriendIdsIntoDirectory(
+  // A person is *selectable* (picker candidate for new records) only if they are
+  // the current user or a currently-linked friend. Everyone else who appears on
+  // visible Visits/Trips — including a former friend after an unfriend — is kept
+  // as a non-selectable historical member: their name still resolves and they
+  // stay on the records they are already on, but they can't be added to new
+  // ones. See docs/FRIENDS.md#unfriending.
+  const linkedFriendIds = new Set(friendUserIds());
+  const directoryIds = mergeFriendIdsIntoDirectory(
     knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips)), friendUserIds());
-  participantMembers = profileIds.map(uid => ({
-    userId:uid,
-    role:null,
-    status:"active",
-    displayName:noSpaceState.profiles[uid]?.displayName || (uid === user.uid ? me() : "Participant"),
-    photoURL:noSpaceState.profiles[uid]?.photoURL || "",
-    source:friendEntryOf(uid) ? "friend" : "no-space",
-    valid:true,
-    issues:[]
-  }));
+  participantMembers = directoryIds.map(uid => {
+    const selectable = uid === user.uid || linkedFriendIds.has(uid);
+    return {
+      userId:uid,
+      role:null,
+      status:"active",
+      selectable,
+      displayName:noSpaceState.profiles[uid]?.displayName || (uid === user.uid ? me() : "Participant"),
+      photoURL:noSpaceState.profiles[uid]?.photoURL || "",
+      source:uid === user.uid ? "self" : (friendEntryOf(uid) ? "friend" : "history"),
+      valid:true,
+      issues:[]
+    };
+  });
   members = Object.fromEntries(participantMembers.map(member => [member.userId, member.displayName]));
   recomputeReferencedParticipants();
   updateFriendsBadge();
@@ -2642,7 +2686,10 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
           </select>
           <input id="ns_category_custom" placeholder="描述這個地點的活動" value="${esc(categoryCustomText)}" style="display:${categorySelected==="其他"?'block':'none'};margin-top:6px"></div>
       </div>
-      <div class="field"><label>同行者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
+      <div class="field"><label>同行者</label>
+        <div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div>
+        <div id="ns_participants_hist" class="admin" style="margin-top:6px"></div>
+      </div>
       <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
       <div class="row">
         <div class="field" style="flex:1"><label>造訪深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===initialLevel?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
@@ -2676,10 +2723,28 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   };
   const placeSelect=g("ns_place");
   if(placeSelect) placeSelect.onchange=()=>{ selectedPlaceId=placeSelect.value; };
+  // Participants already on this Visit who are not selectable members
+  // (former friends, or people added before an unfriend). Kept on save; the
+  // creator can prune one, one-way — it cannot be re-added here.
+  const memberIdSet=new Set(memberList.map(m=>m.userId));
+  const renderHistoricalParticipants=()=>{
+    const box=g("ns_participants_hist"); if(!box) return;
+    const hist=selected.filter(id=>id!==editorUid && !memberIdSet.has(id));
+    box.style.display=hist.length?"block":"none";
+    box.innerHTML=hist.length
+      ?`也在這次造訪：${hist.map(id=>`<span class="chip" style="background:none;border:1px solid var(--line)">${esc(participantName(id))} <span data-histdel="${esc(id)}" role="button" tabindex="0" style="cursor:pointer;color:#b25b6b">✕</span></span>`).join(" ")}`
+      :"";
+    box.querySelectorAll("[data-histdel]").forEach(x=>{
+      const drop=()=>{ selected=selected.filter(item=>item!==x.dataset.histdel); renderHistoricalParticipants(); refreshContributionVisibility(); };
+      x.onclick=drop;
+      x.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); drop(); } };
+    });
+  };
   g("ns_trip").onchange=()=>{
     if(!creating||!g("ns_trip").value||!trips[g("ns_trip").value]) return;
     selected=visitParticipantsFromTrip(trips[g("ns_trip").value],editorUid);
     g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>chip.classList.toggle("on",selected.includes(chip.dataset.uid)));
+    renderHistoricalParticipants();
     refreshContributionVisibility();
   };
   g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>{
@@ -2694,6 +2759,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     chip.onclick=toggle;
     chip.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); toggle(); } };
   });
+  renderHistoricalParticipants();
   g("ns_save").onclick=async()=>{
     if(!live()) return;
     const nameInput=g("ns_place_name");

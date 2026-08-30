@@ -127,9 +127,10 @@ New order:
 This one change covers both the Visit editor and the Trip editor, which both
 call `orderedActiveMembers()`.
 
-The participant **filter** dropdown (`participantFilterCandidateIds()`) will now
-also include friends with no shared Visits. That is harmless but slightly noisy;
-Batch 2 may restrict the filter list to UIDs actually referenced by loaded data.
+The participant **filter** dropdown (`participantFilterCandidateIds()`) is
+`active member ids + referencedHistoricalIds`, so after the Batch 4 tightening it
+still lists everyone relevant: self, linked friends, and any non-friend
+co-traveller actually referenced by loaded Visits/Trips.
 
 ## Invitation / handshake (Batch 3, implemented)
 
@@ -220,18 +221,68 @@ match /friendRequests/{requestId} {
 }
 ```
 
-Both this block and the Batch 1 friends block are **implemented** in
-`firestore.no-space.rules` and covered by `tests/firestore-no-space.rules.test.mjs`
-(owner allowed, third party denied; `from` cannot be spoofed; requester cannot
-pre-set `accepted`; only `to` can answer). They await the same operator deploy as
-the pending `validVisit` `level` fix.
+### Batch 4 — public short codes
+
+`friendCodes/{code}` → `{ uid }`. A 6-char handle over an unambiguous alphabet
+(`ABCDEFGHJKMNPQRSTUVWXYZ23456789`, no `0/O/1/I/L`) so people can be added
+without pasting a 28-char UID. Codes are **permanent** (claimed once) and **not
+secret** — resolving one only yields a UID, which still needs a friend request.
+
+```
+match /friendCodes/{code} {
+  allow get: if signedIn();
+  allow list: if false;
+  allow create: if signedIn()
+    && request.resource.data.keys().hasOnly(['uid'])
+    && request.resource.data.uid == request.auth.uid;
+  allow update, delete: if false;
+}
+```
+
+`repository.ensureFriendCode()` allocates one in a transaction (retry on a claim
+collision) and mirrors it to `users/{uid}.friendCode` for display;
+`repository.uidForFriendCode(code)` resolves an entered code. No `users/{uid}`
+rule change is needed — that doc already allows the owner any field.
+
+All four blocks (friends, friendRequests, friendCodes) are **implemented** in
+`firestore.no-space.rules` and covered by
+`tests/firestore-no-space.rules.test.mjs` (owner allowed, third party denied;
+`from`/`uid` cannot be spoofed; requester cannot pre-set `accepted`; only `to`
+can answer; codes are not enumerable or mutable). They await the same operator
+deploy as the pending `validVisit` `level` fix.
+
+## Unfriending
+
+Removing a friend (or never having been friends) must **not** let one person
+keep injecting shared records into the other's account. The rule:
+
+- **Selectable = self + currently-linked friends only.** `participantMembers`
+  now carries a `selectable` flag; `activeParticipantMembers()` (and therefore
+  every companion picker) filters on it. `knownParticipantUserIds` still feeds
+  name resolution and the participant filter, but a co-traveller who is not a
+  linked friend is a **non-selectable historical member** — their name resolves,
+  they stay on records they are already on, they cannot be added to new ones.
+- **Existing shared Visits are frozen, not rewritten.** A former friend stays in
+  `participantUserIds`; both people keep seeing the Visit. The Visit editor
+  lists such people under "也在這次造訪：" with a one-way ✕ the creator can use
+  to prune them (they cannot be re-added from that editor). Self-removal ("exit
+  a Visit") stays a deferred Phase-A concern — neither side can remove *itself*.
+- **Re-connecting needs consent again.** The manager's suggestions list still
+  offers a former friend, but "送出邀請" there is a fresh friend request the
+  other side must accept.
+
+Backend note: Firestore rules can't fully enforce mutual consent — `A` cannot
+read whether `B` has friended `A` back (that doc is under `B`'s user path). So
+this is client-enforced; the `participant()` rule still lets any current
+participant edit `participantUserIds`. A hard backend guarantee would need a
+shared connection document both parties can read.
 
 ## Privacy
 
 - `users/{uid}` is readable by any signed-in user who knows the UID
-  (`allow get: if signedIn()`, `list` denied). Friends does not widen this:
-  UIDs are 28-char random and unlistable. A future human-friendly "share code"
-  would need a separate lookup collection and is out of scope.
+  (`allow get: if signedIn()`, `list` denied). The short code (Batch 4) is the
+  same trust level: `friendCodes/{code}` is `get`-able by any signed-in user but
+  not enumerable, and only yields a UID — never profile data or a friend link.
 - A friend entry (nickname included) lives under the **owner's** user path and
   is unreadable by the friend. Nicknames never leak.
 - Co-participants already see each other's names and contributions on a shared
@@ -245,7 +296,7 @@ the pending `validVisit` `level` fix.
 | **1** | ✅ `users/{uid}/friends` storage, `noSpaceState.friends` listener, repository `addFriend`/`removeFriend`/`setFriendNickname`/`setFriendPinned`, directory union at both call sites, `participantName` nickname rule, "add by ID" UI. Pinned-first `orderedActiveMembers()` ordering also landed here (it needs only Batch 1 data). | friends subcollection block | friends selectable in Visit/Trip pickers without shared history; picker order |
 | **2** | ✅ Dedicated `openFriendsManager()` modal (👥 button in the map controls, plus a "管理好友" link in Settings): add by ID, nickname editing, pin/unpin, remove, and a "曾一起記錄、還沒加好友" suggestions section (`knownParticipantUserIds − self − friends`, one-tap add). The Batch 1 inline Settings section was removed in favour of this. | — | new manager page |
 | **3** | ✅ `friendRequests/{from}__{to}` collection + `listenIncoming/OutgoingFriendRequests`. `addFriend` → `sendFriendRequest` (writes a `pending_out` marker + the request); if an incoming request already exists it auto-accepts. Manager gains "好友邀請" (accept/decline) and "邀請中（待對方確認）" (cancel) sections; 👥 button shows an incoming-count badge. `reconcileFriendRequests()` runs from the outgoing listener: on `accepted` it promotes the marker to `linked` and deletes the request, on `declined` it clears both. `pending_out` markers stay out of the pickers (`friendUserIds()` filters `state==="linked"`). | friendRequests block | consent step before a friend link is mutual |
-| **4** | Show own UID for sharing; optional filter-list tidy-up. | — | minor |
+| **4** | ✅ Public short codes (`friendCodes/{code}` + `ensureFriendCode`/`uidForFriendCode`); the manager shows "你的好友碼" and accepts a code or a UID in the add box. Unfriending hardened: `participantMembers.selectable` flag → pickers are self + linked friends only; former friends become non-selectable historical members; Visit editor gains a "也在這次造訪：" prune row. | friendCodes block | picker scoped to friends; short-code add |
 
 ## Pure helpers (`src/friends.js`, tested in `tests/friends.test.mjs`)
 
@@ -259,10 +310,13 @@ Firebase-free, auto-discovered by `tests/run.mjs`:
   or `{ ok:false, reason }` (`empty` / `invalid` / `self` / `duplicate`).
 - `mergeFriendIdsIntoDirectory(knownIds, friendIds)` → deduped, sorted union.
 - `orderMembersForPicker(members, { selfUid, pinnedUids })` → self, pinned, rest.
+- `randomFriendCode()` / `normalizeFriendCode(v)` / `looksLikeFriendCode(v)` /
+  `formatFriendCode(v)` — 6-char code generation, parsing (dash/space tolerant,
+  alphabet-checked), and `ABC-D23` display formatting.
 
-The nickname branch in `participantName` is inline (two lines against
-`friendEntryOf`), not a separate helper. `friendRequestTransition` is deferred to
-Batch 3.
+The nickname branch in `participantName` is inline (against `friendEntryOf`), not
+a separate helper. The request state machine lives in the repository
+(`acceptFriendRequest` / `reconcileFriendRequests`), not a pure helper.
 
 ## Related documents
 

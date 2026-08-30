@@ -132,6 +132,18 @@ service cloud.firestore {
       allow delete: if party();
     }
 
+    // Public short friend codes (docs/FRIENDS.md). friendCodes/{code} -> { uid }.
+    // Any signed-in user may resolve a code they were given; a user may claim a
+    // code only for their own uid, and codes are permanent (no update/delete).
+    match /friendCodes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /places/{placeId} {
       function objective(data) {
         return data.keys().hasOnly([
