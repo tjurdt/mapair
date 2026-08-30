@@ -53,10 +53,10 @@
   #mapctl button{flex:1;min-width:0;height:32px;border:none;background:#fff;padding:0 6px;font-size:12px;font-weight:500;color:var(--ink-soft);border-right:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #mapctl button:last-child{border-right:none}
   #mapctl button.on{background:var(--ink);color:#fff}
-  #setBtn,#locBtn,#addBtn{position:static;z-index:5;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);color:var(--ink)}
+  #setBtn,#locBtn,#addBtn,#friendsBtn{position:static;z-index:5;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);color:var(--ink)}
   #setBtn{padding:0 10px;font-size:12px;font-weight:500;flex:0 0 auto}
-  #locBtn,#addBtn{width:32px;flex:0 0 32px;padding:0}
-  #locBtn{font-size:14px}
+  #locBtn,#addBtn,#friendsBtn{width:32px;flex:0 0 32px;padding:0}
+  #locBtn,#friendsBtn{font-size:14px}
   #addBtn{font-size:17px}
   #addBtn.on{background:var(--us);color:#fff;border-color:var(--us)}
   #multiBtn{position:absolute;top:52px;left:12px;z-index:5;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
@@ -246,7 +246,7 @@
     #maptop{left:10px;right:10px;gap:5px}
     #mapctl button{padding:0 2px;font-size:12px}
     #setBtn{padding:0 7px;font-size:12px}
-    #locBtn,#addBtn{width:30px;flex-basis:30px}
+    #locBtn,#addBtn,#friendsBtn{width:30px;flex-basis:30px}
     #filterbar .frow{grid-template-columns:minmax(0,.85fr) minmax(0,1.12fr) minmax(0,.95fr) auto}
     .visitmain{grid-template-columns:minmax(0,1fr) auto}
     .visitmain.stay{grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr) auto}
@@ -273,7 +273,7 @@
     #maptop{left:8px;right:8px;gap:4px}
     #mapctl button{padding:0 1px}
     #setBtn{padding:0 6px}
-    #locBtn,#addBtn{width:29px;flex-basis:29px}
+    #locBtn,#addBtn,#friendsBtn{width:29px;flex-basis:29px}
     #proximityCtl{right:8px;max-width:none}
     .filter-heading span{display:block;margin:2px 0 0}
   }
@@ -282,7 +282,7 @@
     header .btn.mini{padding-left:8px;padding-right:8px}
     #maptop{gap:3px}
     #setBtn{padding:0 5px}
-    #locBtn,#addBtn{width:28px;flex-basis:28px}
+    #locBtn,#addBtn,#friendsBtn{width:28px;flex-basis:28px}
     #proximityCtl{gap:4px;padding-left:6px;padding-right:6px}
     #proximityCtl .proximity-mask{margin-left:2px}
   }

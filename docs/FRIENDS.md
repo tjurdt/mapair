@@ -224,27 +224,28 @@ blocks (owner allowed, third party denied; requester cannot pre-set
 
 | Batch | Deliverable | Rules | Behaviour change |
 | --- | --- | --- | --- |
-| **0** | This document. | — | none |
-| **1** | `users/{uid}/friends` storage, `noSpaceState.friends` listener, repository `addFriend`/`removeFriend`/`setFriendNickname`/`setFriendPinned`, directory union at both call sites, `participantName` nickname rule, minimal "add by ID" UI in the profile modal. | friends subcollection block | friends selectable in Visit/Trip pickers without shared history |
-| **2** | Friend management page: nickname editing, pin/unpin, remove, "people you've travelled with" suggestions; `orderedActiveMembers()` pinned-first ordering. | — | new page; picker order |
+| **0** | ✅ This document. | — | none |
+| **1** | ✅ `users/{uid}/friends` storage, `noSpaceState.friends` listener, repository `addFriend`/`removeFriend`/`setFriendNickname`/`setFriendPinned`, directory union at both call sites, `participantName` nickname rule, "add by ID" UI. Pinned-first `orderedActiveMembers()` ordering also landed here (it needs only Batch 1 data). | friends subcollection block | friends selectable in Visit/Trip pickers without shared history; picker order |
+| **2** | ✅ Dedicated `openFriendsManager()` modal (👥 button in the map controls, plus a "管理好友" link in Settings): add by ID, nickname editing, pin/unpin, remove, and a "曾一起記錄、還沒加好友" suggestions section (`knownParticipantUserIds − self − friends`, one-tap add). The Batch 1 inline Settings section was removed in favour of this. | — | new manager page |
 | **3** | `friendRequests` collection, mutual handshake, incoming/outgoing lists, `pending_out` state. | friendRequests block | consent step before a friend is mutual |
 | **4** | Show own UID for sharing; optional filter-list tidy-up. | — | minor |
 
-## Pure helpers to extract and test (Batch 1)
+## Pure helpers (`src/friends.js`, tested in `tests/friends.test.mjs`)
 
-Land these in a new `src/friends.js` (Firebase-free) with `tests/friends.test.mjs`
-(auto-discovered by `tests/run.mjs`, no runner change):
+Firebase-free, auto-discovered by `tests/run.mjs`:
 
+- `isPathSafeId(value)` — guards a pasted UID before it is used in a path.
 - `normalizeFriendDoc(friendUid, raw)` → `{ friendUid, nickname, pinned, state }`;
-  coerces types, clamps unknown `state` to `"linked"`, rejects a bad
+  coerces types, clamps unknown `state` to `"linked"`, returns `null` for a bad
   `friendUid`.
-- `resolveParticipantName(uid, { selfUid, selfName, profileName, nickname, status })`
-  → the precedence in [Name resolution](#name-resolution). `participantName`
-  becomes a thin wrapper.
+- `validateFriendInput(rawValue, { selfUid, existingUids })` → `{ ok, friendUid }`
+  or `{ ok:false, reason }` (`empty` / `invalid` / `self` / `duplicate`).
 - `mergeFriendIdsIntoDirectory(knownIds, friendIds)` → deduped, sorted union.
-- `orderMembersForPicker(members, { selfUid, isPinned })` → self, pinned, rest.
-- `friendRequestTransition(request, action, actorUid)` (Batch 3) → next `state`
-  or an error, pure.
+- `orderMembersForPicker(members, { selfUid, pinnedUids })` → self, pinned, rest.
+
+The nickname branch in `participantName` is inline (two lines against
+`friendEntryOf`), not a separate helper. `friendRequestTransition` is deferred to
+Batch 3.
 
 ## Related documents
 
