@@ -127,13 +127,6 @@ let spaceCats = [];
 /* 造訪深度:由淺到深(index 越大越深),染色時每個行政區取「最深」 */
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
-const LEVELS_UI    = ["居住","住宿","旅遊","接地","經過","無"];
-const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵","🚲","🏍️","🛵",
-  "🏔️","⛰️","🌋","🏕️","🏖️","🏝️","🏜️","🏞️","🌅","🌄","🌊","🗻","🗾",
-  "⛩️","🏯","🏰","🗼","🎡","🎢","🎑","🌸","🍁","🌺","🌴","🌲",
-  "🍜","🍣","🍶","🍵","☕","🍺","🍷","🍦","🍧","🧋","🍡","🍢",
-  "🎏","🎿","🏂","🏄","🚠","♨️","🦌","🐧","🐟","🦭","🐢","🦋",
-  "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -239,7 +232,6 @@ function legacyParticipantContext(){
   return { legacyMemberIds: Object.keys(members || {}) };
 }
 function activeMemberIds(){ return activeParticipantMembers().map(m => m.userId); }
-function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
 // Active Members ordered for display: the authenticated User first, then the
 // rest by display name (Phase 2 §9).
 function orderedActiveMembers(){
@@ -275,12 +267,6 @@ function participantSummaryText(ids){
 }
 // 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.participantIds 為準
 function whoUids(p){ return resolvePlaceCompatParticipants(p, legacyParticipantContext()); }
-// New-Visit / new-record default: the authenticated User, but ONLY when that
-// User is an active valid Member. Fail closed otherwise (Phase 2 §3).
-function defaultParticipants(){
-  const uid = user?.uid || "";
-  return isActiveMember(uid) ? [uid] : [];
-}
 // Historical (removed / unknown) participant UIDs referenced by currently
 // loaded Place / Visit data. Recomputed on data or Membership change so the
 // filter and legend can resolve them without listing every removed Membership.
@@ -305,10 +291,6 @@ function sanitizeParticipantFilter(){
   if (filter.who !== "all" && !participantFilterCandidateIds().includes(filter.who)){
     filter.who = "all";
   }
-}
-function newVisitId(){
-  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
-  return `v_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
 }
 function normalizedVisit(p,v,i=0){
   const fallbackCat=(p.categories||[])[0]||"";
@@ -345,26 +327,11 @@ function hasVisitHistory(p){
 function visitCategory(p,v){ return v?.category || (p.categories||[])[0] || ""; }
 function visitWhoUids(p,v){ return resolveVisitParticipants(v, p, legacyParticipantContext()).participantIds; }
 function visitWhoText(p,v){ return participantSummaryText(visitWhoUids(p,v)); }
-function latestVisit(p){
-  return placeVisits(p).filter(v=>v.date).slice().sort((a,b)=>{
-    const d=a.date.localeCompare(b.date); if(d) return d;
-    const ao=Number.isFinite(Number(a.order))?Number(a.order):1e9;
-    const bo=Number.isFinite(Number(b.order))?Number(b.order):1e9;
-    return ao-bo;
-  }).pop() || null;
-}
-function latestVisitCategory(p){ return visitCategory(p,latestVisit(p)); }
 function visitKind(v){ return v?.kind === "stay" ? "stay" : "visit"; }
 function stayCheckout(v){ return (visitKind(v)==="stay" && v.endDate && v.endDate>v.date) ? v.endDate : ""; }
 function stayNights(v){
   if (!v?.date || !stayCheckout(v)) return 1;
   return Math.max(1, Math.round((new Date(stayCheckout(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000));
-}
-function visitEnd(v){ return visitKind(v)==="stay" ? (stayCheckout(v)||v.date||"") : (v.date||""); }
-function visitCoversDate(v,d){
-  if (!v?.date || !d) return false;
-  if (visitKind(v)!=="stay") return v.date===d;
-  const co=stayCheckout(v); return co ? (v.date<=d && d<co) : v.date===d; // 退房日不算住宿夜
 }
 function visitIntersects(v,from,to){
   if (!v?.date) return false;
@@ -933,6 +900,8 @@ function renderFilterChips(){
 /* ---------- Google Maps 載入 ---------- */
 function loadGoogleBootstrap(){
   if (window.google?.maps?.importLibrary) return;
+  /* eslint-disable */
+  // Google's official inline Maps JS API loader, verbatim. Do not reformat.
   ((g)=>{let h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",
     m=document,b=window;b=b[c]||(b[c]={});let d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,
     u=()=>h||(h=new Promise(async(f,n)=>{await(a=m.createElement("script"));e.set("libraries",[...r]+"");
@@ -940,6 +909,7 @@ function loadGoogleBootstrap(){
     a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));
     m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
     ({key:runtimeConfig.google.apiKey, v:"weekly", language:"zh-TW", region:"TW"});
+  /* eslint-enable */
 }
 
 async function initMap(){
