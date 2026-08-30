@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { externalPlaceDocumentId } from "../src/no-space/places.js";
 
 const projectId="demo-mapair-no-space-rules";
@@ -53,7 +53,47 @@ try{
   await assertFails(setDoc(doc(dbB,"users/test-user-a/dayOrders/2026-08-29"),{visitIds:[]}));
   await assertFails(getDocs(collection(dbA,"users")));
   await assertFails(getDocs(collection(dbA,"places")));
+
+  // Friends address book (users/{uid}/friends/{friendUid}) — owner-only.
+  await assertSucceeds(setDoc(doc(dbA,"users/test-user-a/friends/test-user-b"),{nickname:"阿光",pinned:false,state:"linked",createdAt:new Date()}));
+  await assertSucceeds(getDoc(doc(dbA,"users/test-user-a/friends/test-user-b")));
+  await assertSucceeds(getDocs(collection(dbA,"users/test-user-a/friends")));
+  await assertSucceeds(setDoc(doc(dbA,"users/test-user-a/friends/test-user-b"),{pinned:true},{merge:true}));
+  await assertFails(getDoc(doc(dbB,"users/test-user-a/friends/test-user-b")));
+  await assertFails(getDocs(collection(dbB,"users/test-user-a/friends")));
+  await assertFails(setDoc(doc(dbB,"users/test-user-a/friends/test-user-b"),{nickname:"hax",pinned:false,state:"linked"}));
+  await assertFails(setDoc(doc(dbA,"users/test-user-a/friends/test-user-c"),{nickname:"x",pinned:false,state:"linked",note:"extra"}));
+  await assertFails(setDoc(doc(dbA,"users/test-user-a/friends/test-user-c"),{nickname:"x",pinned:false,state:"banana"}));
+  await assertFails(deleteDoc(doc(dbB,"users/test-user-a/friends/test-user-b")));
+  await assertSucceeds(deleteDoc(doc(dbA,"users/test-user-a/friends/test-user-b")));
   await assertSucceeds(getDoc(doc(dbA,"places/place-1")));
+
+  // Friend-request handshake (friendRequests/{from}__{to}).
+  const REQ="friendRequests/test-user-a__test-user-b";
+  await assertFails(setDoc(doc(dbA,REQ),{from:B,to:B,state:"pending",createdAt:new Date()}));        // from must be caller
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:A,state:"pending",createdAt:new Date()}));        // no self
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:B,state:"accepted",createdAt:new Date()}));       // must open as pending
+  await assertFails(setDoc(doc(dbA,REQ),{from:A,to:B,state:"pending",createdAt:new Date(),x:1}));    // extra key
+  await assertSucceeds(setDoc(doc(dbA,REQ),{from:A,to:B,state:"pending",createdAt:new Date()}));
+  await assertSucceeds(getDoc(doc(dbB,REQ)));
+  await assertSucceeds(getDocs(query(collection(dbB,"friendRequests"),where("to","==",B))));
+  await assertFails(getDoc(doc(dbOut,REQ)));
+  await assertFails(updateDoc(doc(dbA,REQ),{state:"accepted"}));                                      // only the recipient answers
+  await assertFails(updateDoc(doc(dbB,REQ),{state:"maybe"}));                                         // bad state
+  await assertFails(updateDoc(doc(dbB,REQ),{from:B}));                                                // can only touch state
+  await assertSucceeds(updateDoc(doc(dbB,REQ),{state:"accepted"}));
+  await assertFails(deleteDoc(doc(dbOut,REQ)));
+  await assertSucceeds(deleteDoc(doc(dbA,REQ)));
+
+  // Public short friend codes (friendCodes/{code} -> { uid }).
+  await assertFails(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:B}));                  // can only claim your own
+  await assertFails(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:A,note:"x"}));         // extra key
+  await assertSucceeds(setDoc(doc(dbA,"friendCodes/ABCD23"),{uid:A}));
+  await assertSucceeds(getDoc(doc(dbB,"friendCodes/ABCD23")));                       // recipient resolves a shared code
+  await assertSucceeds(getDoc(doc(dbOut,"friendCodes/ABCD23")));                     // any signed-in user may resolve
+  await assertFails(getDocs(collection(dbA,"friendCodes")));                         // not enumerable
+  await assertFails(setDoc(doc(dbB,"friendCodes/ABCD23"),{uid:B}));                  // code is permanent
+  await assertFails(deleteDoc(doc(dbA,"friendCodes/ABCD23")));
 
   await assertSucceeds(getDoc(doc(dbB,"trips/trip-1")));
   await assertSucceeds(updateDoc(doc(dbB,"trips/trip-1"),{name:"同行旅程"}));

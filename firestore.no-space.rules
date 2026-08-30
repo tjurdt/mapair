@@ -95,6 +95,53 @@ service cloud.firestore {
       match /dayOrders/{date} {
         allow read, create, update, delete: if signedIn() && request.auth.uid == uid;
       }
+
+      // Per-user friend address book (docs/FRIENDS.md). Owned entirely by the
+      // user; a friend entry only makes a person selectable and carries no
+      // Visit/Trip authority. Batch 1 uses state "linked" only.
+      match /friends/{friendUid} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['nickname','pinned','state','createdAt'])
+          && (!('nickname' in request.resource.data) || request.resource.data.nickname is string)
+          && (!('pinned' in request.resource.data) || request.resource.data.pinned is bool)
+          && (!('state' in request.resource.data) || request.resource.data.state in ['linked','pending_out']);
+      }
+    }
+
+    // Friend-request handshake (docs/FRIENDS.md). Doc id is "{from}__{to}".
+    // Only the two parties can see it; the sender opens it as "pending", only
+    // the recipient can move it to "accepted"/"declined", either can delete it.
+    match /friendRequests/{requestId} {
+      function party() {
+        return signedIn()
+          && (resource.data.get('from', '') == request.auth.uid
+            || resource.data.get('to', '') == request.auth.uid);
+      }
+      allow get, list: if party();
+      allow create: if signedIn()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to is string
+        && request.resource.data.to != request.auth.uid
+        && request.resource.data.state == 'pending'
+        && request.resource.data.keys().hasOnly(['from','to','state','createdAt']);
+      allow update: if signedIn()
+        && request.auth.uid == resource.data.to
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state'])
+        && request.resource.data.state in ['accepted','declined'];
+      allow delete: if party();
+    }
+
+    // Public short friend codes (docs/FRIENDS.md). friendCodes/{code} -> { uid }.
+    // Any signed-in user may resolve a code they were given; a user may claim a
+    // code only for their own uid, and codes are permanent (no update/delete).
+    match /friendCodes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
     }
 
     match /places/{placeId} {

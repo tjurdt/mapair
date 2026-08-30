@@ -144,3 +144,8 @@ Every listener, editor, Google search, geography callback, and write captures th
 ## Deferred work
 
 Phase A intentionally excludes Friends, People/contact records, global User search, secret mentions, Exit Visit/Trip, Lock/fork, Saved Filters, Wishlist/Saved Places, photos, production rules, and production migration.
+
+Friends is being designed as an additive layer on top of Phase A — a per-user
+address book (`users/{uid}/friends/{friendUid}`) that feeds the existing
+participant directory without changing the Visit/Trip/Place model. See
+[FRIENDS.md](FRIENDS.md).

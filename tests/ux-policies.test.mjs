@@ -116,7 +116,9 @@ assert.equal(
   "normal and sequence marker creation are both guarded by the finite-coordinate policy"
 );
 assert.doesNotMatch(renderMarkersSource,/pin\.element/,"marker rendering does not use deprecated PinElement.element");
-assert.match(renderMarkersSource,/pin\.style\.cursor = "pointer";[\s\S]*?content:pin,/,"PinElement itself supplies marker content and cursor styling");
+assert.match(renderMarkersSource,/pin\.style\.cursor = "pointer";/,"the normal-mode PinElement is styled directly, not via a deprecated inner element");
+assert.match(renderMarkersSource,/content = pin;[\s\S]*?new AdvMarker\(\{ map, position:\{lat:p\.lat,lng:p\.lng\}, content,/,"the PinElement is passed to AdvancedMarkerElement as its content");
+assert.match(renderMarkersSource,/placeVisits\(p\)\.filter\(v=>visitPassFilter\(p,v\)\)\.length/,"a Place's repeated-Visit count is derived from the filtered Visit list");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
 assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
 assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");

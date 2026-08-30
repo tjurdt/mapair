@@ -1,6 +1,7 @@
 import { contributionFields } from "./contributions.js";
 import { externalPlaceDocumentId } from "./places.js";
-import { placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
+import { assertDocumentId, placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
+import { normalizeFriendCode, randomFriendCode } from "../friends.js";
 import { canDeleteTrip, canDeleteVisit, canEditTripSharedFacts, canEditVisitSharedFacts, canViewVisit } from "./policies.js";
 
 export const noSpacePaths = Object.freeze({
@@ -11,13 +12,15 @@ export const noSpacePaths = Object.freeze({
   defaults:() => "appConfig/defaults",
   legacyImport:(placeId, sourceSpace="us") => `places/${placeId}/legacyImports/space-${sourceSpace}`,
   contribution:(visitId, uid) => `visits/${visitId}/contributions/${uid}`,
-  dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`
+  dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`,
+  friend:(uid, friendUid) => `users/${uid}/friends/${friendUid}`,
+  friendRequest:(fromUid, toUid) => `friendRequests/${fromUid}__${toUid}`
 });
 
 export function createNoSpaceRepository({ db, firestore, uid }){
   if (!db || !firestore || !uid) throw new Error("No-Space repository requires db, Firestore helpers, and uid.");
   const {
-    addDoc, collection, doc, getDocs, onSnapshot, query, runTransaction,
+    addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, runTransaction,
     serverTimestamp, setDoc, updateDoc, where, writeBatch
   } = firestore;
   const stamp = () => serverTimestamp();
@@ -184,6 +187,92 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       const userRef = ref(noSpacePaths.user(uid));
       await setDoc(userRef, payload, { merge:true });
       await updateDoc(userRef, payload);
+    },
+    // Per-user friend address book at users/{uid}/friends/{friendUid}. Owned
+    // entirely by the authenticated user; a friend entry only makes a person
+    // selectable and never touches any Visit/Trip. A mutual link is reached
+    // through a friendRequests/{from}__{to} handshake. See docs/FRIENDS.md.
+    listenFriends(next, error){ return onSnapshot(col(noSpacePaths.user(uid) + "/friends"), next, error); },
+    listenIncomingFriendRequests(next, error){
+      return onSnapshot(query(col("friendRequests"), where("to", "==", uid)), next, error);
+    },
+    listenOutgoingFriendRequests(next, error){
+      return onSnapshot(query(col("friendRequests"), where("from", "==", uid)), next, error);
+    },
+    // Ask `toUid` to become a friend: create the request they will see, and a
+    // local pending_out marker (held out of the pickers until it links).
+    async sendFriendRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
+      if (id === uid) throw new Error("You cannot add yourself as a friend.");
+      const batch = writeBatch(db);
+      batch.set(ref(noSpacePaths.friendRequest(uid, id)), { from:uid, to:id, state:"pending", createdAt:stamp() });
+      batch.set(ref(noSpacePaths.friend(uid, id)), { nickname:"", pinned:false, state:"pending_out", createdAt:stamp() }, { merge:true });
+      return batch.commit();
+    },
+    // Accept an incoming request from `fromUid`: link them on my side and mark
+    // the request accepted so their client can finalise.
+    async acceptFriendRequest(fromUid){
+      const id = assertDocumentId(fromUid, "fromUid");
+      const batch = writeBatch(db);
+      batch.set(ref(noSpacePaths.friend(uid, id)), { nickname:"", pinned:false, state:"linked", createdAt:stamp() }, { merge:true });
+      batch.update(ref(noSpacePaths.friendRequest(id, uid)), { state:"accepted" });
+      return batch.commit();
+    },
+    declineFriendRequest(fromUid){
+      const id = assertDocumentId(fromUid, "fromUid");
+      return updateDoc(ref(noSpacePaths.friendRequest(id, uid)), { state:"declined" });
+    },
+    // My outgoing request was accepted: promote the pending_out marker and drop
+    // the resolved request doc.
+    async finalizeAcceptedRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
+      await setDoc(ref(noSpacePaths.friend(uid, id)), { state:"linked" }, { merge:true });
+      try { await deleteDoc(ref(noSpacePaths.friendRequest(uid, id))); } catch(e) {}
+    },
+    // Cancel my outgoing request, or clear it after a decline.
+    async discardOutgoingRequest(toUid){
+      const id = assertDocumentId(toUid, "toUid");
+      await deleteDoc(ref(noSpacePaths.friend(uid, id)));
+      try { await deleteDoc(ref(noSpacePaths.friendRequest(uid, id))); } catch(e) {}
+    },
+    removeFriend(friendUid){
+      return deleteDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))));
+    },
+    setFriendNickname(friendUid, nickname){
+      const value = typeof nickname === "string" ? nickname.trim().slice(0, 60) : "";
+      return setDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))),
+        { nickname:value }, { merge:true });
+    },
+    setFriendPinned(friendUid, pinned){
+      return setDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))),
+        { pinned: pinned === true }, { merge:true });
+    },
+    // Short friend code: a public 6-char handle at friendCodes/{code} -> uid, so
+    // people can be added without pasting a 28-char UID. Codes are permanent and
+    // claimed once; a claim collision just retries with a fresh code.
+    async ensureFriendCode(){
+      const userRef = ref(noSpacePaths.user(uid));
+      return runTransaction(db, async transaction => {
+        const userSnap = await transaction.get(userRef);
+        const existing = userSnap.exists() ? userSnap.data().friendCode : "";
+        if (typeof existing === "string" && normalizeFriendCode(existing)) return existing;
+        for (let attempt = 0; attempt < 5; attempt++){
+          const code = randomFriendCode();
+          const codeRef = doc(db, "friendCodes", code);
+          if ((await transaction.get(codeRef)).exists()) continue;
+          transaction.set(codeRef, { uid });
+          transaction.set(userRef, { friendCode:code }, { merge:true });
+          return code;
+        }
+        throw new Error("Could not allocate a friend code. Please try again.");
+      });
+    },
+    async uidForFriendCode(code){
+      const clean = normalizeFriendCode(code);
+      if (!clean) return null;
+      const snap = await getDoc(doc(db, "friendCodes", clean));
+      const value = snap.exists() ? snap.data().uid : "";
+      return (typeof value === "string" && value.trim()) ? value.trim() : null;
     }
   };
 }
