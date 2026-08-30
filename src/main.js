@@ -73,6 +73,14 @@ import {
   occurrenceKey,
   stayAnchorsOnDate
 } from "./domain/occurrences.js";
+import {
+  categoryPass,
+  participantPass,
+  placePasses,
+  regionsPass,
+  tripPass,
+  visitPasses
+} from "./domain/filter.js";
 
 /* ============================================================
    1) 設定
@@ -395,48 +403,31 @@ function stayNights(v){
   if (!v?.date || !stayCheckout(v)) return 1;
   return Math.max(1, Math.round((new Date(stayCheckout(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000));
 }
-function visitIntersects(v,from,to){
-  if (!v?.date) return false;
-  if (visitKind(v)!=="stay"){
-    if (from && v.date<from) return false;
-    if (to && v.date>to) return false;
-    return true;
-  }
-  const co=stayCheckout(v)||v.date;
-  if (from && co<from) return false;
-  if (to && v.date>to) return false;
-  return true;
-}
+// Field readers passed to domain/filter.js. The list path resolves category
+// through visitCategory (Place-categories fallback for legacy records); the
+// map-area path compares the raw projected category only.
+const LIST_VISIT_FIELDS = { participantIds:visitWhoUids, category:visitCategory, checkout:stayCheckout };
+const AREA_VISIT_FIELDS = {
+  participantIds:visitWhoUids,
+  category:(place,visit)=>typeof visit?.category==="string" ? visit.category.trim() : "",
+  checkout:stayCheckout
+};
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
 const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
 function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : ""; }
-function visitMatchesTrip(v){
-  if (filter.tripId === "all") return true;
-  if (filter.tripId === "daily") return !v.tripId;
-  return v.tripId === filter.tripId;
-}
-function visitMatchesCategory(p,v){
-  return !filter.cats.size || filter.cats.has(visitCategory(p,v));
-}
-function visitMatchesWho(p,v){
-  return filter.who === "all" || visitWhoUids(p,v).includes(filter.who);
-}
-function placeStaticFilter(p){
-  const f=filter;
-  if (f.regions.length && !f.regions.some(r => p[r.key] === r.code)) return false;
-  return true;
-}
-function visitPassFilter(p,v){
-  return placeStaticFilter(p) && visitMatchesWho(p,v) && visitMatchesTrip(v) && visitMatchesCategory(p,v) && visitIntersects(v,filter.from,filter.to);
-}
+// Thin bindings of domain/filter.js to the live `filter` state. Kept as named
+// helpers because getDayOccurrences / representativeDateOccurrence call them
+// individually.
+function visitMatchesTrip(v){ return tripPass(filter.tripId, v.tripId); }
+function visitMatchesCategory(p,v){ return categoryPass(filter.cats, visitCategory(p,v)); }
+function visitMatchesWho(p,v){ return participantPass(filter.who, visitWhoUids(p,v)); }
+function placeStaticFilter(p){ return regionsPass(filter.regions, p); }
+function visitPassFilter(p,v){ return visitPasses(p, v, filter, LIST_VISIT_FIELDS); }
 function passFilter(p){
   // Only Places with real Visit history exist in the active product; dormant
   // legacy wishlist-only records are invisible everywhere.
   if (!hasVisitHistory(p)) return false;
-  if (!placeStaticFilter(p)) return false;
-  const vv=placeVisits(p);
-  const hasVisitConstraint=filter.who!=="all" || filter.tripId!=="all" || !!filter.from || !!filter.to || !!filter.cats.size;
-  return !hasVisitConstraint || vv.some(v=>visitPassFilter(p,v));
+  return placePasses(p, placeVisits(p), filter, LIST_VISIT_FIELDS);
 }
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
@@ -1986,9 +1977,7 @@ function areaVisitsForPlace(place){
   return Array.isArray(place?.visits) ? place.visits : [];
 }
 function areaVisitPassFilter(place,visit){
-  const category=typeof visit?.category==="string" ? visit.category.trim() : "";
-  return placeStaticFilter(place) && visitMatchesWho(place,visit) && visitMatchesTrip(visit)
-    && (!filter.cats.size || filter.cats.has(category)) && visitIntersects(visit,filter.from,filter.to);
+  return visitPasses(place, visit, filter, AREA_VISIT_FIELDS);
 }
 function mapAreaPlacePassFilter(place){
   return areaVisitsForPlace(place).some(visit=>areaVisitPassFilter(place,visit));
