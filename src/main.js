@@ -181,6 +181,8 @@ const noSpaceState = {
 };
 let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
 let markers = [], sessionToken = null;
+let selfMarker = null;                       // "你的位置" dot from the locate button
+let focusedPlaceId = null, focusedPlaceTimer = null; // highlighted marker after a list tap
 let places = {}, trips = {}, tab = "visited";
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
@@ -761,7 +763,11 @@ async function renderApp(){
   document.getElementById("locBtn").onclick = () => {
     if (!navigator.geolocation) return alert("此裝置不支援定位");
     navigator.geolocation.getCurrentPosition(
-      pos => { map.setCenter({lat:pos.coords.latitude, lng:pos.coords.longitude}); map.setZoom(15); },
+      pos => {
+        const at = { lat:pos.coords.latitude, lng:pos.coords.longitude };
+        map.setCenter(at); map.setZoom(16);
+        showSelfMarker(at);
+      },
       err => alert("定位失敗:" + err.message),
       { enableHighAccuracy:true, timeout:8000 }
     );
@@ -872,13 +878,36 @@ function fitMapToCurrentFilter(){
 function focusMapOnPlace(p){
   if(!map || !Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
   map.setCenter({lat:p.lat,lng:p.lng});
-  map.setZoom(14);
+  map.setZoom(15);
+  setFocusedPlace(p.id);
+}
+// Briefly highlight one Place's marker (a pulsing ring) so a marker tapped from
+// the list stands out among nearby pins. Clears itself after a few seconds.
+function setFocusedPlace(id){
+  focusedPlaceId = id || null;
+  clearTimeout(focusedPlaceTimer);
+  if(focusedPlaceId){
+    focusedPlaceTimer = setTimeout(() => { focusedPlaceId = null; renderMarkers(); }, 20000);
+  }
+  renderMarkers();
+}
+function showSelfMarker(at){
+  if(!AdvMarker || !map) return;
+  if(!selfMarker){
+    const dot = document.createElement("div");
+    dot.className = "selfdot";
+    selfMarker = new AdvMarker({ map, position:at, content:dot, title:"你的位置", zIndex:10000 });
+  } else {
+    selfMarker.position = at;
+    selfMarker.map = map;
+  }
 }
 function scheduleFilterFit(){
   clearTimeout(filterFitTimer);
   filterFitTimer=setTimeout(fitMapToCurrentFilter,80);
 }
 function applyFilter({fitViewport=true}={}){
+  focusedPlaceId = null; clearTimeout(focusedPlaceTimer);
   renderList(); renderMarkers();
   refreshMapSurfaces();
   renderFilterChips();
@@ -1543,6 +1572,8 @@ function resetRuntimeState(){
   referencedHistoricalIds = [];
   markers.forEach(marker => { try { marker.map = null; } catch(e){} });
   markers = [];
+  if (selfMarker){ try { selfMarker.map = null; } catch(e){} selfMarker = null; }
+  focusedPlaceId = null; clearTimeout(focusedPlaceTimer);
   removeAdministrativeLayer();
   removeProximityLayer();
   adminLevel = "off";
@@ -1712,9 +1743,25 @@ function renderMarkers(){
     if (!hasFinitePlaceCoordinates(p)) return;
     if (!passFilter(p)) return;
     const col=effectiveMarkerColor(p);
-    const pin = new Pin({ background:col, borderColor:"#ffffff", glyphColor:"#ffffff", scale:0.6 });
-    pin.style.cursor = "pointer";
-    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content:pin, title:p.name, gmpClickable:true });
+    // Repeated Visits to one Place are a single marker; when there is more than
+    // one (matching the current filter) the pin shows the count as its glyph.
+    const count=placeVisits(p).filter(v=>visitPassFilter(p,v)).length;
+    const title=count>1?`${p.name} · 造訪 ${count} 次`:p.name;
+    let content, extra={};
+    if (p.id===focusedPlaceId){
+      const dot=document.createElement("div");
+      dot.className="focuspin";
+      dot.style.background=col;
+      dot.textContent=count>1?String(count):"";
+      content=dot; extra={zIndex:9999};
+    } else {
+      const pinOpts = { background:col, borderColor:"#ffffff", glyphColor:"#ffffff", scale:count>1?0.85:0.6 };
+      if (count>1) pinOpts.glyph = String(count);
+      const pin = new Pin(pinOpts);
+      pin.style.cursor = "pointer";
+      content = pin;
+    }
+    const m = new AdvMarker({ map, position:{lat:p.lat,lng:p.lng}, content, title, gmpClickable:true, ...extra });
     m.addListener("gmp-click", () => { lastMarkerClick = Date.now(); openEditor(p.id); });
     markers.push(m);
   });

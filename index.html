@@ -68,6 +68,10 @@
   #proximityCtl input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto}
   #proximityCtl .proximity-region-status{margin-left:5px;color:var(--ink-soft);font-size:12px;white-space:nowrap}
   .seqpin{width:24px;height:24px;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(21,34,48,.28);cursor:pointer;user-select:none}
+  .selfdot{width:16px;height:16px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);animation:selfpulse 2s ease-out infinite}
+  @keyframes selfpulse{0%{box-shadow:0 0 0 0 rgba(26,115,232,.5),0 1px 5px rgba(0,0,0,.35)}70%{box-shadow:0 0 0 16px rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}100%{box-shadow:0 0 0 0 rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}}
+  .focuspin{width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;cursor:pointer;animation:focuspulse 1.4s ease-out infinite}
+  @keyframes focuspulse{0%{box-shadow:0 0 0 0 rgba(178,91,107,.6),0 1px 5px rgba(0,0,0,.4)}70%{box-shadow:0 0 0 15px rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}100%{box-shadow:0 0 0 0 rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}}
   #multiBtn.on{background:var(--wish);color:#fff;border-color:var(--wish)}
   .nb{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:14px;cursor:pointer}
   .nb:hover{background:var(--paper)}
