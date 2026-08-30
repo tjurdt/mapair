@@ -19,9 +19,12 @@ structure refactor (`docs/REFACTOR_PLAN.md`) cannot move unrelated behaviour.
    5173) and drives Chromium.
 
 Tests sign in through the existing **LOCAL TEST** identity buttons
-(`測試使用者甲` / `test-user-a`). Google Maps and web fonts are blocked in the
-browser context so the run is hermetic; the client already tolerates Maps
-failing to load.
+(`測試使用者甲` / `test-user-a`). Web fonts are blocked and Google Maps is
+replaced by a small in-page stub (`installGoogleMapsStub` in `helpers.mjs`) so
+`initMap()` succeeds and the marker / map-surface code actually runs under test
+— otherwise the client's `if (!AdvMarker) return` hides that whole path.
+`signIn()` also records uncaught page errors; `expectNoPageErrors(page)` fails
+the test if any occurred.
 
 Each spec calls `reseed()` in `beforeEach`, so specs are order-independent and a
 failed write cannot poison the next test.
@@ -50,11 +53,14 @@ emulator database** first.
 
 ## Coverage
 
-`smoke.spec.mjs` (read-only) and `mutations.spec.mjs` (delete, reorder) track
-the "Automation: Yes" rows of
-`docs/archive/baseline/BEHAVIOR_CHECKLIST.md`: sign-in/shell/logout, tabs, date
-range, repeated Visits, participant/category/Trip filters, stay rendering,
-editor + settings open, Visit delete, day reorder.
+- `smoke.spec.mjs` (read-only) — sign-in/shell/logout, tabs, date range,
+  repeated Visits, participant/category/Trip filters, stay rendering, editor +
+  settings open.
+- `mutations.spec.mjs` — Visit delete, day reorder.
+- `markers.spec.mjs` — renderMarkers, every marker colour mode, trip and
+  single-day numbered sequence markers (all via the Maps stub).
 
-Map pixels, viewport fitting, choropleth appearance, and mobile layout are
-**not** covered here (they need visual/manual checks — see the checklist).
+These track the "Automation: Yes" rows of
+`docs/archive/baseline/BEHAVIOR_CHECKLIST.md`. Real map pixels, viewport
+motion, choropleth appearance, and mobile layout still need visual/manual
+checks (see the checklist).
