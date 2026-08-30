@@ -9,7 +9,7 @@ const rules=await readFile(new URL("../firestore.no-space.rules",import.meta.url
 const testEnv=await initializeTestEnvironment({projectId,firestore:{rules,host:"127.0.0.1",port:8085}});
 const A="test-user-a",B="test-user-b",OUTSIDER="test-user-z";
 const PRIVATE_PLACE_ID=externalPlaceDocumentId({source:"google",extId:"ChIJ-private-review"});
-const baseVisit={placeId:"place-1",date:"2026-08-29",category:"咖啡",participantUserIds:[A,B],tripId:null,kind:"visit",endDate:"",createdBy:A};
+const baseVisit={placeId:"place-1",date:"2026-08-29",category:"咖啡",participantUserIds:[A,B],tripId:null,level:"旅遊",kind:"visit",endDate:"",createdBy:A};
 const baseTrip={name:"夏日旅行",emoji:"🧭",startDate:"2026-08-29",endDate:"2026-08-30",color:"#3f7d78",participantUserIds:[A,B],createdBy:A};
 
 try{
@@ -37,6 +37,9 @@ try{
   await assertFails(updateDoc(doc(dbB,"visits/visit-1"),{createdBy:B}));
   await assertFails(updateDoc(doc(dbB,"visits/visit-1"),{participantUserIds:[A]}));
   await assertSucceeds(updateDoc(doc(dbB,"visits/visit-1"),{category:"晚餐"}));
+  await assertSucceeds(updateDoc(doc(dbB,"visits/visit-1"),{level:"住宿",kind:"stay",endDate:"2026-08-30"}));
+  await assertSucceeds(updateDoc(doc(dbB,"visits/visit-1"),{level:"旅遊",kind:"visit",endDate:""}));
+  await assertFails(updateDoc(doc(dbA,"visits/visit-1"),{level:"隨便"}));
 
   await assertSucceeds(setDoc(doc(dbA,"visits/visit-1/contributions/test-user-a"),{rating:5,memory:"我的回憶"}));
   await assertSucceeds(getDoc(doc(dbB,"visits/visit-1/contributions/test-user-a")));
@@ -65,6 +68,11 @@ try{
 
   const visible=query(collection(dbA,"visits"),where("participantUserIds","array-contains",A));
   assert.equal((await assertSucceeds(getDocs(visible))).size,2);
+
+  // A participant can create a Visit that carries the shared "造訪深度" (level).
+  await assertSucceeds(setDoc(doc(dbA,"visits/visit-created"),{...baseVisit,participantUserIds:[A]}));
+  await assertFails(setDoc(doc(dbOut,"visits/visit-created-bad"),{...baseVisit,participantUserIds:[OUTSIDER],level:"bogus",createdBy:OUTSIDER}));
+  await testEnv.withSecurityRulesDisabled(async context=>{ await context.firestore().doc("visits/visit-created").delete(); });
 
   await assertSucceeds(updateDoc(doc(dbA,"visits/visit-1"),{deleting:true,deletingAt:new Date()}));
   const batch=writeBatch(dbA);

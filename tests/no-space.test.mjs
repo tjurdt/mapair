@@ -24,10 +24,12 @@ import {
 import {
   assertNoClockFields,
   findForbiddenClockFields,
+  normalizeLevel,
   placeObjectiveFields,
   tripSharedFields,
   visitSharedFields
 } from "../src/no-space/schema.js";
+import { contributionFields } from "../src/no-space/contributions.js";
 import { applyTripDefaultsToNewVisit, tripReferenceState, updateTripDefaults } from "../src/no-space/trips.js";
 import { externalPlaceDocumentId, selectExactExternalPlace } from "../src/no-space/places.js";
 import { knownParticipantUserIds, projectNoSpaceRuntime } from "../src/no-space/visits.js";
@@ -115,6 +117,13 @@ assert.equal(canEditVisitSharedFacts(B, shared), true);
 assert.equal(canEditVisitSharedFacts(C, shared), false);
 assert.equal(canDeleteVisit(A, shared), true);
 assert.equal(canDeleteVisit(B, shared), false);
+// Older data with no stored creator has no creator to protect: any participant deletes.
+const noCreatorVisit = { id:"v-old", date:"2026-08-02", participantUserIds:[A,B] };
+assert.equal(canDeleteVisit(A, noCreatorVisit), true);
+assert.equal(canDeleteVisit(B, noCreatorVisit), true);
+assert.equal(canDeleteVisit(C, noCreatorVisit), false, "still limited to participants");
+assert.equal(canDeleteTrip(A, { participantUserIds:[A,B] }), true);
+assert.equal(canDeleteTrip(C, { participantUserIds:[A,B] }), false);
 assert.deepEqual(retainCurrentParticipant([B], A), [A,B], "self-removal cannot masquerade as Exit");
 
 /* C. contributions remain independently owned */
@@ -190,6 +199,26 @@ assert.equal(visitSharedFields({...visitShape,tripId:"deleted-trip"}).tripId,"de
 assert.throws(() => assertNoClockFields({ startTime:"14:30" }), /forbidden clock-time/);
 assert.throws(() => visitSharedFields({ ...visitShape, time:"14:30" }), /forbidden clock-time/);
 assert.throws(() => visitSharedFields({ ...visitShape, departureTime:"14:30" }), /forbidden clock-time/);
+
+/* 造訪深度 is a shared Visit fact and is the sole trigger for a stay. */
+assert.equal(normalizeLevel("居住"), "居住");
+assert.equal(normalizeLevel("nonsense"), "旅遊", "an unknown depth falls back to 旅遊");
+assert.equal(normalizeLevel(undefined, "住宿"), "住宿", "the caller may pick the fallback");
+assert.equal(visitShape.level, "旅遊", "an unspecified depth defaults to 旅遊");
+assert.equal(visitShape.kind, "visit");
+assert.equal(visitShape.endDate, "");
+const stayVisit = visitSharedFields({ ...visitShape, level:"住宿", endDate:"2026-08-04" });
+assert.equal(stayVisit.kind, "stay", "住宿 depth makes the Visit a stay");
+assert.equal(stayVisit.endDate, "2026-08-04");
+assert.throws(() => visitSharedFields({ ...visitShape, level:"住宿" }), /YYYY-MM-DD/, "a 住宿 Visit still needs a checkout date");
+assert.throws(() => visitSharedFields({ ...visitShape, level:"住宿", endDate:"2026-08-02" }), /must follow its arrival/);
+const legacyStay = visitSharedFields({
+  placeId:"place-1", date:"2026-08-02", participantUserIds:[A], kind:"stay", endDate:"2026-08-04", createdBy:A
+});
+assert.equal(legacyStay.level, "住宿", "a legacy kind:stay Visit with no depth is read as 住宿");
+assert.equal(visitSharedFields({ ...visitShape, level:"經過" }).kind, "visit");
+assert.equal(Object.hasOwn(contributionFields({ rating:4, memory:"x", level:"居住" }), "level"), false,
+  "depth is no longer stored on a personal contribution");
 const objective = placeObjectiveFields({ name:"Cafe", lat:25, lng:121, rating:5, review:"subjective", level:"deep", visits:[visitShape] });
 assert.equal(Object.hasOwn(objective, "rating"), false);
 assert.equal(Object.hasOwn(objective, "review"), false);
@@ -212,7 +241,22 @@ assert.equal(Object.keys(projected).length, 1);
 assert.equal(projected["place-1"].visits.length, 2);
 assert.equal(projected["place-1"].visits[1]._averageRating, 4);
 assert.equal(Object.hasOwn(projected["place-1"].visits[1]._contributions,C),false);
+assert.equal(projected["place-1"].visits[0].level, "旅遊", "an unspecified shared depth projects as 旅遊");
 assert.deepEqual(knownParticipantUserIds(A, [shared], [trip]), [A,B,C]);
+
+/* Shared visit depth: projected per-Visit and rolled up to a Place fallback. */
+const depthProjection = projectNoSpaceRuntime({
+  currentUserId:B,
+  visits:[
+    { id:"v-early", placeId:"p", date:"2026-01-01", participantUserIds:[A,B], level:"居住", createdBy:A },
+    { id:"v-stay", placeId:"p", date:"2026-02-01", participantUserIds:[A,B], kind:"stay", endDate:"2026-02-03", createdBy:A }
+  ],
+  placesById:{ p:{ name:"P", lat:25, lng:121 } }
+})["p"];
+assert.equal(depthProjection.visits[0].level, "居住", "explicit shared depth is projected as-is");
+assert.equal(depthProjection.visits[1].level, "住宿", "a legacy kind:stay Visit reads as 住宿 depth");
+assert.equal(depthProjection.visits[1].kind, "stay");
+assert.equal(depthProjection.level, "住宿", "Place depth falls back to the latest Visit's shared depth, for any viewer");
 
 /* A visible Visit may arrive before its exact referenced Place listener. */
 const pendingPlaceVisit = { ...soloA, id:"visit-pending-place", placeId:"place-pending" };
@@ -380,7 +424,6 @@ for (const path of [
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const repositorySource=await readFile(new URL("../src/no-space/repository.js",import.meta.url),"utf8");
 assert.equal(/type=["']time["']/.test(mainSource), false);
-assert.match(mainSource, /isNoSpace\(\) \? "我的足跡" : "我們去過的地方"/);
 assert.match(mainSource,/if \(filter\.tripId === "daily"\) return !v\.tripId/,"dangling Trip references are not mislabeled as Daily");
 assert.match(mainSource,/已刪除旅程/,"dangling Trip references need an explicit label");
 for (const [start,end] of [
@@ -398,7 +441,10 @@ assert.deepEqual(findForbiddenClockFields(fixture),[]);
 assert.equal(fixture.documents.some(document=>document.path.startsWith("spaces/")),false);
 const editorBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceVisitEditor"),mainSource.indexOf("function openEditor",mainSource.indexOf("function openNoSpaceVisitEditor")+1));
 assert.match(editorBlock,/const allowNewPlace=creating&&!selectedPlaceId/);
-assert.match(editorBlock,/if\(rawVisit&&!selectedPlaceId\)/);
+// A brand-new Place name input is only offered while creating with no resolved
+// Place; an existing Visit sees the Place select, so it can never become a new Place.
+assert.match(editorBlock,/allowNewPlace[\s\S]{0,60}<input id="ns_place_name"/,"the new-Place name input is gated behind allowNewPlace");
+assert.match(editorBlock,/\}else\{\s*\n\s*const created=await repo\.createPlaceAndVisit/,"a new Place is only created when no Place is selected");
 assert.match(editorBlock,/value="\$\{esc\(rawVisit\.tripId\)\}" selected>已刪除旅程/,"a dangling Trip must remain selected until explicitly changed");
 assert.match(editorBlock,/tripId:g\("ns_trip"\)\.value\|\|null/,"explicitly selecting no Trip detaches the Visit");
 assert.doesNotMatch(editorBlock,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");

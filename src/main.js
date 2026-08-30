@@ -7,16 +7,11 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
 import { resolveRuntimeConfig } from "./config.js";
 import {
   classifyParticipants,
-  deriveLegacyWhoMode,
-  detectParticipantMismatch,
   formatParticipantSummary,
   isUsableUid,
-  nextVisitParticipantFields,
-  orderParticipantSelection,
   participantColorIndex,
   resolvePlaceCompatParticipants,
-  resolveVisitParticipants,
-  sanitizeParticipantsForNewSelection
+  resolveVisitParticipants
 } from "./participants.js";
 import {
   MAP_SURFACE_Z_INDEX,
@@ -24,8 +19,6 @@ import {
   isVisitReorderAvailable,
   layoutViewState,
   ordinaryOccurrences,
-  placeSharedFields,
-  reorderWithinSlots,
   resolveVisitMoveTarget,
   shouldShowReorderControls,
   shouldAutoFitViewport,
@@ -47,16 +40,15 @@ import {
   readProximityPreferences,
   resolveProximityMaskMode,
   selectEligibleProximitySeeds,
-  selectNearbyPlaces,
   selectRegionMaskCandidates,
   writeProximityPreferences
 } from "./proximity-geometry.js";
 import { aggregatePlaceVisitAreaMetrics } from "./visit-area-metrics.js";
 import {
   VISIT_DATE_RAINBOW,
+  deepestLevel,
   lerpHex,
   multiStopColor,
-  orderedVisitDateColor,
   positiveExtrema,
   quantitativeColor
 } from "./map-color-scales.js";
@@ -134,13 +126,29 @@ let spaceCats = [];
 /* 造訪深度:由淺到深(index 越大越深),染色時每個行政區取「最深」 */
 const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
-const LEVELS_UI    = ["居住","住宿","旅遊","接地","經過","無"];
+
+/* 旅程圖示可選清單 */
 const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵","🚲","🏍️","🛵",
   "🏔️","⛰️","🌋","🏕️","🏖️","🏝️","🏜️","🏞️","🌅","🌄","🌊","🗻","🗾",
   "⛩️","🏯","🏰","🗼","🎡","🎢","🎑","🌸","🍁","🌺","🌴","🌲",
   "🍜","🍣","🍶","🍵","☕","🍺","🍷","🍦","🍧","🧋","🍡","🍢",
   "🎏","🎿","🏂","🏄","🚠","♨️","🦌","🐧","🐟","🦭","🐢","🦋",
   "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
+
+/* 「做什麼」系統預設選項(name -> 預設顏色)。使用者可在設定勾選常用項目與改色。
+   「其他」永遠可選(不可取消),選「其他」時會出現自訂敘述框。 */
+const CATEGORY_PRESETS = [
+  ["餐飲","#d98b3f"],["咖啡","#a9724a"],["購物","#b25b6b"],["娛樂","#8f6bb2"],
+  ["文化","#6b6bb2"],["景點","#3f7d78"],["自然","#4f9d5f"],["戶外","#7a9c3f"],
+  ["住宿","#b2506b"],["交通","#5f7fb2"],["教育","#3f6bb2"],["醫療","#c2513f"],
+  ["宗教","#b2953f"],["運動","#5fa38a"],["工作","#6b8296"],["社交","#c2603f"],
+  ["生活","#7a7a7a"],["住家","#5f8a6b"],["慶祝","#b23f7a"],["其他","#9aa5ad"]
+];
+const CATEGORY_PRESET_NAMES = CATEGORY_PRESETS.map(([name])=>name);
+const CATEGORY_PRESET_COLORS = Object.fromEntries(CATEGORY_PRESETS);
+const CATEGORY_DEFAULT_PICKS = ["餐飲","咖啡","購物","娛樂","景點","自然","交通","其他"];
+// 沒有選擇「做什麼」時,標記/範圍的預設顏色。
+const CATEGORY_NONE_COLOR = "#9aa5ad";
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -162,13 +170,15 @@ const noSpaceState = {
   visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{},
   placeUnsubs:new Map(), legacyImportUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
 };
-let map, geocoder, MapCtor, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
-let markers = [], tripLine = null, sessionToken = null;
+let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
+let markers = [], sessionToken = null;
 let places = {}, trips = {}, tab = "visited";
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let levelColors = { ...LEVEL_COLORS }, addMode = false;
+// Per-user "做什麼" preferences: which presets appear in the picker, plus colour overrides.
+let categoryPicks = [...CATEGORY_DEFAULT_PICKS];
 let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
 let proximityStorage = null;
 try { proximityStorage = globalThis.localStorage; } catch(e) {}
@@ -179,7 +189,6 @@ let proximityEnabled = false;
 let proximityLayer = null, proximityLayerKey = "", proximityMaskIndex = null, proximityRenderVersion = 0;
 let selectedRegionMaskCache = { identity:"", maskIndex:null };
 let proximitySeedCount = 0, proximityRadiusTimer = null;
-let proximityAreaMetricState = null;
 const proximityGeometryCache = new Map();
 const CAT_PALETTE = ["#d98b3f","#3f7d78","#b25b6b","#6b8fb2","#8f6bb2","#b2a03f","#5fa38a","#c2603f","#4f9d5f","#b23f7a","#3f6bb2","#7a7a7a"];
 const MAP_AREA_METRIC_OPTIONS = [["level","造訪深度"],["count","地標數"],["visitCount","造訪次數"],["first","最早造訪日期"],["last","最後造訪日期"],["categoryMode","造訪目的（眾數）"]];
@@ -237,7 +246,6 @@ function defaultDateForNewVisit(){
   return today;
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
-const NAMEKEY = { county:"COUNTYNAME", town:"TOWNNAME", village:"VILLNAME" };
 const REGION_GEO = {
   countyCode:{ url:"geo/county.json", codeProperty:"COUNTYCODE" },
   townCode:{ url:"geo/town.json", codeProperty:"TOWNCODE" }
@@ -247,7 +255,6 @@ function legacyParticipantContext(){
   return { legacyMemberIds: Object.keys(members || {}) };
 }
 function activeMemberIds(){ return activeParticipantMembers().map(m => m.userId); }
-function isActiveMember(uid){ return !!uid && activeMemberIds().includes(uid); }
 // Active Members ordered for display: the authenticated User first, then the
 // rest by display name (Phase 2 §9).
 function orderedActiveMembers(){
@@ -283,12 +290,6 @@ function participantSummaryText(ids){
 }
 // 舊資料的「誰去」保留在地點層級作相容摘要；新資料以每次 visit.participantIds 為準
 function whoUids(p){ return resolvePlaceCompatParticipants(p, legacyParticipantContext()); }
-// New-Visit / new-record default: the authenticated User, but ONLY when that
-// User is an active valid Member. Fail closed otherwise (Phase 2 §3).
-function defaultParticipants(){
-  const uid = user?.uid || "";
-  return isActiveMember(uid) ? [uid] : [];
-}
 // Historical (removed / unknown) participant UIDs referenced by currently
 // loaded Place / Visit data. Recomputed on data or Membership change so the
 // filter and legend can resolve them without listing every removed Membership.
@@ -314,10 +315,6 @@ function sanitizeParticipantFilter(){
     filter.who = "all";
   }
 }
-function newVisitId(){
-  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch(e){}
-  return `v_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-}
 function normalizedVisit(p,v,i=0){
   const fallbackCat=(p.categories||[])[0]||"";
   const kind=v?.kind || ((v?.endDate && v.endDate>v.date) ? "stay" : "visit");
@@ -334,6 +331,14 @@ function normalizedVisit(p,v,i=0){
   // collapse it during normalization (APPROVED PHASE 2 CONTRACT §1, §8).
   if (v && Object.hasOwn(v, "participantIds")) out.participantIds = Array.isArray(v.participantIds) ? [...v.participantIds] : v.participantIds;
   if (v && Object.hasOwn(v, "who")) out.who = Array.isArray(v.who) ? [...v.who] : v.who;
+  // Carry the No-Space projection's runtime fields through unchanged so the
+  // shared visit doc, contributions, depth, and creator stay reachable from a
+  // normalized occurrence (edit / delete / per-visit colour all need them).
+  if (v && v.level) out.level = v.level;
+  if (v && v.createdBy) out.createdBy = v.createdBy;
+  if (v && v._shared) out._shared = v._shared;
+  if (v && v._contributions) out._contributions = v._contributions;
+  if (v && Object.hasOwn(v, "_averageRating")) out._averageRating = v._averageRating;
   return out;
 }
 // 一個 place 是共享地點；visits 是獨立造訪事件。舊資料會即時以相容格式讀取。
@@ -353,26 +358,11 @@ function hasVisitHistory(p){
 function visitCategory(p,v){ return v?.category || (p.categories||[])[0] || ""; }
 function visitWhoUids(p,v){ return resolveVisitParticipants(v, p, legacyParticipantContext()).participantIds; }
 function visitWhoText(p,v){ return participantSummaryText(visitWhoUids(p,v)); }
-function latestVisit(p){
-  return placeVisits(p).filter(v=>v.date).slice().sort((a,b)=>{
-    const d=a.date.localeCompare(b.date); if(d) return d;
-    const ao=Number.isFinite(Number(a.order))?Number(a.order):1e9;
-    const bo=Number.isFinite(Number(b.order))?Number(b.order):1e9;
-    return ao-bo;
-  }).pop() || null;
-}
-function latestVisitCategory(p){ return visitCategory(p,latestVisit(p)); }
 function visitKind(v){ return v?.kind === "stay" ? "stay" : "visit"; }
 function stayCheckout(v){ return (visitKind(v)==="stay" && v.endDate && v.endDate>v.date) ? v.endDate : ""; }
 function stayNights(v){
   if (!v?.date || !stayCheckout(v)) return 1;
   return Math.max(1, Math.round((new Date(stayCheckout(v)+"T00:00:00")-new Date(v.date+"T00:00:00"))/86400000));
-}
-function visitEnd(v){ return visitKind(v)==="stay" ? (stayCheckout(v)||v.date||"") : (v.date||""); }
-function visitCoversDate(v,d){
-  if (!v?.date || !d) return false;
-  if (visitKind(v)!=="stay") return v.date===d;
-  const co=stayCheckout(v); return co ? (v.date<=d && d<co) : v.date===d; // 退房日不算住宿夜
 }
 function visitIntersects(v,from,to){
   if (!v?.date) return false;
@@ -386,9 +376,7 @@ function visitIntersects(v,from,to){
   if (to && v.date>to) return false;
   return true;
 }
-const placeDates = p => placeVisits(p).flatMap(v=>visitKind(v)==="stay" ? [v.date,stayCheckout(v)].filter(Boolean) : [v.date]).filter(Boolean);
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
-const primaryDate = p => latestVisit(p)?.date || "";
 const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
 function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : ""; }
 function visitMatchesTrip(v){
@@ -489,7 +477,6 @@ function tripDayNoByDate(date,tripId,all=[]){
   if(!start||!date) return 1;
   return Math.max(1,Math.round((new Date(date+"T00:00:00")-new Date(start+"T00:00:00"))/86400000)+1);
 }
-function tripDayNo(v,tripId,all){ return tripDayNoByDate(v?.date||"",tripId,all); }
 function sequenceContext(){
   const tid=specificTripId();
   if(tid) return {type:"trip",tripId:tid};
@@ -944,6 +931,8 @@ function renderFilterChips(){
 /* ---------- Google Maps 載入 ---------- */
 function loadGoogleBootstrap(){
   if (window.google?.maps?.importLibrary) return;
+  /* eslint-disable */
+  // Google's official inline Maps JS API loader, verbatim. Do not reformat.
   ((g)=>{let h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",
     m=document,b=window;b=b[c]||(b[c]={});let d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,
     u=()=>h||(h=new Promise(async(f,n)=>{await(a=m.createElement("script"));e.set("libraries",[...r]+"");
@@ -951,6 +940,7 @@ function loadGoogleBootstrap(){
     a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));
     m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
     ({key:runtimeConfig.google.apiKey, v:"weekly", language:"zh-TW", region:"TW"});
+  /* eslint-enable */
 }
 
 async function initMap(){
@@ -961,7 +951,7 @@ async function initMap(){
     google.maps.importLibrary("places"),
     google.maps.importLibrary("geocoding"),
   ]);
-  MapCtor = Map; AdvMarker = AdvancedMarkerElement; Pin = PinElement;
+  AdvMarker = AdvancedMarkerElement; Pin = PinElement;
   AutocompleteSuggestion = placesLib.AutocompleteSuggestion;
   AutocompleteSessionToken = placesLib.AutocompleteSessionToken;
   PlaceClass = placesLib.Place;
@@ -987,30 +977,76 @@ async function initMap(){
 // session is no longer current must ignore its data.
 function openNoSpaceSettings(){
   const markerOpts = [["cat","活動"],["level","我的足跡深度"],["who","參與者"],["trip","旅程"],["rating","我的評分"],["dateFirst","首次造訪"],["dateLast","最近造訪"]];
+  const metricLocked = proximityEnabled;
+  const draftPicks = new Set(categoryPicks);
+  const draftCatColors = {};
+  const draftLevelColors = {};
+  const catColorValue = name => draftCatColors[name] || catColors[name] || CATEGORY_PRESET_COLORS[name] || "#9aa5ad";
+  const levelColorValue = level => draftLevelColors[level] || levelColors[level] || LEVEL_COLORS[level];
+  const categoryRows = CATEGORY_PRESETS.map(([name])=>{
+    const locked = name === "其他";
+    return `
+    <label class="srow" style="cursor:${locked?'default':'pointer'}">
+      <span><input type="checkbox" class="ns_catpick" data-cat="${esc(name)}" ${locked||draftPicks.has(name)?'checked':''} ${locked?'disabled':''} style="width:16px;height:16px;margin-right:8px;vertical-align:middle">${esc(name)}${locked?'<span style="color:var(--ink-soft);font-size:12px"> · 一律顯示</span>':''}</span>
+      <input type="color" class="ns_catcolor" data-cat="${esc(name)}" value="${catColorValue(name)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px">
+    </label>`;
+  }).join("");
+  const levelRows = LEVEL_ORDER.slice().reverse().map(level=>`
+    <div class="colitem"><span>${esc(level)}</span>
+      <input type="color" class="ns_levelcolor" data-level="${esc(level)}" value="${levelColorValue(level)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px"></div>`).join("");
   modal(`
     <h2 style="margin-bottom:14px">設定</h2>
     <div class="sethead">顯示</div>
     <div class="srow"><span>顯示地點標記</span><input type="checkbox" id="ns_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
     <div class="srow"><span>標記顏色</span><select id="ns_markermode" class="sselect">${markerOpts.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
     <div class="sethead">地圖上色</div>
-    <div class="srow"><span>上色依據</span><select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
+    <div class="srow"><span>上色依據</span>${metricLocked
+      ? `<select class="sselect" disabled title="鄰近圖層開啟時，範圍會沿用地標顏色"><option>與標記顏色連動（鄰近）</option></select>`
+      : `<select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select>`}</div>
+    ${metricLocked?`<div class="admin" style="margin:-2px 0 4px">鄰近圖層開啟時，周圍範圍會直接沿用地標的顏色。</div>`:""}
     <div class="srow"><span>透明度</span><input type="range" id="ns_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
+    <div class="sethead">「做什麼」選項</div>
+    <div class="admin" style="margin-bottom:4px">勾選的項目會出現在新增造訪的「做什麼」下拉選單；右側可改顏色。</div>
+    ${categoryRows}
+    <div class="sethead">造訪深度顏色</div>
+    <div class="colgrid">${levelRows}</div>
     <div class="sethead">個人資料</div>
     <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
     <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
   `);
   const mode = document.getElementById("ns_markermode");
   mode.value = markerMode;
-  const metric = document.getElementById("ns_metric");
-  metric.value = choroMetric;
-  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
   mode.onchange = event => { markerMode=event.target.value; renderMarkers(); };
-  metric.onchange = event => setMapAreaMetric(event.target.value);
+  const metric = document.getElementById("ns_metric");
+  if (metric){
+    metric.value = choroMetric;
+    metric.onchange = event => setMapAreaMetric(event.target.value);
+  }
+  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
   document.getElementById("ns_alpha").oninput = event => { choroAlpha=(+event.target.value)/100; refreshMapSurfaces(); };
+  document.querySelectorAll(".ns_catpick").forEach(box => box.onchange = () => {
+    if (box.checked) draftPicks.add(box.dataset.cat); else draftPicks.delete(box.dataset.cat);
+  });
+  document.querySelectorAll(".ns_catcolor").forEach(input => input.oninput = () => { draftCatColors[input.dataset.cat] = input.value; });
+  document.querySelectorAll(".ns_levelcolor").forEach(input => input.oninput = () => { draftLevelColors[input.dataset.level] = input.value; });
   document.getElementById("ns_done").onclick = async() => {
     const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
+    const nextPicks = CATEGORY_PRESET_NAMES.filter(name => name === "其他" || draftPicks.has(name));
+    const nextCatColors = {};
+    for (const name of CATEGORY_PRESET_NAMES){
+      const value = draftCatColors[name] || catColors[name];
+      if (value && value.toLowerCase() !== String(CATEGORY_PRESET_COLORS[name] || "").toLowerCase()) nextCatColors[name] = value;
+    }
+    const nextLevelColors = {};
+    for (const level of LEVEL_ORDER){
+      const value = draftLevelColors[level] || levelColors[level];
+      if (value && value.toLowerCase() !== LEVEL_COLORS[level].toLowerCase()) nextLevelColors[level] = value;
+    }
     if (repo && runtimeSessionIsCurrent(session,uid)){
       await repo.updateOwnProfile({ displayName:document.getElementById("ns_name").value, photoURL:user.photoURL || "" });
+      await repo.updateOwnPreferences({ categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors });
+      noSpaceState.profiles[uid] = { ...(noSpaceState.profiles[uid] || {}), categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors };
+      refreshNoSpaceProjection();
     }
     closeModal();
   };
@@ -1138,7 +1174,23 @@ function syncNoSpaceReferenceListeners(session, uid){
     }), error(`User ${profileUid}`)), id => delete noSpaceState.profiles[id]);
 }
 
+// Firestore delivers many per-document snapshots in quick succession (one per
+// referenced Place / contribution set / profile). Coalesce them: a single
+// re-projection + re-render runs shortly after a burst instead of once per
+// snapshot, which is the main cause of slow initial load.
+let noSpaceProjectionTimer = null;
 function refreshNoSpaceProjection(){
+  if (noSpaceProjectionTimer) return;
+  noSpaceProjectionTimer = setTimeout(() => {
+    noSpaceProjectionTimer = null;
+    applyNoSpaceProjection();
+  }, 24);
+}
+function cancelPendingProjection(){
+  if (noSpaceProjectionTimer){ clearTimeout(noSpaceProjectionTimer); noSpaceProjectionTimer = null; }
+}
+
+function applyNoSpaceProjection(){
   if (!user || !noSpaceRepository) return;
   const visitList = Object.values(noSpaceState.visits);
   places = projectNoSpaceRuntime({
@@ -1155,9 +1207,15 @@ function refreshNoSpaceProjection(){
     ...trip,
     participantIds:[...(trip.participantUserIds || [])]
   }]));
+  const ownProfile = noSpaceState.profiles[user.uid] || {};
+  categoryPicks = Array.isArray(ownProfile.categoryPicks) && ownProfile.categoryPicks.length
+    ? ownProfile.categoryPicks.filter(category => typeof category === "string" && category.trim())
+    : [...CATEGORY_DEFAULT_PICKS];
+  // Filter chips / legends reflect categories actually in use (plus any shared
+  // defaults); the personal `categoryPicks` only drive the editor's dropdown.
   spaceCats = [...new Set([...(noSpaceState.defaults.categories || []), ...visitList.map(visit => visit.category)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-  catColors = { ...(noSpaceState.defaults.catColors || {}) };
-  levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}) };
+  catColors = { ...CATEGORY_PRESET_COLORS, ...(noSpaceState.defaults.catColors || {}), ...(ownProfile.categoryColors || {}) };
+  levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}), ...(ownProfile.levelColors || {}) };
   const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
   participantMembers = profileIds.map(uid => ({
     userId:uid,
@@ -1189,19 +1247,19 @@ function runtimeReady(){
 }
 
 function resetRuntimeState(){
+  cancelPendingProjection();
   resetNoSpaceState();
   places = {};
   trips = {};
   spaceCats = [];
   members = {};
   catColors = {};
+  categoryPicks = [...CATEGORY_DEFAULT_PICKS];
   levelColors = { ...LEVEL_COLORS };
   participantMembers = [];
   referencedHistoricalIds = [];
-  dayVisitItems = [];
   markers.forEach(marker => { try { marker.map = null; } catch(e){} });
   markers = [];
-  if (tripLine){ try { tripLine.setMap(null); } catch(e){} tripLine = null; }
   removeAdministrativeLayer();
   removeProximityLayer();
   adminLevel = "off";
@@ -1257,9 +1315,7 @@ function markerDateBounds(){
   const tid=specificTripId();
   if(tid){
     const b=tripSequenceBounds(tid);
-    const from=filter.from && filter.from>b.from ? filter.from : b.from;
-    const to=filter.to && filter.to<b.to ? filter.to : b.to;
-    if(from&&to&&from<=to) return {from,to};
+    if(b.from&&b.to&&b.from<=b.to) return b;
   }
   if(filter.from && filter.to) return {from:filter.from,to:filter.to};
   const ds=getFilteredVisitOccurrences().map(occurrenceDate).filter(Boolean).sort();
@@ -1274,12 +1330,9 @@ function dateOccurrenceColor(o,bounds=markerDateBounds()){
   const date=occurrenceDate(o), base=dateBaseColor(date,bounds);
   const day=getDayOccurrences(date), same=day.filter(x=>occurrenceDate(x)===date);
   const idx=Math.max(0,same.findIndex(x=>x.p.id===o.p.id && x.visitIndex===o.visitIndex && (x.stayAnchor||"")===(o.stayAnchor||"")));
-  return orderedVisitDateColor({
-    baseColor:base,
-    occurrenceIndex:idx,
-    occurrenceCount:same.length,
-    singleDay:!!bounds.from && bounds.from===bounds.to
-  });
+  const frac=same.length<=1?0.55:idx/(same.length-1);
+  // 同一天由淺到深；第一站仍保留足夠飽和度，最後一站接近基準色（單一色相，不跨彩虹）。
+  return lerpHex("#ffffff",base,0.48+0.50*frac);
 }
 function representativeDateOccurrence(p,mode){
   const arr=[];
@@ -1303,7 +1356,7 @@ function representativeDateOccurrence(p,mode){
   return mode==="dateFirst"?arr[0]:arr[arr.length-1];
 }
 function markerColor(p){
-  if (markerMode === "cat"){ const c=(p.categories||[])[0]; if(c) return catColor(c); }
+  if (markerMode === "cat"){ const c=(p.categories||[])[0]; return c ? catColor(c) : CATEGORY_NONE_COLOR; }
   else if (markerMode === "level" && p.level) return levelColors[p.level];
   else if (markerMode === "who") return whoColor(p);
   else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
@@ -1312,10 +1365,10 @@ function markerColor(p){
 }
 function markerColorForVisit(p,v){
   if (markerMode === "cat"){
-    const c=visitCategory(p,v); if(c) return catColor(c);
+    const c=visitCategory(p,v); return c ? catColor(c) : CATEGORY_NONE_COLOR;
   }
   const personal=v?._contributions?.[user?.uid]||{};
-  if (markerMode === "level" && personal.level) return levelColors[personal.level] || markerColor(p);
+  if (markerMode === "level" && v?.level) return levelColors[v.level] || markerColor(p);
   if (markerMode === "rating" && personal.rating) return ratingColor(personal.rating);
   if (markerMode === "who") return visitWhoColor(p,v);
   if (markerMode === "trip" && v?.tripId && trips[v.tripId]?.color) return trips[v.tripId].color;
@@ -1386,8 +1439,9 @@ function renderMarkers(){
 function dateMarkerLegendBody(){
   const b=markerDateBounds(), grad=VISIT_DATE_RAINBOW.join(",");
   if(b.from && b.from===b.to){
+    const base=dateBaseColor(b.from,b), lite=lerpHex("#ffffff",base,0.48);
     return `<div class="legendsection"><div class="legendtitle">地標 · ${esc(b.from.replaceAll("-","/"))} 造訪順序</div>`+
-      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
+      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${lite},${base})"></div>`+
       `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>第一站</span><span>最後一站</span></div></div>`;
   }
   return `<div class="legendsection"><div class="legendtitle">地標 · ${markerMode==="dateFirst"?"最早造訪":"最後造訪"}</div>`+
@@ -1426,10 +1480,20 @@ function markerLegendBody(){
 
 function areaMetricLegendBody(surface,metric,ctx={}){
   if(metric==="first"||metric==="last"){
-    const lab=metric==="first"?"最早造訪日期":"最後造訪日期", grad=VISIT_DATE_RAINBOW.join(",");
+    const grad=VISIT_DATE_RAINBOW.join(",");
+    const singleDay=ctx.dmin && ctx.dmin===ctx.dmax;
+    const lab=singleDay
+      ? `${esc(ctx.dmin.replaceAll("-","/"))} ${metric==="first"?"首次進入":"最後停留"}順序`
+      : (metric==="first"?"最早造訪日期":"最後造訪日期");
+    const ends=singleDay
+      ? `<span>第一站</span><span>最後一站</span>`
+      : `<span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span>`;
+    const ramp=singleDay
+      ? `${lerpHex("#ffffff",VISIT_DATE_RAINBOW[0],0.48)},${VISIT_DATE_RAINBOW[0]}`
+      : grad;
     return `<div class="legendsection"><div class="legendtitle">${surface} · ${lab}</div>`+
-      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${grad})"></div>`+
-      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px"><span>${esc((ctx.dmin||"").slice(5)||"早")}</span><span>${esc((ctx.dmax||"").slice(5)||"晚")}</span></div></div>`;
+      `<div style="height:8px;width:108px;border-radius:3px;background:linear-gradient(90deg,${ramp})"></div>`+
+      `<div style="display:flex;justify-content:space-between;width:108px;font-size:11px">${ends}</div></div>`;
   }
   if(metric==="categoryMode"){
     const observed=new Set();
@@ -1468,11 +1532,8 @@ function proximityLegendBody(){
   const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
     : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
   const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
-  const bounds=markerDateBounds();
-  const countBounds=choroMetric==="count" ? proximityAreaMetricState?.placeCountBounds : proximityAreaMetricState?.visitCountBounds;
   return `<div class="legendsection"><div class="legendtitle">鄰近涵蓋 · ${formatProximityRadius(proximityRadius)} km</div>`+
-    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點。</div></div>`+
-    areaMetricLegendBody("鄰近",choroMetric,{dmin:bounds.from,dmax:bounds.to,...countBounds});
+    `<div class="legendnote">${seedText}<br>${landText}<br>重疊範圍歸最近的造訪地點；顏色沿用地標配色。</div></div>`;
 }
 function renderUnifiedLegend(){
   const el=document.getElementById("maplegend"); if(!el) return;
@@ -1507,8 +1568,6 @@ function pip(lat, lng, features, codeProp){
   }
   return null;
 }
-// 造訪深度:沒設 level 的地點預設當作「旅遊」。
-function effLevel(p){ return p.level || "旅遊"; }
 
 function updatePlaceGeographyCache(_originContextId, placeId, fields){
   return noSpaceRepository?.updatePlaceCache(placeId, fields) || Promise.resolve();
@@ -1592,6 +1651,40 @@ function visitAreaMetrics(pls){
     visitFilter:(visit,place)=>areaVisitPassFilter(place,visit)
   });
 }
+// Per-visit shared "造訪深度" (未設定的當作「旅遊」), so area surfaces reflect the
+// same depths the per-visit markers show.
+function filteredVisitLevel(visit){
+  return visit?.level || "旅遊";
+}
+// Deepest such level across the filter-passing visits of a Place set — the
+// value the choropleth / proximity "造訪深度" fill should use.
+function deepestFilteredLevel(placeList){
+  const levels=[];
+  for(const place of placeList||[]){
+    for(const visit of areaVisitsForPlace(place)){
+      if(areaVisitPassFilter(place,visit)) levels.push(filteredVisitLevel(visit));
+    }
+  }
+  return deepestLevel(levels,LEVEL_ORDER);
+}
+// When the active date window is a single day, colour a Place set by where its
+// first / last visit that day sits in the whole day's ordered sequence, so
+// same-day order is distinguishable on area surfaces (not just markers).
+// `daySequence` is the shared getDayOccurrences(date) result.
+function singleDayOrderColor(placeList,mode,daySequence){
+  if(!daySequence || !daySequence.length) return null;
+  const ids=new Set((placeList||[]).map(place=>place.id));
+  let slot=-1;
+  daySequence.forEach((occurrence,index)=>{
+    if(!ids.has(occurrence.p.id)) return;
+    if(mode==="first"){ if(slot<0) slot=index; }
+    else slot=index;
+  });
+  if(slot<0) return null;
+  // Single hue, light -> dark by position in the day's sequence (no rainbow).
+  const frac=daySequence.length<=1?0.55:slot/(daySequence.length-1);
+  return lerpHex("#ffffff",VISIT_DATE_RAINBOW[0],0.48+0.50*frac);
+}
 const COUNT_SHADES = ["#f0dcc0","#e6bd86","#d98b3f","#b96a24","#8f4f18"];
 function countColor(value,bounds){ return quantitativeColor(COUNT_SHADES,value,bounds); }
 function countMetricBounds(metricsByKey,metric){
@@ -1644,22 +1737,14 @@ function removeProximityLayer(){
     proximityLayer=null;
     proximityLayerKey="";
   }
-  proximityAreaMetricState=null;
 }
 function restyleProximityLayer(){
   if(!proximityLayer) return;
-  const bounds=markerDateBounds();
   proximityLayer.setStyle(feature=>{
+    // Each coverage territory takes its seed Place's own marker colour, so the
+    // area around a pin always matches the pin (no separate metric selector).
     const place=places[String(feature.getProperty("seedId"))];
-    const metrics=proximityAreaMetricState?.bySeed?.[String(feature.getProperty("seedId"))] || null;
-    let color=(choroMetric==="count" || choroMetric==="visitCount") ? null : getCSS("--visited");
-    if(place && choroMetric==="level") color=levelColors[effLevel(place)]||color;
-    else if(metrics && choroMetric==="count") color=countColor(metrics.placeCount,proximityAreaMetricState.placeCountBounds);
-    else if(metrics && choroMetric==="visitCount") color=countColor(metrics.visitCount,proximityAreaMetricState.visitCountBounds);
-    else if(metrics && choroMetric==="first" && metrics.earliest) color=dateColor(metrics.earliest,bounds.from,bounds.to);
-    else if(metrics && choroMetric==="last" && metrics.latest) color=dateColor(metrics.latest,bounds.from,bounds.to);
-    else if(metrics && choroMetric==="categoryMode" && metrics.categoryMode) color=catColor(metrics.categoryMode);
-    if(!color) color="#e5e0d6";
+    const color=place ? effectiveMarkerColor(place) : getCSS("--visited");
     return {
       fillColor:color,
       fillOpacity:choroAlpha,
@@ -1725,15 +1810,6 @@ async function renderProximityCoverage(requestVersion){
   const seeds=selectEligibleProximitySeeds(places, mapAreaPlacePassFilter);
   const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
-  const bySeed=Object.fromEntries(seeds.map(seed=>[
-    seed.id,
-    visitAreaMetrics(selectNearbyPlaces(seed,places,proximityRadius,mapAreaPlacePassFilter))
-  ]));
-  proximityAreaMetricState={
-    bySeed,
-    placeCountBounds:countMetricBounds(bySeed,"count"),
-    visitCountBounds:countMetricBounds(bySeed,"visitCount")
-  };
   updateProximityMaskControl();
   renderUnifiedLegend();
   let maskIndex=null;
@@ -1839,23 +1915,25 @@ async function renderAdministrativeLayer(){
   if(choroMetric==="first" || choroMetric==="last"){
     const bounds=markerDateBounds(); dmin=bounds.from; dmax=bounds.to;
   }
+  const singleDay=dmin && dmin===dmax ? dmin : "";
+  const singleDaySeq=singleDay ? getDayOccurrences(singleDay) : null;
   const colorOf=code=>{
     const regionPlacesList=byRegion[code];
     if(!regionPlacesList || !regionPlacesList.length) return null;
     if(choroMetric==="level"){
-      let best=-1;
-      for(const place of regionPlacesList){
-        const index=LEVEL_ORDER.indexOf(effLevel(place));
-        if(index>best) best=index;
-      }
-      return best<0 ? null : levelColors[LEVEL_ORDER[best]];
+      const deepest=deepestFilteredLevel(regionPlacesList);
+      return deepest ? (levelColors[deepest] || null) : null;
     }
     const metrics=metricsByRegion[code];
     if(choroMetric==="count") return countColor(metrics.placeCount,countBounds);
     if(choroMetric==="visitCount") return countColor(metrics.visitCount,countBounds);
     if(choroMetric==="categoryMode") return metrics.categoryMode ? catColor(metrics.categoryMode) : null;
-    const date=choroMetric==="first" ? metrics.earliest : metrics.latest;
-    return date ? dateColor(date,dmin,dmax) : null;
+    if(choroMetric==="first" || choroMetric==="last"){
+      if(singleDay) return singleDayOrderColor(regionPlacesList,choroMetric,singleDaySeq);
+      const date=choroMetric==="first" ? metrics.earliest : metrics.latest;
+      return date ? dateColor(date,dmin,dmax) : null;
+    }
+    return null;
   };
   const selectedCodes=new Set(filter.regions
     .filter(region=>region.key===CODEKEY[level])
@@ -1974,7 +2052,6 @@ function toggleMapSurface(control){
 /* ============================================================
    4) 清單
    ============================================================ */
-let dayVisitItems = [];
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
@@ -1998,7 +2075,6 @@ function renderList(){
       return effOrd(a.p)-effOrd(b.p);
     });
   }
-  dayVisitItems=occ;
   if(!occ.length){
     // A Space with no actual Visit history at all is simply empty — regardless
     // of the default month filter, and regardless of dormant legacy wishlist
@@ -2053,7 +2129,6 @@ function stayAnchorCardHTML(o,label,date){
 }
 function renderDayVisitList(el,date){
   const seq=getDayOccurrences(date);
-  dayVisitItems=seq;
   if(!seq.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
   const tripId=specificTripId(), labels=new Map(sequenceLabels().map(x=>[occurrenceKey(x.o),x.label]));
   let html=`<div class="daysep">${tripId?`D${tripDayNoByDate(date,tripId,seq)} · `:""}${esc(date)}</div>`;
@@ -2264,6 +2339,8 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const allContributions=rawVisit?noSpaceState.contributions[rawVisit.id]||{}:{};
   const scopedContributions=()=>participantContributions(allContributions,selected);
   const mine=scopedContributions()[editorUid]||{};
+  // 造訪深度 is a shared Visit fact and decides whether the Visit is a stay.
+  const initialLevel=LEVEL_ORDER.includes(rawVisit?.level) ? rawVisit.level : (rawVisit?.kind==="stay" ? "住宿" : "旅遊");
   const legacyImport=selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null;
   const live=()=>runtimeSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
   const allowNewPlace=creating&&!selectedPlaceId;
@@ -2290,6 +2367,16 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     const average=averageSubmittedRating(Object.values(scopedContributions()));
     return `平均評分：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
   };
+  // 「做什麼」下拉：使用者勾選的預設 + 這筆造訪原本的預設值，「其他」永遠在最後，
+  // 選「其他」時打開自訂敘述框。非預設字串一律歸「其他」並帶入敘述框。
+  const currentCategory=rawVisit?.category||"";
+  const categoryIsPreset=CATEGORY_PRESET_NAMES.includes(currentCategory)&&currentCategory!=="其他";
+  const categoryOptionNames=[...new Set([
+    ...CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)&&name!=="其他"),
+    ...(categoryIsPreset?[currentCategory]:[])
+  ])];
+  const categorySelected=categoryIsPreset?currentCategory:(currentCategory?"其他":"");
+  const categoryCustomText=(!categoryIsPreset&&currentCategory&&currentCategory!=="其他")?currentCategory:"";
   const legacyImportHtml=legacyImport?`
     <div class="editor-section legacy-record">
       <div class="editor-section-head"><div><div class="editor-section-title">舊版共同記錄</div><div class="editor-section-note">從舊版保留下來，僅供閱讀。</div></div></div>
@@ -2303,22 +2390,28 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     <div class="admin" style="margin-bottom:12px">同一天的足跡，可以在清單調整成你自己的順序。</div>
     <div class="editor-section">
       <div class="editor-section-head"><div><div class="editor-section-title">共同經歷</div><div class="editor-section-note">一起留下這次造訪的基本記錄。</div></div></div>
-      <div class="field"><label>地點</label><select id="ns_place">${allowNewPlace?`<option value="__new__" selected>新增地點</option>`:""}${placeOptions}</select></div>
-      <div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱" ${selectedPlaceId?'readonly':''}></div>
+      ${allowNewPlace
+        ? `<div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱"></div>`
+        : `<div class="field"><label>地點</label><select id="ns_place">${placeOptions}</select></div>`}
       <div class="row">
         <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
-        <div class="field" style="flex:1"><label>做什麼</label><input id="ns_category" list="ns_categories" value="${esc(rawVisit?.category||"")}" placeholder="例如：喝咖啡"><datalist id="ns_categories">${spaceCats.map(cat=>`<option value="${esc(cat)}"></option>`).join("")}</datalist></div>
+        <div class="field" style="flex:1"><label>做什麼</label>
+          <select id="ns_category">
+            <option value="" ${categorySelected===""?'selected':''}>未指定</option>
+            ${categoryOptionNames.map(name=>`<option value="${esc(name)}" ${name===categorySelected?'selected':''}>${esc(name)}</option>`).join("")}
+            <option value="其他" ${categorySelected==="其他"?'selected':''}>其他</option>
+          </select>
+          <input id="ns_category_custom" placeholder="描述這個地點的活動" value="${esc(categoryCustomText)}" style="display:${categorySelected==="其他"?'block':'none'};margin-top:6px"></div>
       </div>
       <div class="field"><label>同行者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
       <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
       <div class="row">
-        <div class="field" style="flex:1"><label>是否住宿</label><select id="ns_kind"><option value="visit" ${rawVisit?.kind==='stay'?'':'selected'}>一般造訪</option><option value="stay" ${rawVisit?.kind==='stay'?'selected':''}>住宿</option></select></div>
+        <div class="field" style="flex:1"><label>造訪深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===initialLevel?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
         <div class="field" id="ns_end_wrap" style="flex:1"><label>退房日期</label><input type="date" id="ns_end_date" value="${rawVisit?.endDate||addDays(rawVisit?.date||defaultDateForNewVisit(),1)}"></div>
       </div>
     </div>
     <div class="editor-section">
       <div class="editor-section-head"><div><div class="editor-section-title">我的記錄</div><div class="editor-section-note">這些內容只屬於你。</div></div></div>
-      <div class="field"><label>足跡深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===(mine.level||"旅遊")?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
       <div class="field"><label>評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
       <div class="field"><label>回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="寫下這次造訪的回憶">${esc(mine.memory||"")}</textarea></div>
     </div>
@@ -2328,20 +2421,22 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   `);
   const g=id=>document.getElementById(id);
   const endWrap=g("ns_end_wrap");
-  const refreshStay=()=>{ endWrap.style.display=g("ns_kind").value==="stay"?"block":"none"; };
+  const refreshStay=()=>{ endWrap.style.display=g("ns_level").value==="住宿"?"block":"none"; };
   refreshStay();
-  g("ns_kind").onchange=refreshStay;
+  g("ns_level").onchange=refreshStay;
+  const categoryCustom=g("ns_category_custom");
+  g("ns_category").onchange=()=>{
+    const isOther=g("ns_category").value==="其他";
+    categoryCustom.style.display=isOther?"block":"none";
+    if(isOther) categoryCustom.focus();
+  };
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
   const refreshContributionVisibility=()=>{
     if(g("ns_average")) g("ns_average").textContent=averageText();
     if(g("ns_other_contributions")) g("ns_other_contributions").innerHTML=contributionRows();
   };
-  g("ns_place").onchange=()=>{
-    selectedPlaceId=g("ns_place").value==="__new__"?"":g("ns_place").value;
-    g("ns_place_name").readOnly=!!selectedPlaceId;
-    if(selectedPlaceId) g("ns_place_name").value=noSpaceState.places[selectedPlaceId]?.name||"";
-    else g("ns_place_name").value=seed?.name||"";
-  };
+  const placeSelect=g("ns_place");
+  if(placeSelect) placeSelect.onchange=()=>{ selectedPlaceId=placeSelect.value; };
   g("ns_trip").onchange=()=>{
     if(!creating||!g("ns_trip").value||!trips[g("ns_trip").value]) return;
     selected=visitParticipantsFromTrip(trips[g("ns_trip").value],editorUid);
@@ -2362,25 +2457,28 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   });
   g("ns_save").onclick=async()=>{
     if(!live()) return;
-    const name=g("ns_place_name").value.trim(), date=g("ns_date").value;
+    const nameInput=g("ns_place_name");
+    const name=nameInput?nameInput.value.trim():"";
+    const date=g("ns_date").value;
     if(!date||(!selectedPlaceId&&!name)){ alert("請填寫地點名稱與日期。"); return; }
-    if(rawVisit&&!selectedPlaceId){ alert("既有造訪必須選擇一個已存在的地點。"); return; }
-    const kind=g("ns_kind").value;
+    const level=g("ns_level").value;
+    const stay=level==="住宿";
+    if(stay && !(g("ns_end_date").value>date)){ alert("住宿需要一個晚於造訪日的退房日期。"); return; }
     const targetPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId]:seed||initialPlace;
     const shared={
       placeId:selectedPlaceId,
       date,
-      category:g("ns_category").value.trim(),
+      category:g("ns_category").value==="其他"?(g("ns_category_custom").value.trim()||"其他"):g("ns_category").value,
       participantUserIds:retainCurrentParticipant(selected,editorUid),
       tripId:g("ns_trip").value||null,
-      kind,
-      endDate:kind==="stay"?g("ns_end_date").value:"",
+      level,
+      kind:stay?"stay":"visit",
+      endDate:stay?g("ns_end_date").value:"",
       createdBy:rawVisit?.createdBy||editorUid
     };
     const personal={
       rating:Number(g("ns_rating").value)>0?Number(g("ns_rating").value):null,
-      memory:g("ns_memory").value,
-      level:g("ns_level").value
+      memory:g("ns_memory").value
     };
     let savedVisitId=rawVisit?.id||"";
     try{
@@ -2462,8 +2560,17 @@ function openNoSpaceTripEditor(id,onDone){
   modal(`
     <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
     <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
-    <div class="field"><label>名稱</label><input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行"></div>
-    <div class="field"><label>圖示</label><input id="nst_emoji" value="${esc(trip?.emoji||"")}" maxlength="8" placeholder="🧳"></div>
+    <div class="field"><label>圖示 + 名稱</label>
+      <div class="row" style="gap:8px;position:relative;align-items:stretch">
+        <button type="button" id="nst_emoji_btn" style="flex:0 0 52px;font-size:22px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer">${esc(trip?.emoji||"")||"➕"}</button>
+        <input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行" style="flex:1">
+        <input type="hidden" id="nst_emoji" value="${esc(trip?.emoji||"")}">
+        <div id="nst_emoji_pop" style="display:none;position:absolute;top:52px;left:0;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px;grid-template-columns:repeat(7,1fr);gap:2px;width:264px;max-height:220px;overflow:auto">
+          <button type="button" class="nst-emojibtn" data-e="" style="font-size:14px;border:none;background:none;cursor:pointer;padding:4px">無</button>
+          ${EMOJIS.map(e=>`<button type="button" class="nst-emojibtn" data-e="${e}" style="font-size:20px;border:none;background:none;cursor:pointer;padding:4px">${e}</button>`).join("")}
+        </div>
+      </div>
+    </div>
     <div class="row">
       <div class="field" style="flex:1"><label>開始日期</label><input type="date" id="nst_start" value="${trip?.startDate||""}"></div>
       <div class="field" style="flex:1"><label>結束日期</label><input type="date" id="nst_end" value="${trip?.endDate||""}"></div>
@@ -2473,6 +2580,13 @@ function openNoSpaceTripEditor(id,onDone){
     <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
+  const emojiBtn=g("nst_emoji_btn"), emojiPop=g("nst_emoji_pop");
+  emojiBtn.onclick=()=>{ emojiPop.style.display=emojiPop.style.display==="none"?"grid":"none"; };
+  emojiPop.querySelectorAll(".nst-emojibtn").forEach(btn=>btn.onclick=()=>{
+    g("nst_emoji").value=btn.dataset.e;
+    emojiBtn.textContent=btn.dataset.e||"➕";
+    emojiPop.style.display="none";
+  });
   g("nst_participants").querySelectorAll("[data-uid]").forEach(chip=>{
     const toggle=()=>{
       const participantUid=chip.dataset.uid;

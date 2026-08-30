@@ -1,5 +1,16 @@
 export const NO_SPACE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+// Shared visit-depth ("造訪深度"), shallow -> deep. A shared Visit fact:
+// everyone on the Visit sees the same value, and "住宿" is what makes a Visit a
+// stay (there is no separate stay toggle).
+export const NO_SPACE_LEVELS = Object.freeze(["經過", "接地", "旅遊", "住宿", "居住"]);
+export const NO_SPACE_DEFAULT_LEVEL = "旅遊";
+
+export function normalizeLevel(value, fallback = NO_SPACE_DEFAULT_LEVEL){
+  const level = typeof value === "string" ? value.trim() : "";
+  return NO_SPACE_LEVELS.includes(level) ? level : fallback;
+}
+
 export const FORBIDDEN_CLOCK_FIELDS = Object.freeze([
   "time",
   "startTime",
@@ -60,7 +71,9 @@ export function visitSharedFields(input={}){
   const rawTripId=nonEmptyString(input.tripId);
   const tripId=rawTripId?assertDocumentId(rawTripId,"tripId"):null;
   const date = assertDateOnly(input.date);
-  const kind = input.kind === "stay" ? "stay" : "visit";
+  // "住宿" depth is the single source of truth for whether a Visit is a stay.
+  const level = normalizeLevel(input.level, input.kind === "stay" ? "住宿" : NO_SPACE_DEFAULT_LEVEL);
+  const kind = level === "住宿" ? "stay" : "visit";
   const endDate = kind === "stay" ? assertDateOnly(input.endDate, "endDate") : "";
   if (kind === "stay" && endDate <= date) throw new Error("A stay endDate must follow its arrival date.");
   const participantUserIds = normalizeParticipantUserIds(input.participantUserIds);
@@ -71,6 +84,7 @@ export function visitSharedFields(input={}){
     category:nonEmptyString(input.category),
     participantUserIds,
     tripId,
+    level,
     kind,
     endDate,
     createdBy:nonEmptyString(input.createdBy)

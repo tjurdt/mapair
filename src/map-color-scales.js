@@ -38,6 +38,17 @@ export function quantitativeColor(colors,value,extrema){
   return multiStopColor(colors,position);
 }
 
+// Deepest level in `levels` according to `order` (index 0 = shallowest).
+// Unknown values are ignored; returns null when nothing matches.
+export function deepestLevel(levels = [], order = []) {
+  let best = -1;
+  for (const value of levels) {
+    const index = order.indexOf(value);
+    if (index > best) best = index;
+  }
+  return best < 0 ? null : order[best];
+}
+
 export function orderedVisitDateColor({
   baseColor,
   occurrenceIndex=0,

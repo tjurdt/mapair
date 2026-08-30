@@ -1,10 +1,20 @@
-# No-Space Core — v0.3 release candidate
+# No-Space Core
+
+> "Phase A" throughout this document names the currently-shipped scope. The
+> production data migration and the candidate Firestore rules are separate,
+> not-yet-executed operations (see [MAPAIR_V0_3_RELEASE.md](MAPAIR_V0_3_RELEASE.md)).
 
 ## Status and safety boundary
 
-On `release/mapair-v0.3-no-space`, No-Space is the production-default architecture. Production needs no query parameter. LOCAL development retains the fixed-Space baseline at `?firebaseEnv=local`, the legacy multi-Space harness at `?firebaseEnv=local&multiSpace=1`, and No-Space at `?firebaseEnv=local&noSpace=1`; the two feature flags remain mutually exclusive. Legacy Space runtime code and `spaces/us` are retained only for rollback and are not exposed as a production write mode.
+No-Space is the only architecture. Production needs no query parameter. LOCAL
+development uses `?firebaseEnv=local` (localhost only, exactly that value), which
+connects the Auth and Firestore emulators and otherwise runs the identical
+No-Space client. There are no architecture feature flags; the earlier
+`spaces/{spaceId}` / `multiSpace` / `noSpace` runtime paths and their modules
+have been removed. `spaces/us` still exists in production Firestore but is not
+read by the client — it is migration input only.
 
-Development on this branch performs no production migration, rule deployment, data copy, or deletion. The migration and candidate rules require separate review and explicit operator action.
+Development performs no production migration, rule deployment, data copy, or deletion. The migration and candidate rules require separate review and explicit operator action.
 
 ## Domain model
 
@@ -28,14 +38,19 @@ Shared Visit facts are:
 - date;
 - activity/category;
 - participants;
-- stay kind and checkout date;
+- **visit depth ("造訪深度" / `level`)** — one of 經過 / 接地 / 旅遊 / 住宿 / 居住, shared by everyone on the Visit;
+- checkout date, when the depth is 住宿;
 - optional Trip reference.
+
+There is no separate stay toggle: a Visit is a stay **iff** its shared depth is
+住宿, and only then does it carry (and require) a checkout date. `kind`
+(`visit` / `stay`) is still written for compatibility but is derived from the
+depth.
 
 Personal facts/state are:
 
 - rating;
 - memory (the product-facing replacement for legacy “review”);
-- visit-depth assessment (`level` compatibility concept);
 - manual ordering within one date.
 
 ## Intentional no-clock-time rule
@@ -112,7 +127,7 @@ Hard-deleting a Trip does not delete or rewrite historical Visits. Their old `tr
 | --- | --- |
 | `rating` | Personal `Visit` contribution `rating`; never global Place data. |
 | `review` | Renamed “memory” and stored in the personal Visit contribution. |
-| `level` | Treated as a subjective visit-depth assessment and stored as personal contribution `level`; runtime map compatibility may project the current User's value without writing it to Place. |
+| `level` | A **shared** Visit fact ("造訪深度") on `visits/{visitId}`, and the sole trigger for a stay (住宿). The runtime projects the latest Visit's depth as a Place-level fallback without writing it to Place. Legacy per-person contribution `level` values are no longer written or read. |
 | `ord` / embedded `visit.order` | Replaced by the current User's date-specific day-order document. |
 | `status` / wishlist | Not copied or read. Visible Visits are product truth; Wishlist remains absent. |
 | `visits`, `visitedOn` | Not copied to Place. Every occurrence is `visits/{visitId}`. |

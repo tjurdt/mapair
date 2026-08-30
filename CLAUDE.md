@@ -15,14 +15,18 @@ Read `AGENTS.md` before substantial work. Its repository safety rules are mandat
 
 ## Architecture
 
-Before multi-user work, read:
+The client runs the **No-Space** architecture (top-level `users` / `visits` /
+`places` / `trips` / contributions / day orders). Before substantial work, read:
 
-- `docs/MULTI_USER_DESIGN.md`
-- `docs/MULTI_USER_MIGRATION_PLAN.md`
-- `docs/DATA_MODEL.md`
-- `docs/CURRENT_ARCHITECTURE.md`
+- `docs/NO_SPACE_CORE.md` — domain model, Firestore paths, data contract
+- `docs/CURRENT_ARCHITECTURE.md` — how the running client is built
+- `docs/DATA_MODEL.md` — projected shape + legacy read-compatibility rules
 
-Do not assume current legacy behavior represents the target architecture.
+The `spaces/{spaceId}` multi-user design was abandoned; its docs are in
+`docs/archive/` and its modules (`src/spaces.js`, `src/space-membership.js`) are
+deleted. Do not reintroduce that model or assume legacy `spaces/us` data
+represents the target. Legacy read-compat (`visitedOn`, `who`/`whoMode`,
+dormant `status:"wishlist"`) must be preserved until the migration removes it.
 
 ## Validation
 

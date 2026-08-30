@@ -10,12 +10,13 @@ service cloud.firestore {
     function notDeleting(data) { return !('deleting' in data) || data.deleting != true; }
     function validVisit(data) {
       return data.keys().hasOnly([
-          'placeId','date','category','participantUserIds','tripId','kind','endDate','createdBy',
+          'placeId','date','category','participantUserIds','tripId','level','kind','endDate','createdBy',
           'createdAt','updatedAt','deleting','deletingAt','sourceSpace','sourcePlaceId','sourceVisitKey'
         ])
         && data.placeId is string && data.placeId.size() > 0
         && dateOnly(data.date)
         && data.participantUserIds is list && data.participantUserIds.size() > 0
+        && (!('level' in data) || data.level in ['經過','接地','旅遊','住宿','居住'])
         && data.kind in ['visit','stay']
         && (data.kind == 'visit' || (dateOnly(data.endDate) && data.endDate > data.date));
     }

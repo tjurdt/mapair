@@ -17,7 +17,7 @@ Mapair is a shared geographic memory and travel-history application. Before chan
 - Prefer small, reversible changes with focused validation.
 - Once build, test, lint, or type-check systems exist, run all relevant checks before finishing.
 
-See `docs/PRODUCT.md`, `docs/CURRENT_ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `docs/MIGRATION_PLAN.md` for detailed context.
+See `docs/NO_SPACE_CORE.md` (architecture, Firestore paths, data contract), `docs/CURRENT_ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `docs/PRODUCT.md` for detailed context. `docs/MIGRATION_PLAN.md` (Vite/ESM, partially done) and `docs/archive/` (the abandoned `spaces/{spaceId}` design) are background only.
 
 ## Repository safety
 

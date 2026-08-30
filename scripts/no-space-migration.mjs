@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isValidUidArray, isUsableUid, resolveVisitParticipants } from "../src/participants.js";
 import { externalPlaceDocumentId } from "../src/no-space/places.js";
+import { normalizeLevel } from "../src/no-space/schema.js";
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK_FIELDS = new Set(["time", "startTime", "endTime", "arrivalTime", "departureTime"]);
@@ -201,7 +202,13 @@ export function convertLegacySpace({
       const id=deterministicVisitId(sourceSpace,placeId,legacyVisitKey,occurrence.index);
       const legacyCreator=cleanString(visit.createdBy)||cleanString(place.createdBy);
       const createdBy=participantUserIds.includes(legacyCreator) ? legacyCreator : [...participantUserIds].sort()[0];
-      const kind=visit.kind === "stay" ? "stay" : "visit";
+      const wasStay=visit.kind === "stay";
+      // Depth ("造訪深度") is now a shared Visit fact and drives stay-ness. Keep
+      // legacy stays as "住宿"; carry a legacy depth otherwise, but never turn a
+      // non-stay into a stay.
+      const rawLevel=normalizeLevel(cleanString(visit.level) || cleanString(place.level), "旅遊");
+      const level=wasStay ? "住宿" : (rawLevel === "住宿" ? "旅遊" : rawLevel);
+      const kind=level === "住宿" ? "stay" : "visit";
       const endDate=kind === "stay" ? validDate(visit.endDate) : "";
       if (kind === "stay" && (!endDate || endDate <= date)){
         blockers.push({code:"invalid-stay",placeId,index:occurrence.index,message:`Stay at ${placeId} needs a checkout date after ${date}.`});
@@ -211,7 +218,7 @@ export function convertLegacySpace({
       if(legacyTripId&&!tripIdMap[legacyTripId]) tripIdMap[legacyTripId]=legacyTripDocumentId(sourceSpace,legacyTripId);
       const converted={
         id, sourceSpace, sourcePlaceId:placeId, sourceVisitKey:legacyVisitKey,
-        placeId:targetPlaceId,date,kind,endDate,
+        placeId:targetPlaceId,date,level,kind,endDate,
         category:cleanString(visit.category)||(Array.isArray(place.categories)?cleanString(place.categories[0]):""),
         participantUserIds,
         tripId:legacyTripId?tripIdMap[legacyTripId]:null,

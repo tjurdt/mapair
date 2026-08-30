@@ -1,8 +1,13 @@
 # Multi-User Product and Data Design
 
+> **ARCHIVED — abandoned.** This `spaces/{spaceId}` multi-user design was
+> superseded by the No-Space architecture ([../NO_SPACE_CORE.md](../NO_SPACE_CORE.md)).
+> The modules it produced (`src/spaces.js`, `src/space-membership.js`) have been
+> deleted. Kept for historical reference only. See [README.md](README.md).
+
 ## Status and scope
 
-This document proposes Mapair's target multi-user product, data, and permission model. It does not describe the current implementation and does not authorize a production migration. The current schema remains documented in [DATA_MODEL.md](DATA_MODEL.md), and the reversible path from that schema is defined in [MULTI_USER_MIGRATION_PLAN.md](MULTI_USER_MIGRATION_PLAN.md).
+This document proposes Mapair's target multi-user product, data, and permission model. It does not describe the current implementation and does not authorize a production migration. The current schema remains documented in [DATA_MODEL.md](../DATA_MODEL.md), and the reversible path from that schema is defined in [MULTI_USER_MIGRATION_PLAN.md](MULTI_USER_MIGRATION_PLAN.md).
 
 The design keeps the existing Place, embedded Visit, and Trip relationships. It introduces Users, Spaces, Memberships, invitations, and friendships without moving the historical data already under `spaces/us`. It does not introduce a global Place database, a Visit subcollection, mentions, additional roles, production rule changes, or a separate storage architecture for personal maps.
 

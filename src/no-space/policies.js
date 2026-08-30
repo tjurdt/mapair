@@ -4,11 +4,21 @@ function includesUser(record, uid){
 
 export function canViewVisit(uid, visit){ return includesUser(visit, uid); }
 export function canEditVisitSharedFacts(uid, visit){ return includesUser(visit, uid); }
-export function canDeleteVisit(uid, visit){ return !!uid && visit?.createdBy === uid; }
+// The stored creator may delete. A record with no stored creator (older data
+// that predates `createdBy`) has no creator to protect, so any participant may.
+export function canDeleteVisit(uid, visit){
+  if (!uid) return false;
+  const creator = typeof visit?.createdBy === "string" ? visit.createdBy.trim() : "";
+  return creator ? creator === uid : includesUser(visit, uid);
+}
 
 export function canViewTrip(uid, trip){ return includesUser(trip, uid); }
 export function canEditTripSharedFacts(uid, trip){ return includesUser(trip, uid); }
-export function canDeleteTrip(uid, trip){ return !!uid && trip?.createdBy === uid; }
+export function canDeleteTrip(uid, trip){
+  if (!uid) return false;
+  const creator = typeof trip?.createdBy === "string" ? trip.createdBy.trim() : "";
+  return creator ? creator === uid : includesUser(trip, uid);
+}
 
 export function canEditContribution(uid, contributionUid){
   return !!uid && uid === contributionUid;
