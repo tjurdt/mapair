@@ -380,7 +380,6 @@ for (const path of [
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const repositorySource=await readFile(new URL("../src/no-space/repository.js",import.meta.url),"utf8");
 assert.equal(/type=["']time["']/.test(mainSource), false);
-assert.match(mainSource, /isNoSpace\(\) \? "我的足跡" : "我們去過的地方"/);
 assert.match(mainSource,/if \(filter\.tripId === "daily"\) return !v\.tripId/,"dangling Trip references are not mislabeled as Daily");
 assert.match(mainSource,/已刪除旅程/,"dangling Trip references need an explicit label");
 for (const [start,end] of [

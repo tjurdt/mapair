@@ -107,7 +107,7 @@ assert.equal(
 
 const mainSource=await readFile(new URL("../src/main.js",import.meta.url),"utf8");
 const mapColorSource=await readFile(new URL("../src/map-color-scales.js",import.meta.url),"utf8");
-const settingsBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceSettings"),mainSource.indexOf("function noSpaceSessionIsCurrent"));
+const settingsBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceSettings"),mainSource.indexOf("function runtimeSessionIsCurrent"));
 for(const text of ["地圖上色","上色依據","透明度"]){
   assert.match(settingsBlock,new RegExp(text),`No-Space settings contain ${text}`);
 }
@@ -119,7 +119,7 @@ assert.match(settingsBlock,/metric\.onchange\s*=\s*event\s*=>\s*setMapAreaMetric
 assert.match(mainSource,/function setMapAreaMetric\(metric\)\s*{\s*choroMetric=metric;\s*refreshMapSurfaces\(\);\s*}/,"changing the metric refreshes every active map surface");
 assert.match(mainSource,/choroMetric==="categoryMode"/,"administrative and proximity rendering support category mode");
 assert.match(mainSource,/choroMetric==="visitCount"/,"administrative and proximity rendering support Visit count");
-assert.match(mainSource,/isNoSpace\(\) \? \(Array\.isArray\(place\?\.visits\)/,"No-Space area metrics read embedded projected Visits directly");
+assert.match(mainSource,/function areaVisitsForPlace\(place\)\{\s*return Array\.isArray\(place\?\.visits\) \? place\.visits : \[\];/,"area metrics read embedded projected Visits directly");
 assert.doesNotMatch(mapColorSource,/\b(?:clockTime|visitTime|timeOfDay)\b/,"date-order coloring introduces no clock-time field");
 
 console.log("visit area metric assertions passed");
