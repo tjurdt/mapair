@@ -29,8 +29,11 @@ The recurring regression sources, all in `main.js`:
   (`markerColor`, `markerColorForVisit`, `markerColorForOccurrence`,
   `effectiveMarkerColor`, `dateOccurrenceColor`, `representativeDateOccurrence`,
   `restyleProximityLayer`, `areaMetricLegendBody`).
-- **Filter predicates** — `passFilter`, `visitPassFilter`,
-  `areaVisitPassFilter`, `mapAreaPlacePassFilter`.
+- **Filter predicates** — now in `src/domain/filter.js` (`visitPasses`,
+  `placePasses`, and the `*Pass` primitives). `visitPassFilter` / `passFilter`
+  / `areaVisitPassFilter` / `visitMatches*` / `placeStaticFilter` in `main.js`
+  are thin bindings to the live `filter` — change the rule in the module, not
+  in a binding.
 - **Occurrence build / sort / stay expansion** — the shape, comparator, and
   stay-anchor rule are now in `src/domain/occurrences.js` (use `occurrence()`,
   `compareOccurrences` / `sortOccurrences`, `stayAnchorsOnDate` — never rebuild

@@ -59,9 +59,14 @@ modules. Each sub-step is its own PR, guarded by the Phase 0 suite.
      `getFilteredVisitOccurrences` / `fullDayOrdinaryOccurrences` /
      `representativeDateOccurrence` stop repeating the loop. Needs `filter.js`
      first so the predicates are plain values, not closures over `filter`.
-2. `src/domain/filter.js` — one `visitPasses()` / `placePasses()` pair.
-   Replaces `passFilter`, `visitPassFilter`, `areaVisitPassFilter`,
-   `mapAreaPlacePassFilter`.
+2. `src/domain/filter.js` **(done).** `regionsPass` / `participantPass` /
+   `tripPass` / `categoryPass` / `dateRangePass` primitives, plus `visitPasses`
+   and `placePasses` (with `hasActiveVisitConstraint`). `visitPassFilter`,
+   `passFilter`, `areaVisitPassFilter`, and the standalone `visitMatches*` /
+   `placeStaticFilter` helpers in `main.js` are now thin bindings of these to
+   the live `filter` state; `visitIntersects` is gone. The list vs map-area
+   category-resolution difference is preserved via an injected `category`
+   reader.
 3. `src/domain/marker-color.js` — one `resolveColor({ scope, place, visit,
    occurrence, mode, palette })`. Replaces `markerColor`,
    `markerColorForVisit`, `markerColorForOccurrence`, `effectiveMarkerColor`,

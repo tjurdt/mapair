@@ -54,3 +54,16 @@ test("single-day sequence numbered markers render without error", async ({ page 
 
   expectNoPageErrors(page);
 });
+
+test("county choropleth runs the area-filter path without error", async ({ page }) => {
+  await signIn(page);
+  await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
+
+  await page.click('#mapctl button[data-l="county"]');
+  await expect(page.locator('#mapctl button[data-l="county"]')).toHaveClass(/on/);
+  // The legend's 行政區 section only appears once renderAdministrativeLayer has
+  // fetched the GeoJSON and run regionPlaces / visitAreaMetrics (the area
+  // filter path).
+  await expect(page.locator("#maplegend")).toContainText("行政區");
+  expectNoPageErrors(page);
+});

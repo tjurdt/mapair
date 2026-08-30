@@ -423,8 +423,9 @@ for (const path of [
 /* UI contract: the No-Space editor must not render a clock-time input. */
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const repositorySource=await readFile(new URL("../src/no-space/repository.js",import.meta.url),"utf8");
+const filterSource=await readFile(new URL("../src/domain/filter.js",import.meta.url),"utf8");
 assert.equal(/type=["']time["']/.test(mainSource), false);
-assert.match(mainSource,/if \(filter\.tripId === "daily"\) return !v\.tripId/,"dangling Trip references are not mislabeled as Daily");
+assert.match(filterSource,/if \(tripId === "daily"\) return !visitTripId/,"dangling Trip references are not mislabeled as Daily (a real tripId, even a deleted one, is not 'daily')");
 assert.match(mainSource,/已刪除旅程/,"dangling Trip references need an explicit label");
 for (const [start,end] of [
   ["function openNoSpaceVisitEditor", "function openEditor"],
