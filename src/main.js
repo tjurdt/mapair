@@ -136,17 +136,19 @@ const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵",
   "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
 
 /* 「做什麼」系統預設選項(name -> 預設顏色)。使用者可在設定勾選常用項目與改色。
-   「其他」為必備的萬用選項。 */
+   「其他」永遠可選(不可取消),選「其他」時會出現自訂敘述框。 */
 const CATEGORY_PRESETS = [
   ["餐飲","#d98b3f"],["咖啡","#a9724a"],["購物","#b25b6b"],["娛樂","#8f6bb2"],
-  ["藝文","#6b6bb2"],["景點","#3f7d78"],["自然","#4f9d5f"],["戶外","#7a9c3f"],
+  ["文化","#6b6bb2"],["景點","#3f7d78"],["自然","#4f9d5f"],["戶外","#7a9c3f"],
   ["住宿","#b2506b"],["交通","#5f7fb2"],["教育","#3f6bb2"],["醫療","#c2513f"],
   ["宗教","#b2953f"],["運動","#5fa38a"],["工作","#6b8296"],["社交","#c2603f"],
-  ["生活服務","#7a7a7a"],["住家","#5f8a6b"],["慶祝","#b23f7a"],["其他","#9aa5ad"]
+  ["生活","#7a7a7a"],["住家","#5f8a6b"],["慶祝","#b23f7a"],["其他","#9aa5ad"]
 ];
 const CATEGORY_PRESET_NAMES = CATEGORY_PRESETS.map(([name])=>name);
 const CATEGORY_PRESET_COLORS = Object.fromEntries(CATEGORY_PRESETS);
 const CATEGORY_DEFAULT_PICKS = ["餐飲","咖啡","購物","娛樂","景點","自然","交通","其他"];
+// 沒有選擇「做什麼」時,標記/範圍的預設顏色。
+const CATEGORY_NONE_COLOR = "#9aa5ad";
 
 function renderSetup(){
   document.getElementById("app").innerHTML = `
@@ -981,11 +983,14 @@ function openNoSpaceSettings(){
   const draftLevelColors = {};
   const catColorValue = name => draftCatColors[name] || catColors[name] || CATEGORY_PRESET_COLORS[name] || "#9aa5ad";
   const levelColorValue = level => draftLevelColors[level] || levelColors[level] || LEVEL_COLORS[level];
-  const categoryRows = CATEGORY_PRESETS.map(([name])=>`
-    <label class="srow" style="cursor:pointer">
-      <span><input type="checkbox" class="ns_catpick" data-cat="${esc(name)}" ${draftPicks.has(name)?'checked':''} style="width:16px;height:16px;margin-right:8px;vertical-align:middle">${esc(name)}</span>
+  const categoryRows = CATEGORY_PRESETS.map(([name])=>{
+    const locked = name === "其他";
+    return `
+    <label class="srow" style="cursor:${locked?'default':'pointer'}">
+      <span><input type="checkbox" class="ns_catpick" data-cat="${esc(name)}" ${locked||draftPicks.has(name)?'checked':''} ${locked?'disabled':''} style="width:16px;height:16px;margin-right:8px;vertical-align:middle">${esc(name)}${locked?'<span style="color:var(--ink-soft);font-size:12px"> · 一律顯示</span>':''}</span>
       <input type="color" class="ns_catcolor" data-cat="${esc(name)}" value="${catColorValue(name)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px">
-    </label>`).join("");
+    </label>`;
+  }).join("");
   const levelRows = LEVEL_ORDER.slice().reverse().map(level=>`
     <div class="colitem"><span>${esc(level)}</span>
       <input type="color" class="ns_levelcolor" data-level="${esc(level)}" value="${levelColorValue(level)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px"></div>`).join("");
@@ -1026,7 +1031,7 @@ function openNoSpaceSettings(){
   document.querySelectorAll(".ns_levelcolor").forEach(input => input.oninput = () => { draftLevelColors[input.dataset.level] = input.value; });
   document.getElementById("ns_done").onclick = async() => {
     const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
-    const nextPicks = CATEGORY_PRESET_NAMES.filter(name => draftPicks.has(name));
+    const nextPicks = CATEGORY_PRESET_NAMES.filter(name => name === "其他" || draftPicks.has(name));
     const nextCatColors = {};
     for (const name of CATEGORY_PRESET_NAMES){
       const value = draftCatColors[name] || catColors[name];
@@ -1351,7 +1356,7 @@ function representativeDateOccurrence(p,mode){
   return mode==="dateFirst"?arr[0]:arr[arr.length-1];
 }
 function markerColor(p){
-  if (markerMode === "cat"){ const c=(p.categories||[])[0]; if(c) return catColor(c); }
+  if (markerMode === "cat"){ const c=(p.categories||[])[0]; return c ? catColor(c) : CATEGORY_NONE_COLOR; }
   else if (markerMode === "level" && p.level) return levelColors[p.level];
   else if (markerMode === "who") return whoColor(p);
   else if (markerMode === "trip" && p.tripId && trips[p.tripId]?.color) return trips[p.tripId].color;
@@ -1360,7 +1365,7 @@ function markerColor(p){
 }
 function markerColorForVisit(p,v){
   if (markerMode === "cat"){
-    const c=visitCategory(p,v); if(c) return catColor(c);
+    const c=visitCategory(p,v); return c ? catColor(c) : CATEGORY_NONE_COLOR;
   }
   const personal=v?._contributions?.[user?.uid]||{};
   if (markerMode === "level" && v?.level) return levelColors[v.level] || markerColor(p);
@@ -2362,6 +2367,16 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     const average=averageSubmittedRating(Object.values(scopedContributions()));
     return `平均評分：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
   };
+  // 「做什麼」下拉：使用者勾選的預設 + 這筆造訪原本的預設值，「其他」永遠在最後，
+  // 選「其他」時打開自訂敘述框。非預設字串一律歸「其他」並帶入敘述框。
+  const currentCategory=rawVisit?.category||"";
+  const categoryIsPreset=CATEGORY_PRESET_NAMES.includes(currentCategory)&&currentCategory!=="其他";
+  const categoryOptionNames=[...new Set([
+    ...CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)&&name!=="其他"),
+    ...(categoryIsPreset?[currentCategory]:[])
+  ])];
+  const categorySelected=categoryIsPreset?currentCategory:(currentCategory?"其他":"");
+  const categoryCustomText=(!categoryIsPreset&&currentCategory&&currentCategory!=="其他")?currentCategory:"";
   const legacyImportHtml=legacyImport?`
     <div class="editor-section legacy-record">
       <div class="editor-section-head"><div><div class="editor-section-title">舊版共同記錄</div><div class="editor-section-note">從舊版保留下來，僅供閱讀。</div></div></div>
@@ -2382,12 +2397,11 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
         <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
         <div class="field" style="flex:1"><label>做什麼</label>
           <select id="ns_category">
-            <option value="">未指定</option>
-            ${CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)).map(name=>`<option value="${esc(name)}" ${name===(rawVisit?.category||"")?'selected':''}>${esc(name)}</option>`).join("")}
-            ${(rawVisit?.category||"") && !CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)).includes(rawVisit.category)?`<option value="${esc(rawVisit.category)}" selected>${esc(rawVisit.category)}</option>`:""}
-            <option value="__custom__">＋ 自訂…</option>
+            <option value="" ${categorySelected===""?'selected':''}>未指定</option>
+            ${categoryOptionNames.map(name=>`<option value="${esc(name)}" ${name===categorySelected?'selected':''}>${esc(name)}</option>`).join("")}
+            <option value="其他" ${categorySelected==="其他"?'selected':''}>其他</option>
           </select>
-          <input id="ns_category_custom" placeholder="自訂活動" style="display:none;margin-top:6px"></div>
+          <input id="ns_category_custom" placeholder="描述這個地點的活動" value="${esc(categoryCustomText)}" style="display:${categorySelected==="其他"?'block':'none'};margin-top:6px"></div>
       </div>
       <div class="field"><label>同行者</label><div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
       <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
@@ -2412,9 +2426,9 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   g("ns_level").onchange=refreshStay;
   const categoryCustom=g("ns_category_custom");
   g("ns_category").onchange=()=>{
-    const custom=g("ns_category").value==="__custom__";
-    categoryCustom.style.display=custom?"block":"none";
-    if(custom) categoryCustom.focus();
+    const isOther=g("ns_category").value==="其他";
+    categoryCustom.style.display=isOther?"block":"none";
+    if(isOther) categoryCustom.focus();
   };
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
   const refreshContributionVisibility=()=>{
@@ -2454,7 +2468,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     const shared={
       placeId:selectedPlaceId,
       date,
-      category:(g("ns_category").value==="__custom__"?g("ns_category_custom").value:g("ns_category").value).trim(),
+      category:g("ns_category").value==="其他"?(g("ns_category_custom").value.trim()||"其他"):g("ns_category").value,
       participantUserIds:retainCurrentParticipant(selected,editorUid),
       tripId:g("ns_trip").value||null,
       level,
