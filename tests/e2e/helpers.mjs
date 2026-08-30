@@ -155,6 +155,15 @@ export function expectNoPageErrors(page) {
   expect(errors.map((error) => error.message).join("\n")).toBe("");
 }
 
+// The `background` of the most recently rendered normal marker whose title
+// contains `titleIncludes` (markers accumulate in the stub across re-renders).
+export function markerBackgroundByTitle(page, titleIncludes) {
+  return page.evaluate((needle) => {
+    const matches = window.__mapairTestMarkers.filter((m) => (m.title || "").includes(needle));
+    return matches.at(-1)?.content?.opts?.background ?? null;
+  }, titleIncludes);
+}
+
 // Constrain the visited list to an explicit date window, independent of what
 // "this month" happens to be when the suite runs. Selecting the custom scope
 // also reveals #filterPanel, which holds the date inputs and category chips.

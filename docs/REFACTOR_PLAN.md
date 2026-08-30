@@ -67,11 +67,21 @@ modules. Each sub-step is its own PR, guarded by the Phase 0 suite.
    the live `filter` state; `visitIntersects` is gone. The list vs map-area
    category-resolution difference is preserved via an injected `category`
    reader.
-3. `src/domain/marker-color.js` — one `resolveColor({ scope, place, visit,
-   occurrence, mode, palette })`. Replaces `markerColor`,
-   `markerColorForVisit`, `markerColorForOccurrence`, `effectiveMarkerColor`,
-   `dateOccurrenceColor`, and the colour branches in `restyleProximityLayer`
-   and `areaMetricLegendBody`.
+3. `src/domain/marker-color.js`.
+   - **3a (done).** `resolveMarkerColor(mode, source)` — one mode dispatcher
+     for the Place-level and Visit-level paths. `markerColor` /
+     `markerColorForVisit` in `main.js` are now thin wrappers over it with
+     `placeColorSource` / `visitColorSource` field readers; adding a marker
+     mode is one `case` + one field per source instead of editing two
+     divergent functions.
+   - **3b (pending).** The date-scale colour maths (`dateOccurrenceColor`,
+     `dateBaseColor`, `singleDayOrderColor`, and the stalled unused
+     `orderedVisitDateColor` in `map-color-scales.js`) are three parallel
+     formulas — consolidate into `map-color-scales.js` without changing the
+     rendered output.
+   - **3c (pending).** `markerColorForOccurrence` / `effectiveMarkerColor` and
+     the colour branches in `restyleProximityLayer` / `areaMetricLegendBody`
+     compose the above; fold once 3a/3b settle.
 
 **Exit criteria per sub-step:** new module has tests; `main.js` calls it and
 holds no second copy of that logic; Phase 0 suite and `npm test` green.

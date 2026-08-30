@@ -25,10 +25,14 @@ Paste the result. A red or skipped suite is not "done".
 
 The recurring regression sources, all in `main.js`:
 
-- **Marker / area colour** — resolved in ~8 functions
-  (`markerColor`, `markerColorForVisit`, `markerColorForOccurrence`,
-  `effectiveMarkerColor`, `dateOccurrenceColor`, `representativeDateOccurrence`,
-  `restyleProximityLayer`, `areaMetricLegendBody`).
+- **Marker / area colour** — the mode dispatch is now
+  `resolveMarkerColor(mode, source)` in `src/domain/marker-color.js`
+  (`markerColor` / `markerColorForVisit` are thin wrappers — add a mode there,
+  not in `main.js`). Still parallel and drift-prone: the date-scale maths
+  (`dateOccurrenceColor`, `dateBaseColor`, `singleDayOrderColor`,
+  `orderedVisitDateColor`) and the composers `markerColorForOccurrence` /
+  `effectiveMarkerColor` / `restyleProximityLayer` / `areaMetricLegendBody`
+  (Plan steps 3b, 3c).
 - **Filter predicates** — now in `src/domain/filter.js` (`visitPasses`,
   `placePasses`, and the `*Pass` primitives). `visitPassFilter` / `passFilter`
   / `areaVisitPassFilter` / `visitMatches*` / `placeStaticFilter` in `main.js`
