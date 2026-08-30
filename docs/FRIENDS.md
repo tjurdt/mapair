@@ -171,15 +171,17 @@ else under a user document falls through to the global `deny`. Add:
 
 ```
 match /users/{uid}/friends/{friendUid} {
-  allow read: if signedIn() && request.auth.uid == uid;
+  allow read, delete: if signedIn() && request.auth.uid == uid;
   allow create, update: if signedIn() && request.auth.uid == uid
     && request.resource.data.keys().hasOnly(['nickname','pinned','state','createdAt'])
     && (!('nickname' in request.resource.data) || request.resource.data.nickname is string)
     && (!('pinned' in request.resource.data) || request.resource.data.pinned is bool)
-    && (!('state' in request.resource.data) || request.resource.data.state is string);
-  allow delete: if signedIn() && request.auth.uid == uid;
+    && (!('state' in request.resource.data) || request.resource.data.state in ['linked','pending_out']);
 }
 ```
+
+This block is **implemented** in `firestore.no-space.rules` and awaits the same
+operator deploy as the pending `validVisit` `level` fix.
 
 No change is needed to look a user up by ID: `users/{uid}` already allows
 `get: if signedIn()`.

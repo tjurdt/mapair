@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { externalPlaceDocumentId } from "../src/no-space/places.js";
 
 const projectId="demo-mapair-no-space-rules";
@@ -53,6 +53,19 @@ try{
   await assertFails(setDoc(doc(dbB,"users/test-user-a/dayOrders/2026-08-29"),{visitIds:[]}));
   await assertFails(getDocs(collection(dbA,"users")));
   await assertFails(getDocs(collection(dbA,"places")));
+
+  // Friends address book (users/{uid}/friends/{friendUid}) — owner-only.
+  await assertSucceeds(setDoc(doc(dbA,"users/test-user-a/friends/test-user-b"),{nickname:"阿光",pinned:false,state:"linked",createdAt:new Date()}));
+  await assertSucceeds(getDoc(doc(dbA,"users/test-user-a/friends/test-user-b")));
+  await assertSucceeds(getDocs(collection(dbA,"users/test-user-a/friends")));
+  await assertSucceeds(setDoc(doc(dbA,"users/test-user-a/friends/test-user-b"),{pinned:true},{merge:true}));
+  await assertFails(getDoc(doc(dbB,"users/test-user-a/friends/test-user-b")));
+  await assertFails(getDocs(collection(dbB,"users/test-user-a/friends")));
+  await assertFails(setDoc(doc(dbB,"users/test-user-a/friends/test-user-b"),{nickname:"hax",pinned:false,state:"linked"}));
+  await assertFails(setDoc(doc(dbA,"users/test-user-a/friends/test-user-c"),{nickname:"x",pinned:false,state:"linked",note:"extra"}));
+  await assertFails(setDoc(doc(dbA,"users/test-user-a/friends/test-user-c"),{nickname:"x",pinned:false,state:"banana"}));
+  await assertFails(deleteDoc(doc(dbB,"users/test-user-a/friends/test-user-b")));
+  await assertSucceeds(deleteDoc(doc(dbA,"users/test-user-a/friends/test-user-b")));
   await assertSucceeds(getDoc(doc(dbA,"places/place-1")));
 
   await assertSucceeds(getDoc(doc(dbB,"trips/trip-1")));

@@ -1,6 +1,6 @@
 import { contributionFields } from "./contributions.js";
 import { externalPlaceDocumentId } from "./places.js";
-import { placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
+import { assertDocumentId, placeObjectiveFields, tripSharedFields, visitSharedFields } from "./schema.js";
 import { canDeleteTrip, canDeleteVisit, canEditTripSharedFacts, canEditVisitSharedFacts, canViewVisit } from "./policies.js";
 
 export const noSpacePaths = Object.freeze({
@@ -11,13 +11,14 @@ export const noSpacePaths = Object.freeze({
   defaults:() => "appConfig/defaults",
   legacyImport:(placeId, sourceSpace="us") => `places/${placeId}/legacyImports/space-${sourceSpace}`,
   contribution:(visitId, uid) => `visits/${visitId}/contributions/${uid}`,
-  dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`
+  dayOrder:(uid, date) => `users/${uid}/dayOrders/${date}`,
+  friend:(uid, friendUid) => `users/${uid}/friends/${friendUid}`
 });
 
 export function createNoSpaceRepository({ db, firestore, uid }){
   if (!db || !firestore || !uid) throw new Error("No-Space repository requires db, Firestore helpers, and uid.");
   const {
-    addDoc, collection, doc, getDocs, onSnapshot, query, runTransaction,
+    addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, runTransaction,
     serverTimestamp, setDoc, updateDoc, where, writeBatch
   } = firestore;
   const stamp = () => serverTimestamp();
@@ -184,6 +185,28 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       const userRef = ref(noSpacePaths.user(uid));
       await setDoc(userRef, payload, { merge:true });
       await updateDoc(userRef, payload);
+    },
+    // Per-user friend address book at users/{uid}/friends/{friendUid}. Owned
+    // entirely by the authenticated user; a friend entry only makes a person
+    // selectable and never touches any Visit/Trip. See docs/FRIENDS.md.
+    listenFriends(next, error){ return onSnapshot(col(noSpacePaths.user(uid) + "/friends"), next, error); },
+    addFriend(friendUid){
+      const id = assertDocumentId(friendUid, "friendUid");
+      if (id === uid) throw new Error("You cannot add yourself as a friend.");
+      return setDoc(ref(noSpacePaths.friend(uid, id)),
+        { nickname:"", pinned:false, state:"linked", createdAt:stamp() }, { merge:true });
+    },
+    removeFriend(friendUid){
+      return deleteDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))));
+    },
+    setFriendNickname(friendUid, nickname){
+      const value = typeof nickname === "string" ? nickname.trim().slice(0, 60) : "";
+      return setDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))),
+        { nickname:value }, { merge:true });
+    },
+    setFriendPinned(friendUid, pinned){
+      return setDoc(ref(noSpacePaths.friend(uid, assertDocumentId(friendUid, "friendUid"))),
+        { pinned: pinned === true }, { merge:true });
     }
   };
 }

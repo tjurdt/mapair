@@ -14,6 +14,12 @@ import {
   resolveVisitParticipants
 } from "./participants.js";
 import {
+  mergeFriendIdsIntoDirectory,
+  normalizeFriendDoc,
+  orderMembersForPicker,
+  validateFriendInput
+} from "./friends.js";
+import {
   MAP_SURFACE_Z_INDEX,
   hasFinitePlaceCoordinates,
   isVisitReorderAvailable,
@@ -167,7 +173,7 @@ let runtimeSession = {};
 let searchReqSeq = 0;
 let noSpaceRepository = null;
 const noSpaceState = {
-  visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{},
+  visits:{}, places:{}, trips:{}, contributions:{}, dayOrders:{}, profiles:{}, legacyImports:{}, defaults:{}, friends:{},
   placeUnsubs:new Map(), legacyImportUnsubs:new Map(), contributionUnsubs:new Map(), profileUnsubs:new Map()
 };
 let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionToken, PlaceClass;
@@ -202,6 +208,12 @@ let members = {};
 const runtimeUnsubscribes = new Map();
 function memberById(uid){ return participantMembers.find(member => member.userId === uid) || null; }
 function activeParticipantMembers(){ return participantMembers.filter(member => member.valid === true && member.status === "active"); }
+// Friend address book (users/{me}/friends). A friend only makes a person
+// selectable; `pending_out` entries (Batch 3) are held out of the pickers.
+function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
+function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
+function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
+function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[] };
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
@@ -258,11 +270,9 @@ function activeMemberIds(){ return activeParticipantMembers().map(m => m.userId)
 // Active Members ordered for display: the authenticated User first, then the
 // rest by display name (Phase 2 §9).
 function orderedActiveMembers(){
-  const selfUid = user?.uid || "";
-  return activeParticipantMembers().slice().sort((a,b) => {
-    if (a.userId === selfUid) return -1;
-    if (b.userId === selfUid) return 1;
-    return String(a.displayName||"").localeCompare(String(b.displayName||""));
+  return orderMembersForPicker(activeParticipantMembers(), {
+    selfUid:user?.uid || "",
+    pinnedUids:friendPinnedUids()
   });
 }
 function orderedActiveMemberIds(){ return orderedActiveMembers().map(m => m.userId); }
@@ -271,9 +281,15 @@ function orderedActiveMemberIds(){ return orderedActiveMembers().map(m => m.user
 //  - active Member           -> display name
 //  - known removed Member    -> "真實名稱（已離開）"
 //  - unknown historical UID  -> "未知成員"
+//  A private friend nickname, when set, wins over the profile name for
+//  everyone except the authenticated User.
 function participantName(uid){
   const member = memberById(uid);
   const isSelf = !!uid && !!user && uid === user.uid;
+  if (!isSelf){
+    const friend = friendEntryOf(uid);
+    if (friend && friend.nickname) return friend.nickname;
+  }
   let name = "";
   if (member && member.displayName && member.displayName !== "Member") name = member.displayName;
   else if (isSelf) name = members[uid] || "";
@@ -1012,6 +1028,14 @@ function openNoSpaceSettings(){
     <div class="colgrid">${levelRows}</div>
     <div class="sethead">個人資料</div>
     <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
+    <div class="sethead">好友</div>
+    <div class="admin" style="margin-bottom:6px">輸入對方的使用者 ID，就能在「同行者」選單選到他。<br>你的 ID：<code id="ns_my_uid" style="user-select:all;word-break:break-all">${esc(user.uid)}</code></div>
+    <div class="row" style="gap:6px">
+      <input id="ns_friend_uid" placeholder="貼上好友的使用者 ID" style="flex:1;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px">
+      <button class="btn grey" id="ns_friend_add">新增</button>
+    </div>
+    <div id="ns_friend_err" class="admin" style="color:#b25b6b;margin-top:4px"></div>
+    <div id="ns_friends"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
   `);
   const mode = document.getElementById("ns_markermode");
@@ -1029,6 +1053,58 @@ function openNoSpaceSettings(){
   });
   document.querySelectorAll(".ns_catcolor").forEach(input => input.oninput = () => { draftCatColors[input.dataset.cat] = input.value; });
   document.querySelectorAll(".ns_levelcolor").forEach(input => input.oninput = () => { draftLevelColors[input.dataset.level] = input.value; });
+
+  /* ---- 好友 ---- */
+  const friendErr = document.getElementById("ns_friend_err");
+  const friendBox = document.getElementById("ns_friends");
+  const FRIEND_INPUT_ERRORS = { empty:"請先輸入使用者 ID", invalid:"這個 ID 格式不正確", self:"這是你自己的 ID", duplicate:"這位好友已經在清單裡了" };
+  async function friendWrite(op, optimistic, friendUid){
+    const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
+    if (!repo || !runtimeSessionIsCurrent(session, uid)) return;
+    if (optimistic === null) delete noSpaceState.friends[friendUid];
+    else if (noSpaceState.friends[friendUid]) noSpaceState.friends[friendUid] = { ...noSpaceState.friends[friendUid], ...optimistic };
+    renderFriends();
+    try { await op(repo); friendErr.textContent = ""; }
+    catch(err){ friendErr.textContent = "無法儲存好友變更：" + (err?.message || err); }
+    refreshNoSpaceProjection();
+  }
+  function renderFriends(){
+    const entries = friendEntries().slice().sort((a,b) =>
+      Number(b.pinned) - Number(a.pinned) || participantName(a.friendUid).localeCompare(participantName(b.friendUid)));
+    friendBox.innerHTML = entries.length ? entries.map(f => {
+      const profileName = noSpaceState.profiles[f.friendUid]?.displayName || "";
+      return `<div class="srow" style="align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="flex:1 1 120px;min-width:0">
+          <strong style="word-break:break-all">${esc(profileName || "（尚未載入名稱）")}</strong>
+          <span class="admin" style="display:block;word-break:break-all">${esc(f.friendUid)}</span>
+        </span>
+        <input class="ns_friend_nick" data-uid="${esc(f.friendUid)}" value="${esc(f.nickname)}" placeholder="綽號" style="flex:0 0 88px;padding:6px;border:1px solid var(--line);border-radius:6px">
+        <label style="flex:0 0 auto;font-size:12px;color:var(--ink-soft)"><input type="checkbox" class="ns_friend_pin" data-uid="${esc(f.friendUid)}" ${f.pinned?'checked':''} style="vertical-align:middle"> 置頂</label>
+        <button class="ns_friend_del" data-uid="${esc(f.friendUid)}" style="flex:0 0 auto;background:none;border:0;color:#b25b6b;cursor:pointer">移除</button>
+      </div>`;
+    }).join("") : `<div class="admin">還沒有好友。</div>`;
+    friendBox.querySelectorAll(".ns_friend_nick").forEach(input => input.onchange = () =>
+      friendWrite(repo => repo.setFriendNickname(input.dataset.uid, input.value), { nickname:input.value.trim().slice(0,60) }, input.dataset.uid));
+    friendBox.querySelectorAll(".ns_friend_pin").forEach(box => box.onchange = () =>
+      friendWrite(repo => repo.setFriendPinned(box.dataset.uid, box.checked), { pinned:box.checked }, box.dataset.uid));
+    friendBox.querySelectorAll(".ns_friend_del").forEach(btn => btn.onclick = () =>
+      friendWrite(repo => repo.removeFriend(btn.dataset.uid), null, btn.dataset.uid));
+  }
+  document.getElementById("ns_friend_add").onclick = async () => {
+    const input = document.getElementById("ns_friend_uid");
+    const check = validateFriendInput(input.value, { selfUid:user.uid, existingUids:friendEntries().map(f => f.friendUid) });
+    if (!check.ok){ friendErr.textContent = FRIEND_INPUT_ERRORS[check.reason] || "無法新增"; return; }
+    input.value = "";
+    noSpaceState.friends[check.friendUid] = { friendUid:check.friendUid, nickname:"", pinned:false, state:"linked" };
+    renderFriends();
+    const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
+    if (!repo || !runtimeSessionIsCurrent(session, uid)) return;
+    try { await repo.addFriend(check.friendUid); friendErr.textContent = ""; }
+    catch(err){ friendErr.textContent = "無法新增好友：" + (err?.message || err); }
+    refreshNoSpaceProjection();
+  };
+  renderFriends();
+
   document.getElementById("ns_done").onclick = async() => {
     const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
     const nextPicks = CATEGORY_PRESET_NAMES.filter(name => name === "其他" || draftPicks.has(name));
@@ -1069,6 +1145,7 @@ function resetNoSpaceState(){
   noSpaceState.profiles = {};
   noSpaceState.legacyImports = {};
   noSpaceState.defaults = {};
+  noSpaceState.friends = {};
   noSpaceRepository = null;
 }
 
@@ -1110,6 +1187,17 @@ function subscribeNoSpace(){
     noSpaceState.defaults = snapshot.exists() ? snapshot.data() : {};
     refreshNoSpaceProjection();
   }, error("display defaults")));
+  runtimeUnsubscribes.set("friends", noSpaceRepository.listenFriends(snapshot => {
+    if (!current()) return;
+    const friends = {};
+    snapshot.forEach(item => {
+      const normalized = normalizeFriendDoc(item.id, item.data());
+      if (normalized) friends[normalized.friendUid] = normalized;
+    });
+    noSpaceState.friends = friends;
+    syncNoSpaceReferenceListeners(session, uid);
+    refreshNoSpaceProjection();
+  }, error("friends")));
   syncNoSpaceReferenceListeners(session, uid);
 }
 
@@ -1131,7 +1219,8 @@ function syncNoSpaceReferenceListeners(session, uid){
   const tripsList = Object.values(noSpaceState.trips);
   const placeIds = new Set(visitsList.map(visit => visit.placeId).filter(Boolean));
   const visitIds = new Set(visitsList.map(visit => visit.id));
-  const profileIds = new Set(knownParticipantUserIds(uid, visitsList, tripsList));
+  const profileIds = new Set(mergeFriendIdsIntoDirectory(
+    knownParticipantUserIds(uid, visitsList, tripsList), friendUserIds()));
   const guard = callback => (...args) => { if (runtimeSessionIsCurrent(session, uid)) callback(...args); };
   const error = area => guard(problem => handleFirestoreError(`No-Space ${area}`, problem));
   const legacyImportError = placeId => guard(problem => {
@@ -1216,14 +1305,15 @@ function applyNoSpaceProjection(){
   spaceCats = [...new Set([...(noSpaceState.defaults.categories || []), ...visitList.map(visit => visit.category)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   catColors = { ...CATEGORY_PRESET_COLORS, ...(noSpaceState.defaults.catColors || {}), ...(ownProfile.categoryColors || {}) };
   levelColors = { ...LEVEL_COLORS, ...(noSpaceState.defaults.levelColors || {}), ...(ownProfile.levelColors || {}) };
-  const profileIds = knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips));
+  const profileIds = mergeFriendIdsIntoDirectory(
+    knownParticipantUserIds(user.uid, visitList, Object.values(noSpaceState.trips)), friendUserIds());
   participantMembers = profileIds.map(uid => ({
     userId:uid,
     role:null,
     status:"active",
     displayName:noSpaceState.profiles[uid]?.displayName || (uid === user.uid ? me() : "Participant"),
     photoURL:noSpaceState.profiles[uid]?.photoURL || "",
-    source:"no-space",
+    source:friendEntryOf(uid) ? "friend" : "no-space",
     valid:true,
     issues:[]
   }));

@@ -95,6 +95,18 @@ service cloud.firestore {
       match /dayOrders/{date} {
         allow read, create, update, delete: if signedIn() && request.auth.uid == uid;
       }
+
+      // Per-user friend address book (docs/FRIENDS.md). Owned entirely by the
+      // user; a friend entry only makes a person selectable and carries no
+      // Visit/Trip authority. Batch 1 uses state "linked" only.
+      match /friends/{friendUid} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['nickname','pinned','state','createdAt'])
+          && (!('nickname' in request.resource.data) || request.resource.data.nickname is string)
+          && (!('pinned' in request.resource.data) || request.resource.data.pinned is bool)
+          && (!('state' in request.resource.data) || request.resource.data.state in ['linked','pending_out']);
+      }
     }
 
     match /places/{placeId} {
