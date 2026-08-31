@@ -94,12 +94,10 @@ one `render()` dispatch, making the `applyFilter()` cascade explicit.
 
 1. **View flags (done).** `state.searchMode` / `lastNewVisitDate` /
    `numberPins` / `regionMulti` / `legendCollapsed`.
-2. `state.tab` (careful — the bare word collides with the `.tab` CSS class in
-   template strings).
-3. `state.dateScope` + `state.pickedMonth` (the `"pickedMonth"` string is also
-   a scope *value* — targeted, not sed).
+2. **`state.tab` (done).** Careful around the `.tab` CSS class.
+3. **`state.dateScope` + `state.pickedMonth` (done).** Bundled with 2.
 4. `state.filter` (the `{ who, tripId, cats, from, to, regions, placeId, q }`
-   object — the big one).
+   object — the big one). Its own PR.
 5. Map presentation (`markerMode`, `choroAlpha`, `choroMetric`, `showPins`,
    `adminLevel`, `proximityEnabled`, `addMode`, `tab`-adjacent).
 6. Then: `setState(patch)` / named actions, folding the `applyFilter()` /
