@@ -105,7 +105,11 @@ module.
 1. **`src/ui/modal.js` (done).** `modal` / `closeModal` / `closeAllModals`,
    plus `currentRuntimeGuard()` in `main.js` replacing the three hand-rolled
    `live()` closures (one snapshot-guard definition, not N).
-2. `src/ui/trip-editor.js` — `openNoSpaceTripEditor` (most self-contained).
+2. **`src/ui/trip-editor.js` (done).** `openNoSpaceTripEditor` is a 12-line
+   wrapper that injects `{ trip, currentUid, memberUids, participantName,
+   repo, isCurrent, onSaved }` into `openTripEditor`. `esc` moved to
+   `src/ui/html.js`; the Trip emoji list moved into the module. `main.js`
+   lost ~68 lines.
 3. `src/ui/settings.js` — `openNoSpaceSettings`.
 4. `src/ui/friends.js` — `openFriendsManager`. **Add its first E2E first**
    (currently zero coverage), then extract.
