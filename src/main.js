@@ -83,6 +83,7 @@ import {
 } from "./domain/filter.js";
 import { resolveMarkerColor } from "./domain/marker-color.js";
 import { defaultNewVisitDate } from "./domain/visit-defaults.js";
+import { modal, closeModal, closeAllModals } from "./ui/modal.js";
 
 /* ============================================================
    1) 設定
@@ -1195,7 +1196,7 @@ let friendsManagerRefresh = null;
 function openFriendsManager(){
   if (!runtimeReady()) return;
   const session = runtimeSession, uid = user.uid;
-  const live = () => noSpaceRepository && runtimeSessionIsCurrent(session, uid);
+  const live = currentRuntimeGuard();
   const myCode0 = noSpaceState.profiles[uid]?.friendCode || "";
   modal(`
     <h2 style="margin-bottom:4px">好友</h2>
@@ -1361,6 +1362,14 @@ function openFriendsManager(){
 
 function runtimeSessionIsCurrent(session, uid){
   return !localFailure && user?.uid === uid && session === runtimeSession;
+}
+// Snapshot the runtime identity now; the returned predicate is false once the
+// auth session, user, or No-Space repository has been swapped (or a LOCAL TEST
+// failure latched). Async editors and deferred handlers guard on it before
+// applying a result. Replaces the hand-rolled `live()` closures.
+function currentRuntimeGuard(){
+  const session = runtimeSession, uid = user?.uid, repo = noSpaceRepository;
+  return () => runtimeSessionIsCurrent(session, uid) && noSpaceRepository === repo;
 }
 
 function resetNoSpaceState(){
@@ -1648,9 +1657,6 @@ function clearSearchSuggestions(){
   const box = document.getElementById("results");
   if (box){ box.style.display = "none"; box.innerHTML = ""; }
   sessionToken = null;
-}
-function closeAllModals(){
-  document.querySelectorAll(".modal-bg").forEach(m => m.remove());
 }
 
 /* ---------- Map markers ---------- */
@@ -2776,7 +2782,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   // 造訪深度 is a shared Visit fact and decides whether the Visit is a stay.
   const initialLevel=LEVEL_ORDER.includes(rawVisit?.level) ? rawVisit.level : (rawVisit?.kind==="stay" ? "住宿" : "旅遊");
   const legacyImport=selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null;
-  const live=()=>runtimeSessionIsCurrent(editorSession,editorUid)&&repo===noSpaceRepository;
+  const live=currentRuntimeGuard();
   const allowNewPlace=creating&&!selectedPlaceId;
   const memberList=orderedActiveMembers();
   const selectablePlaces={...noSpaceState.places};
@@ -3022,7 +3028,7 @@ function openNoSpaceTripEditor(id,onDone){
   if(!repo||!runtimeSessionIsCurrent(session,uid)) return;
   const trip=id?noSpaceState.trips[id]||trips[id]:null;
   let selected=retainCurrentParticipant(trip?.participantUserIds||[uid],uid);
-  const live=()=>repo===noSpaceRepository&&runtimeSessionIsCurrent(session,uid);
+  const live=currentRuntimeGuard();
   modal(`
     <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
     <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
@@ -3102,13 +3108,6 @@ function editTrip(id, onDone){
 /* ============================================================
    Helpers
    ============================================================ */
-function modal(html){
-  const bg = document.createElement("div");
-  bg.className="modal-bg"; bg.innerHTML=`<div class="modal">${html}</div>`;
-  bg.onclick = e => { if(e.target===bg) closeModal(); };
-  document.body.appendChild(bg);
-}
-function closeModal(){ const ms=document.querySelectorAll(".modal-bg"); if(ms.length) ms[ms.length-1].remove(); }
 function me(){ return user.displayName || user.email || "我"; }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
