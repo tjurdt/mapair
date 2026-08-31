@@ -115,13 +115,23 @@ module.
    `onMarkerMode / onShowPins / onAlpha / onMetric / onOpenFriends / onSave`
    callbacks. The panel owns the draft state and the save-diff. New
    `settings.spec.mjs` covers the "做什麼" pick and depth-colour save paths.
-4. `src/ui/friends.js` — `openFriendsManager`. **Add its first E2E first**
-   (currently zero coverage), then extract.
+4. **`src/ui/friends.js` (done).** `friends.spec.mjs` (the invite→accept→link
+   handshake across two browser contexts) went in first, then the extraction.
+   `openFriendsManager` is a wrapper injecting live-state getters
+   (`getFriends` / `getIncomingRaw` return the current `noSpaceState` maps,
+   which their listeners reassign), repo, guard, and the friend-code hooks.
 5. `src/ui/visit-editor.js` — `openNoSpaceVisitEditor` (most coupled; last).
-6. Shell / layout, then CSS out of `index.html` into `src/styles/`.
+6. `src/ui/map-markers.js` / `map-surfaces.js` — `renderMarkers`,
+   `renderAdministrativeLayer`, proximity coverage.
+7. `src/ui/shell.js` (the `renderApp` HTML) then CSS into `src/styles/`.
 
 Extracting each surface surfaces exactly which globals it reads — that
 inventory feeds Phase 2.
+
+**Ratchet.** `tests/main-size.test.mjs` fails CI if `src/main.js` grows past
+its budget. Lower the budget on every extraction PR; raising it needs a stated
+reason. This keeps new code flowing into `src/ui/*` / `src/domain/*` instead
+of back into the monolith.
 
 ## Phase 4 — Cheap known-bug fixes (independent small PRs, not bundled)
 

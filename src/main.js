@@ -14,12 +14,9 @@ import {
   resolveVisitParticipants
 } from "./participants.js";
 import {
-  formatFriendCode,
-  looksLikeFriendCode,
   mergeFriendIdsIntoDirectory,
   normalizeFriendDoc,
-  orderMembersForPicker,
-  validateFriendInput
+  orderMembersForPicker
 } from "./friends.js";
 import {
   MAP_SURFACE_Z_INDEX,
@@ -87,6 +84,7 @@ import { modal, closeModal, closeAllModals } from "./ui/modal.js";
 import { esc } from "./ui/html.js";
 import { openTripEditor } from "./ui/trip-editor.js";
 import { openSettingsPanel } from "./ui/settings.js";
+import { openFriendsPanel } from "./ui/friends.js";
 
 /* ============================================================
    1) 設定
@@ -1101,14 +1099,9 @@ function openNoSpaceSettings(){
 }
 
 /* ---------- 好友管理 ---------- */
-const FRIEND_INPUT_ERRORS = { empty:"請先輸入使用者 ID", invalid:"這個 ID 格式不正確", self:"這是你自己的 ID", duplicate:"這位好友已經在清單裡了" };
-
 // Pending friend invitations addressed to me (docs/FRIENDS.md handshake).
 function incomingFriendRequests(){
   return Object.values(noSpaceState.incomingRequests || {}).filter(r => r.state === "pending" && isUsableUid(r.from));
-}
-function pendingIncomingFrom(fromUid){
-  return incomingFriendRequests().some(r => r.from === fromUid);
 }
 
 // My outgoing request has been answered: promote the pending_out marker to a
@@ -1141,169 +1134,32 @@ function updateFriendsBadge(){
 let friendsManagerRefresh = null;
 function openFriendsManager(){
   if (!runtimeReady()) return;
-  const session = runtimeSession, uid = user.uid;
-  const live = currentRuntimeGuard();
-  const myCode0 = noSpaceState.profiles[uid]?.friendCode || "";
-  modal(`
-    <h2 style="margin-bottom:4px">好友</h2>
-    <div class="admin" style="margin-bottom:10px">送出邀請、對方接受後，「同行者」選單就能直接選到他。<br>
-      你的好友碼：<code id="fm_mycode" style="user-select:all;font-size:14px;letter-spacing:1px">${esc(formatFriendCode(myCode0) || "產生中…")}</code>
-      <span style="opacity:.6"> · ID：<code id="fm_myid" style="user-select:all;word-break:break-all">${esc(uid)}</code></span></div>
-    <div class="row" style="gap:6px">
-      <input id="fm_uid" placeholder="輸入好友碼（例：ABC-D23）或使用者 ID" style="flex:1;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px">
-      <button class="btn grey" id="fm_add">送出邀請</button>
-    </div>
-    <div id="fm_err" class="admin" style="color:#b25b6b;margin-top:4px"></div>
-    <div id="fm_incoming_wrap" style="display:none">
-      <div class="sethead">好友邀請</div>
-      <div id="fm_incoming"></div>
-    </div>
-    <div class="sethead">我的好友</div>
-    <div id="fm_list"></div>
-    <div id="fm_outgoing_wrap" style="display:none">
-      <div class="sethead">邀請中（待對方確認）</div>
-      <div id="fm_outgoing"></div>
-    </div>
-    <div id="fm_suggest_wrap" style="display:none">
-      <div class="sethead">曾一起記錄、還沒加好友</div>
-      <div id="fm_suggest"></div>
-    </div>
-    <div class="row" style="margin-top:12px"><button class="btn" id="fm_done">完成</button></div>
-  `);
-  const g = id => document.getElementById(id);
-  const err = g("fm_err");
-
-  async function run(op, optimistic){
-    if (!live()) return;
-    if (typeof optimistic === "function") optimistic();
-    render();
-    try { await op(noSpaceRepository); err.textContent = ""; }
-    catch(e){ err.textContent = "操作失敗：" + (e?.message || e); }
-    refreshNoSpaceProjection();
-  }
-
-  async function addOrAccept(raw){
-    err.textContent = "";
-    let value = typeof raw === "string" ? raw.trim() : "";
-    // A 6-char short code (never a 28-char UID) → resolve it to a UID first.
-    if (looksLikeFriendCode(value)){
-      if (!live()) return;
-      let resolved = null;
-      try { resolved = await noSpaceRepository.uidForFriendCode(value); }
-      catch(e){ err.textContent = "查詢好友碼失敗：" + (e?.message || e); return; }
-      if (!resolved){ err.textContent = "找不到這個好友碼"; return; }
-      value = resolved;
-    }
-    const existing = noSpaceState.friends[value];
-    if (value === uid){ err.textContent = "這是你自己"; return; }
-    if (existing?.state === "linked"){ err.textContent = "你們已經是好友了"; return; }
-    if (existing?.state === "pending_out"){ err.textContent = "已送出邀請，等待對方確認"; return; }
-    if (pendingIncomingFrom(value)){
-      if (g("fm_uid")) g("fm_uid").value = "";
-      run(repo => repo.acceptFriendRequest(value), () => {
-        noSpaceState.friends[value] = { friendUid:value, nickname:"", pinned:false, state:"linked" };
-        delete noSpaceState.incomingRequests[`${value}__${uid}`];
-      });
-      return;
-    }
-    const check = validateFriendInput(value, { selfUid:uid, existingUids:friendEntries().map(f => f.friendUid) });
-    if (!check.ok){ err.textContent = FRIEND_INPUT_ERRORS[check.reason] || "無法送出"; return; }
-    if (g("fm_uid")) g("fm_uid").value = "";
-    run(repo => repo.sendFriendRequest(check.friendUid), () => {
-      noSpaceState.friends[check.friendUid] = { friendUid:check.friendUid, nickname:"", pinned:false, state:"pending_out" };
-    });
-  }
-
-  function suggestionIds(){
-    const known = knownParticipantUserIds(uid, Object.values(noSpaceState.visits), Object.values(noSpaceState.trips));
-    const excluded = new Set(friendEntries().map(f => f.friendUid));
-    incomingFriendRequests().forEach(r => excluded.add(r.from));
-    return known.filter(id => id !== uid && !excluded.has(id));
-  }
-  function personCell(name, id){
-    return `<span style="flex:1 1 130px;min-width:0">
-      <strong style="word-break:break-all">${esc(name || "（尚未載入名稱）")}</strong>
-      <span class="admin" style="display:block;word-break:break-all">${esc(id)}</span></span>`;
-  }
-  function render(){
-    if (!g("fm_list")){ friendsManagerRefresh = null; return; }
-
-    const code = noSpaceState.profiles[uid]?.friendCode || "";
-    if (g("fm_mycode") && code) g("fm_mycode").textContent = formatFriendCode(code);
-
-    const incoming = incomingFriendRequests();
-    g("fm_incoming_wrap").style.display = incoming.length ? "block" : "none";
-    g("fm_incoming").innerHTML = incoming.map(r => `
-      <div class="srow" style="align-items:center;gap:6px;flex-wrap:wrap">
-        ${personCell(noSpaceState.profiles[r.from]?.displayName, r.from)}
-        <button class="fm_accept btn grey" data-uid="${esc(r.from)}" style="flex:0 0 auto">接受</button>
-        <button class="fm_decline" data-uid="${esc(r.from)}" style="flex:0 0 auto;background:none;border:0;color:#b25b6b;cursor:pointer">婉拒</button>
-      </div>`).join("");
-    g("fm_incoming").querySelectorAll(".fm_accept").forEach(b => b.onclick = () =>
-      run(repo => repo.acceptFriendRequest(b.dataset.uid), () => {
-        noSpaceState.friends[b.dataset.uid] = { friendUid:b.dataset.uid, nickname:"", pinned:false, state:"linked" };
-        delete noSpaceState.incomingRequests[`${b.dataset.uid}__${uid}`];
-      }));
-    g("fm_incoming").querySelectorAll(".fm_decline").forEach(b => b.onclick = () =>
-      run(repo => repo.declineFriendRequest(b.dataset.uid), () => {
-        delete noSpaceState.incomingRequests[`${b.dataset.uid}__${uid}`];
-      }));
-
-    const linked = friendEntries().filter(f => f.state === "linked").sort((a,b) =>
-      Number(b.pinned) - Number(a.pinned) || participantName(a.friendUid).localeCompare(participantName(b.friendUid)));
-    g("fm_list").innerHTML = linked.length ? linked.map(f => `
-      <div class="srow" style="align-items:center;gap:6px;flex-wrap:wrap">
-        ${personCell(noSpaceState.profiles[f.friendUid]?.displayName, f.friendUid)}
-        <input class="fm_nick" data-uid="${esc(f.friendUid)}" value="${esc(f.nickname)}" placeholder="綽號" style="flex:0 0 92px;padding:6px;border:1px solid var(--line);border-radius:6px">
-        <label style="flex:0 0 auto;font-size:12px;color:var(--ink-soft)"><input type="checkbox" class="fm_pin" data-uid="${esc(f.friendUid)}" ${f.pinned?'checked':''} style="vertical-align:middle"> 置頂</label>
-        <button class="fm_del" data-uid="${esc(f.friendUid)}" style="flex:0 0 auto;background:none;border:0;color:#b25b6b;cursor:pointer">移除</button>
-      </div>`).join("") : `<div class="admin">還沒有好友。</div>`;
-    g("fm_list").querySelectorAll(".fm_nick").forEach(i => i.onchange = () =>
-      run(repo => repo.setFriendNickname(i.dataset.uid, i.value), () => {
-        if (noSpaceState.friends[i.dataset.uid]) noSpaceState.friends[i.dataset.uid].nickname = i.value.trim().slice(0,60);
-      }));
-    g("fm_list").querySelectorAll(".fm_pin").forEach(b => b.onchange = () =>
-      run(repo => repo.setFriendPinned(b.dataset.uid, b.checked), () => {
-        if (noSpaceState.friends[b.dataset.uid]) noSpaceState.friends[b.dataset.uid].pinned = b.checked;
-      }));
-    g("fm_list").querySelectorAll(".fm_del").forEach(b => b.onclick = () =>
-      run(repo => repo.removeFriend(b.dataset.uid), () => { delete noSpaceState.friends[b.dataset.uid]; }));
-
-    const outgoing = friendEntries().filter(f => f.state === "pending_out");
-    g("fm_outgoing_wrap").style.display = outgoing.length ? "block" : "none";
-    g("fm_outgoing").innerHTML = outgoing.map(f => `
-      <div class="srow" style="align-items:center;gap:6px">
-        ${personCell(noSpaceState.profiles[f.friendUid]?.displayName, f.friendUid)}
-        <button class="fm_cancel" data-uid="${esc(f.friendUid)}" style="flex:0 0 auto;background:none;border:0;color:#b25b6b;cursor:pointer">取消邀請</button>
-      </div>`).join("");
-    g("fm_outgoing").querySelectorAll(".fm_cancel").forEach(b => b.onclick = () =>
-      run(repo => repo.discardOutgoingRequest(b.dataset.uid), () => { delete noSpaceState.friends[b.dataset.uid]; }));
-
-    const suggestions = suggestionIds();
-    g("fm_suggest_wrap").style.display = suggestions.length ? "block" : "none";
-    g("fm_suggest").innerHTML = suggestions.map(id => `
-      <div class="srow" style="align-items:center;gap:6px">
-        ${personCell(noSpaceState.profiles[id]?.displayName, id)}
-        <button class="fm_addsug btn grey" data-uid="${esc(id)}" style="flex:0 0 auto">送出邀請</button>
-      </div>`).join("");
-    g("fm_suggest").querySelectorAll(".fm_addsug").forEach(b => b.onclick = () => addOrAccept(b.dataset.uid));
-  }
-
-  g("fm_add").onclick = () => addOrAccept(g("fm_uid").value);
-  g("fm_uid").onkeydown = event => { if (event.key === "Enter"){ event.preventDefault(); addOrAccept(g("fm_uid").value); } };
-  g("fm_done").onclick = () => { friendsManagerRefresh = null; closeModal(); };
-  friendsManagerRefresh = render;
-  render();
-
-  // Make sure this user has a shareable short code (generates one on first open).
-  if (!myCode0 && live()){
-    noSpaceRepository.ensureFriendCode().then(code => {
+  const uid = user.uid, session = runtimeSession;
+  friendsManagerRefresh = openFriendsPanel({
+    currentUid: uid,
+    repo: noSpaceRepository,
+    isCurrent: currentRuntimeGuard(),
+    getFriends: () => noSpaceState.friends,
+    getIncomingRaw: () => noSpaceState.incomingRequests,
+    getIncoming: () => incomingFriendRequests(),
+    getSuggestions: () => friendSuggestionUids(),
+    getFriendCode: () => noSpaceState.profiles[uid]?.friendCode || "",
+    profileName: id => noSpaceState.profiles[id]?.displayName || "",
+    participantName,
+    ensureFriendCode: () => noSpaceRepository.ensureFriendCode(),
+    onFriendCodeReady: code => {
       if (!runtimeSessionIsCurrent(session, uid)) return;
-      const profile = noSpaceState.profiles[uid] || {};
-      noSpaceState.profiles[uid] = { ...profile, friendCode:code };
-      if (g("fm_mycode")) g("fm_mycode").textContent = formatFriendCode(code);
-    }).catch(e => { if (g("fm_err")) g("fm_err").textContent = "無法產生好友碼：" + (e?.message || e); });
-  }
+      noSpaceState.profiles[uid] = { ...(noSpaceState.profiles[uid] || {}), friendCode: code };
+    },
+    afterMutation: () => refreshNoSpaceProjection(),
+    onClose: () => { friendsManagerRefresh = null; }
+  });
+}
+function friendSuggestionUids(){
+  const known = knownParticipantUserIds(user.uid, Object.values(noSpaceState.visits), Object.values(noSpaceState.trips));
+  const excluded = new Set(friendEntries().map(f => f.friendUid));
+  incomingFriendRequests().forEach(r => excluded.add(r.from));
+  return known.filter(id => id !== user.uid && !excluded.has(id));
 }
 
 function runtimeSessionIsCurrent(session, uid){

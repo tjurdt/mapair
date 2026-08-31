@@ -3,12 +3,13 @@
 These keep quick, iterative ("vibe") changes from going in circles inside
 `src/main.js`. Read `AGENTS.md` first — its repository safety rules still apply.
 
-## 1. Prefer the domain modules over `main.js`
+## 1. Prefer the modules over `main.js` — it has a size budget
 
-Colour, filter predicates, occurrence enumeration, date maths, participant
-resolution, ordering — these belong in `src/domain/*`, `src/no-space/*`,
-`src/participants.js`, `src/ux-policies.js`, `src/map-color-scales.js`. If the
-behaviour you need lives inlined in `main.js`, extract it to a tested module
+Logic (colour, filters, occurrences, dates, participants, ordering) belongs in
+`src/domain/*` / `src/no-space/*` / the pure helpers. UI surfaces (modals,
+panels, renderers) belong in `src/ui/*`. `main.js` is the shrinking monolith —
+`tests/main-size.test.mjs` fails CI if it grows past its budget. If the
+behaviour you need is inlined in `main.js`, extract it to a tested module
 first (small PR), then build on the module.
 
 ## 2. One concern per PR
