@@ -60,6 +60,9 @@ emulator database** first.
 - `markers.spec.mjs` — renderMarkers, every marker colour mode (plus exact
   pin-colour assertions for cat / level / who via the stub), trip and
   single-day numbered sequence markers, and the county-choropleth area path.
+- `entry-ux.spec.mjs` — new-Visit date defaults (today / Trip first day /
+  scope start / ditto), Trip filter clearing the date scope, the 住宿
+  activity → 住宿 depth link, and the Trip-editor date seeding.
 
 These track the "Automation: Yes" rows of
 `docs/archive/baseline/BEHAVIOR_CHECKLIST.md`. Real map pixels, viewport
