@@ -196,7 +196,7 @@ let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionTo
 let markers = [], sessionToken = null;
 let selfMarker = null;                       // "你的位置" dot from the locate button
 let focusedPlaceId = null, focusedPlaceTimer = null; // highlighted marker after a list tap
-let places = {}, trips = {}, tab = "visited";
+let places = {}, trips = {};
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
 let showPins = true, choroAlpha = 0.7, choroMetric = "level";
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
@@ -243,6 +243,7 @@ let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:
 //   lastNewVisitDate: the date of the last Visit created since load / since the
 //     Trip or date scope last changed — the "ditto" default.
 const state = {
+  tab: "visited",
   searchMode: "add",
   lastNewVisitDate: "",
   numberPins: false,
@@ -708,7 +709,7 @@ async function renderApp(){
     </div>`;
 
   document.getElementById("logout").onclick = () => signOut(auth);
-  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; renderList(); });
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { state.tab = b.dataset.t; renderList(); });
 
   // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
   const wrapEl = document.querySelector(".wrap");
@@ -883,7 +884,7 @@ function openSettings(){
 /* ---------- Filters ---------- */
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
-  if(!map || layoutState.map || tab==="trips") return;
+  if(!map || layoutState.map || state.tab==="trips") return;
   if(!shouldAutoFitViewport({tripId:filter.tripId,regionCount:filter.regions.length})) return;
   const pts=Object.values(places).filter(p=>passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
@@ -991,13 +992,13 @@ function renderFilterChips(){
   updateProximityMaskControl();
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId||filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
-  const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
+  const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
   if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from){
     html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
   }
   const seq=sequenceContext();
-  if (tab==="visited" && seq){
+  if (state.tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
     html += `<button class="fchip ${state.numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${state.numberPins?'●':'○'} ${label}</button>`;
   }
@@ -1639,7 +1640,7 @@ function renderMarkers(){
       lastMarkerClick = Date.now();
       if (filter.placeId === p.id){ clearPlaceFilter(); return; }
       filter.placeId = p.id;
-      if (tab !== "visited") tab = "visited";
+      if (state.tab !== "visited") state.tab = "visited";
       applyFilter({ fitViewport:false });
       setFocusedPlace(p.id);
     });
@@ -1662,7 +1663,7 @@ function dateMarkerLegendBody(){
 function markerLegendBody(){
   if (!showPins) return "";
   const titles = { cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
-  const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && state.numberPins;
+  const seq=sequenceContext(), orderMode=state.tab==="visited" && !!seq && state.numberPins;
   let order="";
   if(orderMode){
     const txt=seq.type==="trip" ? "D1-1 = 第1天第1站" : "數字 = 當日造訪順序";
@@ -2079,7 +2080,7 @@ function handleAdministrativeRegionClick(ev,level,codeProp){
   }else{
     filter.regions=(idx>=0 && filter.regions.length===1) ? [] : [entry];
   }
-  tab="visited";
+  state.tab="visited";
   document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("on",button.dataset.t==="visited"));
   applyFilter({fitViewport:false});
 }
@@ -2264,11 +2265,11 @@ const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
   if (filter.placeId && !places[filter.placeId]) filter.placeId = "";  // Place gone (last Visit deleted)
-  if (tab !== "visited" && tab !== "trips") tab = "visited";
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
-  document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
+  if (state.tab !== "visited" && state.tab !== "trips") state.tab = "visited";
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === state.tab));
+  document.getElementById("searchWrap").style.display = state.tab === "trips" ? "none" : "block";
   const el = document.getElementById("list");
-  if (tab === "trips"){ renderTrips(el); return; }
+  if (state.tab === "trips"){ renderTrips(el); return; }
 
   const reorderScope=visitReorderScope();
   const oneDay=singleDayDate();
@@ -2666,7 +2667,7 @@ function renderTrips(el){
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
-    filter.tripId = t.id; tab = "visited";
+    filter.tripId = t.id; state.tab = "visited";
     forgetLastNewVisitDate();
     dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
