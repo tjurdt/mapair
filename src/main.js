@@ -77,7 +77,7 @@ import {
   categoryPass,
   participantPass,
   placePasses,
-  regionsPass,
+  placeStaticPass,
   tripPass,
   visitPasses
 } from "./domain/filter.js";
@@ -239,7 +239,10 @@ function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
 function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
-let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
+let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
+// "add" — the search box adds a Place; "filter" — it filters the list by Place
+// name (filter.q). Cycled by #searchModeToggle.
+let searchMode = "add";
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
@@ -429,13 +432,20 @@ function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="dai
 function visitMatchesTrip(v){ return tripPass(filter.tripId, v.tripId); }
 function visitMatchesCategory(p,v){ return categoryPass(filter.cats, visitCategory(p,v)); }
 function visitMatchesWho(p,v){ return participantPass(filter.who, visitWhoUids(p,v)); }
-function placeStaticFilter(p){ return regionsPass(filter.regions, p); }
+function placeStaticFilter(p){ return placeStaticPass(filter, p); }
 function visitPassFilter(p,v){ return visitPasses(p, v, filter, LIST_VISIT_FIELDS); }
 function passFilter(p){
   // Only Places with real Visit history exist in the active product; dormant
   // legacy wishlist-only records are invisible everywhere.
   if (!hasVisitHistory(p)) return false;
   return placePasses(p, placeVisits(p), filter, LIST_VISIT_FIELDS);
+}
+// Whether the user has deliberately narrowed the list (anything beyond the
+// default "this month" view). Drives the per-card DITTO affordance.
+function listIsFiltered(){
+  return filter.who!=="all" || filter.tripId!=="all" || filter.cats.size>0
+    || filter.regions.length>0 || !!filter.q.trim() || !!filter.placeId
+    || dateScope!=="month";
 }
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
@@ -528,7 +538,7 @@ function visitReorderScope(){
   const available=isVisitReorderAvailable({
     categoryCount:filter.cats.size,
     regionCount:filter.regions.length,
-    textSearch:"",
+    textSearch:filter.q,
     tripId:filter.tripId,
     hasSpecificTrip:!!tripId
   });
@@ -687,6 +697,7 @@ async function renderApp(){
           </div>
         </div>
         <div class="search" id="searchWrap">
+          <button id="searchModeToggle" class="btn grey mini" title="切換：加入地點 / 篩選造訪" style="flex:0 0 auto">＋</button>
           <input id="search" placeholder="搜尋地點加入…(例:台北101、直島)" autocomplete="off"/>
           <div class="results" id="results" style="display:none"></div>
         </div>
@@ -848,11 +859,13 @@ async function renderApp(){
   document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
-    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
+    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
     dateScope = "all";
+    searchMode = "add";
     forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
+    applySearchMode();
     refreshFilterUI(); applyFilter();
   };
   applyDateScope();
@@ -974,7 +987,7 @@ function refreshFilterUI(){
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   updateProximityMaskControl();
-  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId;
+  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId||filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
@@ -985,6 +998,9 @@ function renderFilterChips(){
   if (tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
     html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
+  }
+  if (filter.q.trim()){
+    html += `<span class="fchip active">🔍 ${esc(filter.q.trim())} <b data-clearq="1">✕</b></span>`;
   }
   filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
   if (filter.placeId){
@@ -999,6 +1015,13 @@ function renderFilterChips(){
   });
   const cp = el.querySelector('[data-clearplace]');
   if (cp) cp.onclick = clearPlaceFilter;
+  const cq = el.querySelector('[data-clearq]');
+  if (cq) cq.onclick = () => {
+    filter.q = "";
+    const input = document.getElementById("search");
+    if (input && searchMode === "filter") input.value = "";
+    applyFilter();
+  };
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -2488,6 +2511,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder" aria-label="我的同日順序"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="調整我的同日順序" title="移動到我的指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
+    ${listIsFiltered() ? `<button class="delx" data-ditto="${p.id}" title="在此地點再記一筆造訪">⧉</button>` : ""}
     ${canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
@@ -2515,13 +2539,17 @@ function renderDayVisitList(el,date){
 }
 function wireVisitCards(el){
   el.querySelectorAll('[data-pid][data-vidx]').forEach(c=>c.onclick=ev=>{
-    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vmove]")||ev.target.closest("[data-vposition]")) return;
+    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vmove]")||ev.target.closest("[data-vposition]")||ev.target.closest("[data-ditto]")) return;
     focusMapOnPlace(places[c.dataset.pid]);
     openEditor(c.dataset.pid,null,{focusVisitIndex:+c.dataset.vidx});
   });
   el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{
     ev.stopPropagation();
     deleteVisitOccurrence(b.dataset.vdel).catch(error=>alert(`無法完整刪除造訪：${error.message}`));
+  });
+  el.querySelectorAll("[data-ditto]").forEach(b=>b.onclick=ev=>{
+    ev.stopPropagation();
+    openEditor(b.dataset.ditto,null,{addVisit:true});
   });
   el.querySelectorAll("[data-vmove]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vkey,b.dataset.date,b.dataset.vmove);});
   el.querySelectorAll("[data-vposition]").forEach(s=>s.onchange=ev=>{ev.stopPropagation();if(s.value) moveVisitOccurrence(s.dataset.vposition,s.dataset.date,s.value);s.value="";});
@@ -2588,10 +2616,37 @@ function openSeed(seed){
   if(existing) openEditor(existing.id,null,{addVisit:true});
   else openEditor(null,seed);
 }
+// Reflect the current searchMode in the box (placeholder, toggle glyph) and,
+// when leaving filter mode, drop the keyword.
+function applySearchMode(){
+  const input = document.getElementById("search");
+  const toggle = document.getElementById("searchModeToggle");
+  if (!input || !toggle) return;
+  if (searchMode === "filter"){
+    toggle.textContent = "🔍";
+    input.placeholder = "篩選造訪…(依地點名稱)";
+    if (input.value !== filter.q) input.value = filter.q;
+    clearSearchSuggestions();
+  } else {
+    toggle.textContent = "＋";
+    input.placeholder = "搜尋地點加入…(例:台北101、直島)";
+    if (filter.q){ filter.q = ""; input.value = ""; applyFilter(); }
+  }
+}
 function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
+  document.getElementById("searchModeToggle").onclick = () => {
+    searchMode = searchMode === "add" ? "filter" : "add";
+    applySearchMode();
+    input.focus();
+  };
   input.oninput = () => {
+    if (searchMode === "filter"){
+      filter.q = input.value;
+      applyFilter();
+      return;
+    }
     clearTimeout(searchTimer);
     if (!runtimeReady()){ clearSearchSuggestions(); return; }
     const q = input.value.trim();
@@ -2622,6 +2677,7 @@ function wireSearch(){
     }, 350);
   };
   document.addEventListener("click", e => { if(!e.target.closest(".search")) box.style.display="none"; });
+  applySearchMode();
 }
 
 async function searchPlace(q){
@@ -2705,7 +2761,11 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const existingVisit=!opts.addVisit&&id?existingVisits[focusIndex]||existingVisits[0]||null:null;
   const rawVisit=existingVisit?existingVisit._shared || noSpaceState.visits[existingVisit.id] || existingVisit:null;
   const creating=!rawVisit;
-  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || [editorUid],editorUid);
+  // Adding another Visit to a known Place (search-selected existing Place, or
+  // the list's DITTO button) carries over that Place's latest Visit category
+  // and participants as the starting point.
+  const carryOver=opts.addVisit&&id?existingVisits[existingVisits.length-1]||null:null;
+  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || carryOver?.participantIds || [editorUid],editorUid);
   let selectedPlaceId=rawVisit?.placeId || id || "";
   const initialPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId] || runtimePlace:seed || {};
   const initialTripId=rawVisit?.tripId || specificTripId() || "";
@@ -2743,7 +2803,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   };
   // 「做什麼」下拉：使用者勾選的預設 + 這筆造訪原本的預設值，「其他」永遠在最後，
   // 選「其他」時打開自訂敘述框。非預設字串一律歸「其他」並帶入敘述框。
-  const currentCategory=rawVisit?.category||"";
+  const currentCategory=rawVisit?.category||carryOver?.category||"";
   const categoryIsPreset=CATEGORY_PRESET_NAMES.includes(currentCategory)&&currentCategory!=="其他";
   const categoryOptionNames=[...new Set([
     ...CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)&&name!=="其他"),

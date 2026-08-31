@@ -3,8 +3,10 @@ import {
   categoryPass,
   dateRangePass,
   hasActiveVisitConstraint,
+  keywordPass,
   participantPass,
   placePasses,
+  placeStaticPass,
   regionsPass,
   tripPass,
   visitPasses
@@ -21,6 +23,24 @@ assert.equal(
   "regions are OR-ed"
 );
 assert.equal(regionsPass([{ key: "countyCode", code: "A" }], null), false, "no place: cannot match a region");
+
+/* keywordPass — case-insensitive substring on the Place name */
+assert.equal(keywordPass("", "河畔咖啡"), true, "empty query passes everything");
+assert.equal(keywordPass("   ", "河畔咖啡"), true, "whitespace-only query passes");
+assert.equal(keywordPass("咖啡", "河畔咖啡"), true);
+assert.equal(keywordPass("CAFE", "Riverside Cafe"), true, "case-insensitive");
+assert.equal(keywordPass("車站", "河畔咖啡"), false);
+assert.equal(keywordPass("x", null), false, "a query never matches a missing name");
+
+/* placeStaticPass — regions AND keyword */
+assert.equal(placeStaticPass({}, { name: "河畔咖啡", countyCode: "A" }), true);
+assert.equal(placeStaticPass({ q: "咖啡" }, { name: "河畔咖啡" }), true);
+assert.equal(placeStaticPass({ q: "車站" }, { name: "河畔咖啡" }), false);
+assert.equal(
+  placeStaticPass({ regions: [{ key: "countyCode", code: "A" }], q: "咖啡" }, { name: "河畔咖啡", countyCode: "B" }),
+  false,
+  "region mismatch fails even when the keyword matches"
+);
 
 /* participantPass */
 assert.equal(participantPass("all", []), true);
@@ -100,6 +120,16 @@ assert.equal(
   false,
   "region mismatch fails regardless of the Visit"
 );
+assert.equal(
+  visitPasses({ ...place, name: "河畔咖啡" }, visitAug02, { ...base, q: "咖啡" }, resolve),
+  true,
+  "keyword on the Place name lets the Visit through"
+);
+assert.equal(
+  visitPasses({ ...place, name: "河畔咖啡" }, visitAug02, { ...base, q: "車站" }, resolve),
+  false,
+  "keyword miss excludes every Visit of the Place"
+);
 
 const visits = [visitAug02, visitTrip];
 assert.equal(placePasses(place, visits, base, resolve), true, "no constraint: Place passes on region alone");
@@ -121,6 +151,11 @@ assert.equal(
   placePasses(place, [], { ...base, who: "u1" }, resolve),
   false,
   "active constraint + no Visits: fails"
+);
+assert.equal(
+  placePasses({ ...place, name: "河畔咖啡" }, visits, { ...base, q: "車站" }, resolve),
+  false,
+  "keyword miss excludes the Place even with no Visit constraint"
 );
 
 console.log("filter assertions passed");
