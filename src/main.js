@@ -440,6 +440,13 @@ function passFilter(p){
   if (!hasVisitHistory(p)) return false;
   return placePasses(p, placeVisits(p), filter, LIST_VISIT_FIELDS);
 }
+// Whether the user has deliberately narrowed the list (anything beyond the
+// default "this month" view). Drives the per-card DITTO affordance.
+function listIsFiltered(){
+  return filter.who!=="all" || filter.tripId!=="all" || filter.cats.size>0
+    || filter.regions.length>0 || !!filter.q.trim() || !!filter.placeId
+    || dateScope!=="month";
+}
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
 // module's createdAt-based Place fallback.
@@ -2504,6 +2511,7 @@ function visitCardHTML(o,label,date,orderInfo=null){
     <span class="dot" style="background:${col};flex:0 0 auto"></span><div style="flex:1;min-width:0"><div class="cname">${esc(p.name)}</div><div class="ptags">${tags}</div></div>
     <span class="daynum" style="${String(label).length>2?'width:auto;min-width:32px;padding:0 5px;border-radius:10px;font-size:11px':''}">${esc(String(label))}</span>
     ${orderInfo?`<div class="visitorder" aria-label="我的同日順序"><div class="ordcol"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往前一站" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="在我的順序往後一站" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div><select class="ordselect" data-vposition="${key}" data-date="${esc(date)}" aria-label="調整我的同日順序" title="移動到我的指定位置"><option value="">移至</option><option value="first">最前</option>${Array.from({length:orderInfo.total},(_,i)=>`<option value="${i+1}">第 ${i+1}</option>`).join("")}<option value="last">最後</option></select></div>`:""}
+    ${listIsFiltered() ? `<button class="delx" data-ditto="${p.id}" title="在此地點再記一筆造訪">⧉</button>` : ""}
     ${canDeleteVisit(user?.uid, v._shared || v) ? `<button class="delx" data-vdel="${key}" title="刪除此造訪">✕</button>` : ""}</div></div>`;
 }
 function stayAnchorCardHTML(o,label,date){
@@ -2531,13 +2539,17 @@ function renderDayVisitList(el,date){
 }
 function wireVisitCards(el){
   el.querySelectorAll('[data-pid][data-vidx]').forEach(c=>c.onclick=ev=>{
-    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vmove]")||ev.target.closest("[data-vposition]")) return;
+    if(ev.target.closest("[data-vdel]")||ev.target.closest("[data-vmove]")||ev.target.closest("[data-vposition]")||ev.target.closest("[data-ditto]")) return;
     focusMapOnPlace(places[c.dataset.pid]);
     openEditor(c.dataset.pid,null,{focusVisitIndex:+c.dataset.vidx});
   });
   el.querySelectorAll("[data-vdel]").forEach(b=>b.onclick=ev=>{
     ev.stopPropagation();
     deleteVisitOccurrence(b.dataset.vdel).catch(error=>alert(`無法完整刪除造訪：${error.message}`));
+  });
+  el.querySelectorAll("[data-ditto]").forEach(b=>b.onclick=ev=>{
+    ev.stopPropagation();
+    openEditor(b.dataset.ditto,null,{addVisit:true});
   });
   el.querySelectorAll("[data-vmove]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vkey,b.dataset.date,b.dataset.vmove);});
   el.querySelectorAll("[data-vposition]").forEach(s=>s.onchange=ev=>{ev.stopPropagation();if(s.value) moveVisitOccurrence(s.dataset.vposition,s.dataset.date,s.value);s.value="";});
@@ -2749,7 +2761,11 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   const existingVisit=!opts.addVisit&&id?existingVisits[focusIndex]||existingVisits[0]||null:null;
   const rawVisit=existingVisit?existingVisit._shared || noSpaceState.visits[existingVisit.id] || existingVisit:null;
   const creating=!rawVisit;
-  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || [editorUid],editorUid);
+  // Adding another Visit to a known Place (search-selected existing Place, or
+  // the list's DITTO button) carries over that Place's latest Visit category
+  // and participants as the starting point.
+  const carryOver=opts.addVisit&&id?existingVisits[existingVisits.length-1]||null:null;
+  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || carryOver?.participantIds || [editorUid],editorUid);
   let selectedPlaceId=rawVisit?.placeId || id || "";
   const initialPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId] || runtimePlace:seed || {};
   const initialTripId=rawVisit?.tripId || specificTripId() || "";
@@ -2787,7 +2803,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   };
   // 「做什麼」下拉：使用者勾選的預設 + 這筆造訪原本的預設值，「其他」永遠在最後，
   // 選「其他」時打開自訂敘述框。非預設字串一律歸「其他」並帶入敘述框。
-  const currentCategory=rawVisit?.category||"";
+  const currentCategory=rawVisit?.category||carryOver?.category||"";
   const categoryIsPreset=CATEGORY_PRESET_NAMES.includes(currentCategory)&&currentCategory!=="其他";
   const categoryOptionNames=[...new Set([
     ...CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)&&name!=="其他"),
