@@ -196,14 +196,14 @@ let map, geocoder, AdvMarker, Pin, AutocompleteSuggestion, AutocompleteSessionTo
 let markers = [], sessionToken = null;
 let selfMarker = null;                       // "你的位置" dot from the locate button
 let focusedPlaceId = null, focusedPlaceTimer = null; // highlighted marker after a list tap
-let places = {}, trips = {}, tab = "visited";
+let places = {}, trips = {};
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
-let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
+let showPins = true, choroAlpha = 0.7, choroMetric = "level";
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let levelColors = { ...LEVEL_COLORS }, addMode = false;
 // Per-user "做什麼" preferences: which presets appear in the picker, plus colour overrides.
 let categoryPicks = [...CATEGORY_DEFAULT_PICKS];
-let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
+let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0;
 let proximityStorage = null;
 try { proximityStorage = globalThis.localStorage; } catch(e) {}
 const initialProximityPreferences = readProximityPreferences(proximityStorage);
@@ -236,19 +236,28 @@ function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
-// "add" — the search box adds a Place; "filter" — it filters the list by Place
-// name (filter.q). Cycled by #searchModeToggle.
-let searchMode = "add";
-let regionMulti = false;
+// The app's view state, being moved off free-standing globals one group at a
+// time (docs/REFACTOR_PLAN.md Phase 2).
+const state = {
+  tab: "visited",
+  // dateScope: month / lastmonth / pickedMonth / today / custom / all.
+  // pickedMonth backs the pickedMonth scope.
+  dateScope: "month",
+  pickedMonth: new Date().toISOString().slice(0, 7),
+  // searchMode: "add" — the search box adds a Place; "filter" — filters the
+  // visited list by Place name (filter.q). Cycled by #searchModeToggle.
+  searchMode: "add",
+  // lastNewVisitDate: the last Visit created since load / since the Trip or
+  // date scope changed — the "ditto" default.
+  lastNewVisitDate: "",
+  numberPins: false,
+  regionMulti: false,
+  legendCollapsed: false
+};
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
-let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
-let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
-// The date of the last Visit created since load / since the Trip or date scope
-// last changed. Drives the "ditto" default in defaultDateForNewVisit.
-let lastNewVisitDate = "";
-function forgetLastNewVisitDate(){ lastNewVisitDate = ""; }
+function forgetLastNewVisitDate(){ state.lastNewVisitDate = ""; }
 
 function monthBounds(ym){
   if (!/^\d{4}-\d{2}$/.test(ym||"")) return null;
@@ -263,26 +272,26 @@ function currentMonth(offset=0){
 function applyDateScope(){
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
   const today = `${y}-${pad(m+1)}-${pad(now.getDate())}`;
-  if (dateScope === "today"){ filter.from = today; filter.to = today; }
-  else if (dateScope === "month"){
-    pickedMonth=currentMonth(0); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  if (state.dateScope === "today"){ filter.from = today; filter.to = today; }
+  else if (state.dateScope === "month"){
+    state.pickedMonth=currentMonth(0); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
   }
-  else if (dateScope === "lastmonth"){
-    pickedMonth=currentMonth(-1); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  else if (state.dateScope === "lastmonth"){
+    state.pickedMonth=currentMonth(-1); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
   }
-  else if (dateScope === "pickedMonth"){
-    const b=monthBounds(pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
+  else if (state.dateScope === "pickedMonth"){
+    const b=monthBounds(state.pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
   }
-  else if (dateScope === "all"){ filter.from = ""; filter.to = ""; }
+  else if (state.dateScope === "all"){ filter.from = ""; filter.to = ""; }
   // custom: 由使用者的起訖輸入決定
 }
 function defaultDateForNewVisit(){
   const tripId = specificTripId();
   return defaultNewVisitDate({
-    lastNewVisitDate,
+    lastNewVisitDate: state.lastNewVisitDate,
     tripStart: tripId ? tripSequenceBounds(tripId).from : "",
     singleDay: singleDayDate(),
-    dateScope,
+    dateScope: state.dateScope,
     rangeStart: filter.from,
     today: new Date().toISOString().slice(0,10)
   });
@@ -441,7 +450,7 @@ function passFilter(p){
 function listIsFiltered(){
   return filter.who!=="all" || filter.tripId!=="all" || filter.cats.size>0
     || filter.regions.length>0 || !!filter.q.trim() || !!filter.placeId
-    || dateScope!=="month";
+    || state.dateScope!=="month";
 }
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
@@ -702,7 +711,7 @@ async function renderApp(){
     </div>`;
 
   document.getElementById("logout").onclick = () => signOut(auth);
-  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; renderList(); });
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { state.tab = b.dataset.t; renderList(); });
 
   // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
   const wrapEl = document.querySelector(".wrap");
@@ -779,8 +788,8 @@ async function renderApp(){
   document.getElementById("setBtn").onclick = openSettings;
   document.getElementById("friendsBtn").onclick = openFriendsManager;
   document.getElementById("multiBtn").onclick = e => {
-    regionMulti = !regionMulti;
-    e.target.classList.toggle("on", regionMulti);
+    state.regionMulti = !state.regionMulti;
+    e.target.classList.toggle("on", state.regionMulti);
   };
   const proximityRadiusInput = document.getElementById("proximityRadius");
   const saveProximityPreferences = () => writeProximityPreferences(proximityStorage, {
@@ -826,38 +835,38 @@ async function renderApp(){
     e.currentTarget.textContent = opening ? "更多 ▴" : "更多 ▾";
   };
   document.getElementById("fl_scope").onchange = e => {
-    dateScope = e.target.value;
+    state.dateScope = e.target.value;
     forgetLastNewVisitDate();
-    if (dateScope === "pickedMonth" && !pickedMonth) pickedMonth=currentMonth(0);
+    if (state.dateScope === "pickedMonth" && !state.pickedMonth) state.pickedMonth=currentMonth(0);
     applyDateScope();
-    if (dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
+    if (state.dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
     refreshFilterUI(); applyFilter();
-    if (dateScope === "pickedMonth"){
+    if (state.dateScope === "pickedMonth"){
       const mi=document.getElementById("fl_month");
       setTimeout(()=>{ try{ mi.showPicker?.(); }catch(e){} mi.focus(); },0);
     }
   };
   document.getElementById("fl_month").onchange = e => {
     if(!e.target.value) return;
-    pickedMonth=e.target.value; dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
+    state.pickedMonth=e.target.value; state.dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
   };
   document.getElementById("fl_trip").onchange = e => {
     filter.tripId = e.target.value;
     forgetLastNewVisitDate();
     // Picking a specific Trip shows the whole Trip, not the current month.
     if (e.target.value!=="all" && e.target.value!=="daily" && trips[e.target.value]){
-      dateScope = "all"; filter.from = ""; filter.to = "";
+      state.dateScope = "all"; filter.from = ""; filter.to = "";
       refreshFilterUI();
     }
     applyFilter();
   };
   document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
-  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
-  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
-    dateScope = "all";
-    searchMode = "add";
+    state.dateScope = "all";
+    state.searchMode = "add";
     forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
@@ -877,7 +886,7 @@ function openSettings(){
 /* ---------- Filters ---------- */
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
-  if(!map || layoutState.map || tab==="trips") return;
+  if(!map || layoutState.map || state.tab==="trips") return;
   if(!shouldAutoFitViewport({tripId:filter.tripId,regionCount:filter.regions.length})) return;
   const pts=Object.values(places).filter(p=>passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
@@ -952,7 +961,7 @@ function refreshFilterUI(){
     ["month","本月"],["lastmonth","上個月"],["pickedMonth","選月份…"],
     ["today","今天"],["custom","自訂期間"],["all","全部"]
   ].map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("");
-  scope.value = dateScope;
+  scope.value = state.dateScope;
   trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
@@ -968,8 +977,8 @@ function refreshFilterUI(){
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
   const mq=document.getElementById("monthQuick"), mi=document.getElementById("fl_month");
-  if(mq){ mq.classList.toggle("show",dateScope==="pickedMonth"); }
-  if(mi) mi.value=pickedMonth||currentMonth(0);
+  if(mq){ mq.classList.toggle("show",state.dateScope==="pickedMonth"); }
+  if(mi) mi.value=state.pickedMonth||currentMonth(0);
   const fc = document.getElementById("fl_cats");
   fc.innerHTML = spaceCats.length
     ? spaceCats.map(c=>`<span class="chip ${filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
@@ -985,15 +994,15 @@ function renderFilterChips(){
   updateProximityMaskControl();
   const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId||filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
-  const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
+  const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
-  if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from){
+  if (["month","lastmonth","pickedMonth"].includes(state.dateScope) && filter.from){
     html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
   }
   const seq=sequenceContext();
-  if (tab==="visited" && seq){
+  if (state.tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
-    html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
+    html += `<button class="fchip ${state.numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${state.numberPins?'●':'○'} ${label}</button>`;
   }
   if (filter.q.trim()){
     html += `<span class="fchip active">🔍 ${esc(filter.q.trim())} <b data-clearq="1">✕</b></span>`;
@@ -1005,7 +1014,7 @@ function renderFilterChips(){
   }
   el.innerHTML = html;
   const op = document.getElementById("orderPinToggle");
-  if (op) op.onclick = () => { numberPins=!numberPins; renderFilterChips(); renderMarkers(); };
+  if (op) op.onclick = () => { state.numberPins=!state.numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
     filter.regions.splice(+x.dataset.rx, 1); applyFilter();
   });
@@ -1015,7 +1024,7 @@ function renderFilterChips(){
   if (cq) cq.onclick = () => {
     filter.q = "";
     const input = document.getElementById("search");
-    if (input && searchMode === "filter") input.value = "";
+    if (input && state.searchMode === "filter") input.value = "";
     applyFilter();
   };
 }
@@ -1434,7 +1443,7 @@ function resetRuntimeState(){
   adminLevel = "off";
   proximityEnabled = false;
   regionLegendState = null;
-  regionMulti = false;
+  state.regionMulti = false;
   proximityMaskIndex = null;
   selectedRegionMaskCache = { identity:"", maskIndex:null };
   proximityGeometryCache.clear();
@@ -1583,7 +1592,7 @@ function renderMarkers(){
   if (!showPins) return;
 
   const seq=sequenceContext();
-  if (seq && numberPins){
+  if (seq && state.numberPins){
     const labelled=sequenceLabels();
     const totals={}; labelled.forEach(x=>totals[x.o.p.id]=(totals[x.o.p.id]||0)+1);
     const seen={};
@@ -1633,7 +1642,7 @@ function renderMarkers(){
       lastMarkerClick = Date.now();
       if (filter.placeId === p.id){ clearPlaceFilter(); return; }
       filter.placeId = p.id;
-      if (tab !== "visited") tab = "visited";
+      if (state.tab !== "visited") state.tab = "visited";
       applyFilter({ fitViewport:false });
       setFocusedPlace(p.id);
     });
@@ -1656,7 +1665,7 @@ function dateMarkerLegendBody(){
 function markerLegendBody(){
   if (!showPins) return "";
   const titles = { cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
-  const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
+  const seq=sequenceContext(), orderMode=state.tab==="visited" && !!seq && state.numberPins;
   let order="";
   if(orderMode){
     const txt=seq.type==="trip" ? "D1-1 = 第1天第1站" : "數字 = 當日造訪順序";
@@ -1746,9 +1755,9 @@ function renderUnifiedLegend(){
   const hasProximity=proximityEnabled;
   if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
   el.style.display="block";
-  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${legendCollapsed?"▸":"▾"}</span></div>`;
-  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
-  document.getElementById("legendHead").onclick=()=>{ legendCollapsed=!legendCollapsed; renderUnifiedLegend(); };
+  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${state.legendCollapsed?"▸":"▾"}</span></div>`;
+  el.innerHTML=head+(state.legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
+  document.getElementById("legendHead").onclick=()=>{ state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
 }
 function renderMarkerLegend(){ renderUnifiedLegend(); }
 
@@ -2068,12 +2077,12 @@ function handleAdministrativeRegionClick(ev,level,codeProp){
     ...(level==="village" ? {countyCode:f.getProperty("COUNTYCODE")} : {})
   };
   const idx=filter.regions.findIndex(region=>region.key===entry.key && region.code===entry.code);
-  if(regionMulti){
+  if(state.regionMulti){
     if(idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
   }else{
     filter.regions=(idx>=0 && filter.regions.length===1) ? [] : [entry];
   }
-  tab="visited";
+  state.tab="visited";
   document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("on",button.dataset.t==="visited"));
   applyFilter({fitViewport:false});
 }
@@ -2258,11 +2267,11 @@ const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
   if (filter.placeId && !places[filter.placeId]) filter.placeId = "";  // Place gone (last Visit deleted)
-  if (tab !== "visited" && tab !== "trips") tab = "visited";
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
-  document.getElementById("searchWrap").style.display = tab === "trips" ? "none" : "block";
+  if (state.tab !== "visited" && state.tab !== "trips") state.tab = "visited";
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === state.tab));
+  document.getElementById("searchWrap").style.display = state.tab === "trips" ? "none" : "block";
   const el = document.getElementById("list");
-  if (tab === "trips"){ renderTrips(el); return; }
+  if (state.tab === "trips"){ renderTrips(el); return; }
 
   const reorderScope=visitReorderScope();
   const oneDay=singleDayDate();
@@ -2424,13 +2433,13 @@ function openSeed(seed){
   if(existing) openEditor(existing.id,null,{addVisit:true});
   else openEditor(null,seed);
 }
-// Reflect the current searchMode in the box (placeholder, toggle glyph) and,
+// Reflect the current state.searchMode in the box (placeholder, toggle glyph) and,
 // when leaving filter mode, drop the keyword.
 function applySearchMode(){
   const input = document.getElementById("search");
   const toggle = document.getElementById("searchModeToggle");
   if (!input || !toggle) return;
-  if (searchMode === "filter"){
+  if (state.searchMode === "filter"){
     toggle.textContent = "🔍";
     input.placeholder = "篩選造訪…(依地點名稱)";
     if (input.value !== filter.q) input.value = filter.q;
@@ -2445,12 +2454,12 @@ function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
   document.getElementById("searchModeToggle").onclick = () => {
-    searchMode = searchMode === "add" ? "filter" : "add";
+    state.searchMode = state.searchMode === "add" ? "filter" : "add";
     applySearchMode();
     input.focus();
   };
   input.oninput = () => {
-    if (searchMode === "filter"){
+    if (state.searchMode === "filter"){
       filter.q = input.value;
       applyFilter();
       return;
@@ -2624,7 +2633,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       if(!isCurrent()) return;
       await repo.setContribution(savedVisitId,personal);
       if(isCreate){
-        lastNewVisitDate=date;
+        state.lastNewVisitDate=date;
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
         await repo.setDayOrder(date,normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]));
       }
@@ -2660,9 +2669,9 @@ function renderTrips(el){
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
-    filter.tripId = t.id; tab = "visited";
+    filter.tripId = t.id; state.tab = "visited";
     forgetLastNewVisitDate();
-    dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
+    state.dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });

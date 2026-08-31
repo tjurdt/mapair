@@ -86,15 +86,25 @@ modules. Each sub-step is its own PR, guarded by the Phase 0 suite.
 **Exit criteria per sub-step:** new module has tests; `main.js` calls it and
 holds no second copy of that logic; Phase 0 suite and `npm test` green.
 
-## Phase 2 — Single state object + single render entry point
+## Phase 2 — Single state object + single render entry point *(in progress)*
 
-Collapse the ~60 globals into one `state` object (moved one group at a time:
-filters → map presentation → navigation → interaction). Convert Firestore
-snapshots and UI events into named updates that call one `render()` dispatch,
-making the `applyFilter()` cascade explicit instead of implicit.
+Collapse the ~70 globals into one `state` object, one group per PR (pure
+namespacing, E2E-guarded), then convert UI events into named updates that call
+one `render()` dispatch, making the `applyFilter()` cascade explicit.
 
-**Exit criteria:** one documented owner per former global; state transitions
-testable without a browser; Phase 0 suite green.
+1. **View flags (done).** `state.searchMode` / `lastNewVisitDate` /
+   `numberPins` / `regionMulti` / `legendCollapsed`.
+2. **`state.tab` (done).** Careful around the `.tab` CSS class.
+3. **`state.dateScope` + `state.pickedMonth` (done).** Bundled with 2.
+4. `state.filter` (the `{ who, tripId, cats, from, to, regions, placeId, q }`
+   object — the big one). Its own PR.
+5. Map presentation (`markerMode`, `choroAlpha`, `choroMetric`, `showPins`,
+   `adminLevel`, `proximityEnabled`, `addMode`, `tab`-adjacent).
+6. Then: `setState(patch)` / named actions, folding the `applyFilter()` /
+   `refreshFilterUI()` / `applySearchMode()` call combos into the dispatch.
+
+**Exit criteria:** one documented owner per former global; adding a filter
+field touches one place; Phase 0 suite green.
 
 ## Phase 3 — Extract rendering surface by surface *(in progress)*
 
