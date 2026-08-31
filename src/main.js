@@ -236,15 +236,19 @@ function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
-// Slices of the app's view state, moved off free-standing globals one group
-// at a time (docs/REFACTOR_PLAN.md Phase 2).
-//   searchMode: "add" — the search box adds a Place; "filter" — filters the
-//     visited list by Place name (filter.q). Cycled by #searchModeToggle.
-//   lastNewVisitDate: the date of the last Visit created since load / since the
-//     Trip or date scope last changed — the "ditto" default.
+// The app's view state, being moved off free-standing globals one group at a
+// time (docs/REFACTOR_PLAN.md Phase 2).
 const state = {
   tab: "visited",
+  // dateScope: month / lastmonth / pickedMonth / today / custom / all.
+  // pickedMonth backs the pickedMonth scope.
+  dateScope: "month",
+  pickedMonth: new Date().toISOString().slice(0, 7),
+  // searchMode: "add" — the search box adds a Place; "filter" — filters the
+  // visited list by Place name (filter.q). Cycled by #searchModeToggle.
   searchMode: "add",
+  // lastNewVisitDate: the last Visit created since load / since the Trip or
+  // date scope changed — the "ditto" default.
   lastNewVisitDate: "",
   numberPins: false,
   regionMulti: false,
@@ -252,8 +256,6 @@ const state = {
 };
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
-let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
-let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
 function forgetLastNewVisitDate(){ state.lastNewVisitDate = ""; }
 
@@ -270,17 +272,17 @@ function currentMonth(offset=0){
 function applyDateScope(){
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
   const today = `${y}-${pad(m+1)}-${pad(now.getDate())}`;
-  if (dateScope === "today"){ filter.from = today; filter.to = today; }
-  else if (dateScope === "month"){
-    pickedMonth=currentMonth(0); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  if (state.dateScope === "today"){ filter.from = today; filter.to = today; }
+  else if (state.dateScope === "month"){
+    state.pickedMonth=currentMonth(0); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
   }
-  else if (dateScope === "lastmonth"){
-    pickedMonth=currentMonth(-1); const b=monthBounds(pickedMonth); filter.from=b.from; filter.to=b.to;
+  else if (state.dateScope === "lastmonth"){
+    state.pickedMonth=currentMonth(-1); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
   }
-  else if (dateScope === "pickedMonth"){
-    const b=monthBounds(pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
+  else if (state.dateScope === "pickedMonth"){
+    const b=monthBounds(state.pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
   }
-  else if (dateScope === "all"){ filter.from = ""; filter.to = ""; }
+  else if (state.dateScope === "all"){ filter.from = ""; filter.to = ""; }
   // custom: 由使用者的起訖輸入決定
 }
 function defaultDateForNewVisit(){
@@ -289,7 +291,7 @@ function defaultDateForNewVisit(){
     lastNewVisitDate: state.lastNewVisitDate,
     tripStart: tripId ? tripSequenceBounds(tripId).from : "",
     singleDay: singleDayDate(),
-    dateScope,
+    dateScope: state.dateScope,
     rangeStart: filter.from,
     today: new Date().toISOString().slice(0,10)
   });
@@ -448,7 +450,7 @@ function passFilter(p){
 function listIsFiltered(){
   return filter.who!=="all" || filter.tripId!=="all" || filter.cats.size>0
     || filter.regions.length>0 || !!filter.q.trim() || !!filter.placeId
-    || dateScope!=="month";
+    || state.dateScope!=="month";
 }
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
@@ -833,37 +835,37 @@ async function renderApp(){
     e.currentTarget.textContent = opening ? "更多 ▴" : "更多 ▾";
   };
   document.getElementById("fl_scope").onchange = e => {
-    dateScope = e.target.value;
+    state.dateScope = e.target.value;
     forgetLastNewVisitDate();
-    if (dateScope === "pickedMonth" && !pickedMonth) pickedMonth=currentMonth(0);
+    if (state.dateScope === "pickedMonth" && !state.pickedMonth) state.pickedMonth=currentMonth(0);
     applyDateScope();
-    if (dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
+    if (state.dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
     refreshFilterUI(); applyFilter();
-    if (dateScope === "pickedMonth"){
+    if (state.dateScope === "pickedMonth"){
       const mi=document.getElementById("fl_month");
       setTimeout(()=>{ try{ mi.showPicker?.(); }catch(e){} mi.focus(); },0);
     }
   };
   document.getElementById("fl_month").onchange = e => {
     if(!e.target.value) return;
-    pickedMonth=e.target.value; dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
+    state.pickedMonth=e.target.value; state.dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
   };
   document.getElementById("fl_trip").onchange = e => {
     filter.tripId = e.target.value;
     forgetLastNewVisitDate();
     // Picking a specific Trip shows the whole Trip, not the current month.
     if (e.target.value!=="all" && e.target.value!=="daily" && trips[e.target.value]){
-      dateScope = "all"; filter.from = ""; filter.to = "";
+      state.dateScope = "all"; filter.from = ""; filter.to = "";
       refreshFilterUI();
     }
     applyFilter();
   };
   document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
-  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
-  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
-    dateScope = "all";
+    state.dateScope = "all";
     state.searchMode = "add";
     forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
@@ -959,7 +961,7 @@ function refreshFilterUI(){
     ["month","本月"],["lastmonth","上個月"],["pickedMonth","選月份…"],
     ["today","今天"],["custom","自訂期間"],["all","全部"]
   ].map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("");
-  scope.value = dateScope;
+  scope.value = state.dateScope;
   trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
   trip.value = filter.tripId;
@@ -975,8 +977,8 @@ function refreshFilterUI(){
   document.getElementById("fl_from").value = filter.from;
   document.getElementById("fl_to").value = filter.to;
   const mq=document.getElementById("monthQuick"), mi=document.getElementById("fl_month");
-  if(mq){ mq.classList.toggle("show",dateScope==="pickedMonth"); }
-  if(mi) mi.value=pickedMonth||currentMonth(0);
+  if(mq){ mq.classList.toggle("show",state.dateScope==="pickedMonth"); }
+  if(mi) mi.value=state.pickedMonth||currentMonth(0);
   const fc = document.getElementById("fl_cats");
   fc.innerHTML = spaceCats.length
     ? spaceCats.map(c=>`<span class="chip ${filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
@@ -994,7 +996,7 @@ function renderFilterChips(){
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
-  if (["month","lastmonth","pickedMonth"].includes(dateScope) && filter.from){
+  if (["month","lastmonth","pickedMonth"].includes(state.dateScope) && filter.from){
     html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
   }
   const seq=sequenceContext();
@@ -2669,7 +2671,7 @@ function renderTrips(el){
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
     filter.tripId = t.id; state.tab = "visited";
     forgetLastNewVisitDate();
-    dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
+    state.dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });
