@@ -116,15 +116,17 @@ assert.equal(deepestLevel(["unknown"],LEVELS),null);
 
 const mainSource=await readFile(new URL("../src/main.js",import.meta.url),"utf8");
 const mapColorSource=await readFile(new URL("../src/map-color-scales.js",import.meta.url),"utf8");
-const settingsBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceSettings"),mainSource.indexOf("function runtimeSessionIsCurrent"));
+const settingsSource=await readFile(new URL("../src/ui/settings.js",import.meta.url),"utf8");
 for(const text of ["地圖上色","上色依據","透明度"]){
-  assert.match(settingsBlock,new RegExp(text),`No-Space settings contain ${text}`);
+  assert.match(settingsSource,new RegExp(text),`the settings panel contains ${text}`);
 }
-assert.match(settingsBlock,/id="ns_metric"[\s\S]*MAP_AREA_METRIC_OPTIONS/,"No-Space settings render the shared area metric options");
+assert.match(settingsSource,/id="ns_metric"[\s\S]*catalog\.areaMetrics/,"the settings panel renders the injected area metric options");
+assert.match(mainSource,/areaMetrics:\s*MAP_AREA_METRIC_OPTIONS/,"main.js passes the shared area metric options into the settings panel");
 for(const text of ["造訪深度","地標數","造訪次數","最早造訪日期","最後造訪日期","造訪目的（眾數）"]){
   assert.match(mainSource,new RegExp(text),`shared area metric options contain ${text}`);
 }
-assert.match(settingsBlock,/metric\.onchange\s*=\s*event\s*=>\s*setMapAreaMetric\(event\.target\.value\)/,"changing the No-Space area metric uses the shared refresh path");
+assert.match(settingsSource,/metric\.onchange\s*=\s*\(event\)\s*=>\s*onMetric\(event\.target\.value\)/,"the settings panel routes a metric change to its onMetric callback");
+assert.match(mainSource,/onMetric:\s*value\s*=>\s*setMapAreaMetric\(value\)/,"main.js wires onMetric to the shared refresh path");
 assert.match(mainSource,/function setMapAreaMetric\(metric\)\s*{\s*choroMetric=metric;\s*refreshMapSurfaces\(\);\s*}/,"changing the metric refreshes every active map surface");
 assert.match(mainSource,/choroMetric==="categoryMode"/,"administrative and proximity rendering support category mode");
 assert.match(mainSource,/choroMetric==="visitCount"/,"administrative and proximity rendering support Visit count");

@@ -86,6 +86,7 @@ import { defaultNewVisitDate } from "./domain/visit-defaults.js";
 import { modal, closeModal, closeAllModals } from "./ui/modal.js";
 import { esc } from "./ui/html.js";
 import { openTripEditor } from "./ui/trip-editor.js";
+import { openSettingsPanel } from "./ui/settings.js";
 
 /* ============================================================
    1) 設定
@@ -1069,85 +1070,34 @@ async function initMap(){
 // was active when its listener was attached (§16). Any listener whose captured
 // session is no longer current must ignore its data.
 function openNoSpaceSettings(){
-  const markerOpts = [["cat","活動"],["level","我的足跡深度"],["who","參與者"],["trip","旅程"],["rating","我的評分"],["dateFirst","首次造訪"],["dateLast","最近造訪"]];
-  const metricLocked = proximityEnabled;
-  const draftPicks = new Set(categoryPicks);
-  const draftCatColors = {};
-  const draftLevelColors = {};
-  const catColorValue = name => draftCatColors[name] || catColors[name] || CATEGORY_PRESET_COLORS[name] || "#9aa5ad";
-  const levelColorValue = level => draftLevelColors[level] || levelColors[level] || LEVEL_COLORS[level];
-  const categoryRows = CATEGORY_PRESETS.map(([name])=>{
-    const locked = name === "其他";
-    return `
-    <label class="srow" style="cursor:${locked?'default':'pointer'}">
-      <span><input type="checkbox" class="ns_catpick" data-cat="${esc(name)}" ${locked||draftPicks.has(name)?'checked':''} ${locked?'disabled':''} style="width:16px;height:16px;margin-right:8px;vertical-align:middle">${esc(name)}${locked?'<span style="color:var(--ink-soft);font-size:12px"> · 一律顯示</span>':''}</span>
-      <input type="color" class="ns_catcolor" data-cat="${esc(name)}" value="${catColorValue(name)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px">
-    </label>`;
-  }).join("");
-  const levelRows = LEVEL_ORDER.slice().reverse().map(level=>`
-    <div class="colitem"><span>${esc(level)}</span>
-      <input type="color" class="ns_levelcolor" data-level="${esc(level)}" value="${levelColorValue(level)}" style="width:40px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px"></div>`).join("");
-  modal(`
-    <h2 style="margin-bottom:14px">設定</h2>
-    <div class="sethead">顯示</div>
-    <div class="srow"><span>顯示地點標記</span><input type="checkbox" id="ns_pins" ${showPins?'checked':''} style="width:18px;height:18px"></div>
-    <div class="srow"><span>標記顏色</span><select id="ns_markermode" class="sselect">${markerOpts.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>
-    <div class="sethead">地圖上色</div>
-    <div class="srow"><span>上色依據</span>${metricLocked
-      ? `<select class="sselect" disabled title="鄰近圖層開啟時，範圍會沿用地標顏色"><option>與標記顏色連動（鄰近）</option></select>`
-      : `<select id="ns_metric" class="sselect">${MAP_AREA_METRIC_OPTIONS.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select>`}</div>
-    ${metricLocked?`<div class="admin" style="margin:-2px 0 4px">鄰近圖層開啟時，周圍範圍會直接沿用地標的顏色。</div>`:""}
-    <div class="srow"><span>透明度</span><input type="range" id="ns_alpha" min="10" max="90" value="${Math.round(choroAlpha*100)}" style="flex:0 0 55%"></div>
-    <div class="sethead">「做什麼」選項</div>
-    <div class="admin" style="margin-bottom:4px">勾選的項目會出現在新增造訪的「做什麼」下拉選單；右側可改顏色。</div>
-    ${categoryRows}
-    <div class="sethead">造訪深度顏色</div>
-    <div class="colgrid">${levelRows}</div>
-    <div class="sethead">個人資料</div>
-    <input id="ns_name" value="${esc(noSpaceState.profiles[user.uid]?.displayName || me())}" placeholder="顯示名稱" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px">
-    <div class="sethead">好友</div>
-    <div class="row" style="margin-top:2px"><button class="btn grey" id="ns_friends_open">管理好友</button></div>
-    <div class="row" style="margin-top:12px"><button class="btn" id="ns_done">完成</button></div>
-  `);
-  const mode = document.getElementById("ns_markermode");
-  mode.value = markerMode;
-  mode.onchange = event => { markerMode=event.target.value; renderMarkers(); };
-  const metric = document.getElementById("ns_metric");
-  if (metric){
-    metric.value = choroMetric;
-    metric.onchange = event => setMapAreaMetric(event.target.value);
-  }
-  document.getElementById("ns_pins").onchange = event => { showPins=event.target.checked; renderMarkers(); };
-  document.getElementById("ns_alpha").oninput = event => { choroAlpha=(+event.target.value)/100; refreshMapSurfaces(); };
-  document.querySelectorAll(".ns_catpick").forEach(box => box.onchange = () => {
-    if (box.checked) draftPicks.add(box.dataset.cat); else draftPicks.delete(box.dataset.cat);
-  });
-  document.querySelectorAll(".ns_catcolor").forEach(input => input.oninput = () => { draftCatColors[input.dataset.cat] = input.value; });
-  document.querySelectorAll(".ns_levelcolor").forEach(input => input.oninput = () => { draftLevelColors[input.dataset.level] = input.value; });
-
-  document.getElementById("ns_friends_open").onclick = () => openFriendsManager();
-
-  document.getElementById("ns_done").onclick = async() => {
-    const repo = noSpaceRepository, session = runtimeSession, uid = user.uid;
-    const nextPicks = CATEGORY_PRESET_NAMES.filter(name => name === "其他" || draftPicks.has(name));
-    const nextCatColors = {};
-    for (const name of CATEGORY_PRESET_NAMES){
-      const value = draftCatColors[name] || catColors[name];
-      if (value && value.toLowerCase() !== String(CATEGORY_PRESET_COLORS[name] || "").toLowerCase()) nextCatColors[name] = value;
-    }
-    const nextLevelColors = {};
-    for (const level of LEVEL_ORDER){
-      const value = draftLevelColors[level] || levelColors[level];
-      if (value && value.toLowerCase() !== LEVEL_COLORS[level].toLowerCase()) nextLevelColors[level] = value;
-    }
-    if (repo && runtimeSessionIsCurrent(session,uid)){
-      await repo.updateOwnProfile({ displayName:document.getElementById("ns_name").value, photoURL:user.photoURL || "" });
-      await repo.updateOwnPreferences({ categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors });
-      noSpaceState.profiles[uid] = { ...(noSpaceState.profiles[uid] || {}), categoryPicks:nextPicks, categoryColors:nextCatColors, levelColors:nextLevelColors };
+  const isCurrent = currentRuntimeGuard();
+  openSettingsPanel({
+    values:{
+      showPins, markerMode, choroMetric, choroAlpha, proximityEnabled,
+      displayName: noSpaceState.profiles[user.uid]?.displayName || me()
+    },
+    categoryPicks, catColors, levelColors,
+    catalog:{
+      areaMetrics: MAP_AREA_METRIC_OPTIONS,
+      categoryPresets: CATEGORY_PRESETS,
+      categoryPresetColors: CATEGORY_PRESET_COLORS,
+      categoryPresetNames: CATEGORY_PRESET_NAMES,
+      levelOrder: LEVEL_ORDER,
+      levelDefaults: LEVEL_COLORS
+    },
+    onMarkerMode: value => { markerMode = value; renderMarkers(); },
+    onShowPins: value => { showPins = value; renderMarkers(); },
+    onAlpha: value => { choroAlpha = value; refreshMapSurfaces(); },
+    onMetric: value => setMapAreaMetric(value),
+    onOpenFriends: () => openFriendsManager(),
+    onSave: async ({ displayName, categoryPicks: picks, categoryColors, levelColors: lvlColors }) => {
+      if (!(noSpaceRepository && isCurrent())) return;
+      await noSpaceRepository.updateOwnProfile({ displayName, photoURL: user.photoURL || "" });
+      await noSpaceRepository.updateOwnPreferences({ categoryPicks: picks, categoryColors, levelColors: lvlColors });
+      noSpaceState.profiles[user.uid] = { ...(noSpaceState.profiles[user.uid] || {}), categoryPicks: picks, categoryColors, levelColors: lvlColors };
       refreshNoSpaceProjection();
     }
-    closeModal();
-  };
+  });
 }
 
 /* ---------- 好友管理 ---------- */

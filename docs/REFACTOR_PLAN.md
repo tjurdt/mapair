@@ -110,7 +110,11 @@ module.
    repo, isCurrent, onSaved }` into `openTripEditor`. `esc` moved to
    `src/ui/html.js`; the Trip emoji list moved into the module. `main.js`
    lost ~68 lines.
-3. `src/ui/settings.js` — `openNoSpaceSettings`.
+3. **`src/ui/settings.js` (done).** `openNoSpaceSettings` is a wrapper that
+   injects current values, a `catalog` of the shared constants, and
+   `onMarkerMode / onShowPins / onAlpha / onMetric / onOpenFriends / onSave`
+   callbacks. The panel owns the draft state and the save-diff. New
+   `settings.spec.mjs` covers the "做什麼" pick and depth-colour save paths.
 4. `src/ui/friends.js` — `openFriendsManager`. **Add its first E2E first**
    (currently zero coverage), then extract.
 5. `src/ui/visit-editor.js` — `openNoSpaceVisitEditor` (most coupled; last).

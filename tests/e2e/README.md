@@ -65,6 +65,7 @@ emulator database** first.
   activity → 住宿 depth link, and the Trip-editor date seeding.
 - `search-filter.spec.mjs` — the search box's add / filter-by-keyword toggle.
 - `trip-editor.spec.mjs` — Trip create / rename / delete through the modal.
+- `settings.spec.mjs` — settings panel "做什麼" pick + depth-colour save paths.
 
 These track the "Automation: Yes" rows of
 `docs/archive/baseline/BEHAVIOR_CHECKLIST.md`. Real map pixels, viewport
