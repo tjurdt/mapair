@@ -198,12 +198,12 @@ let selfMarker = null;                       // "你的位置" dot from the loca
 let focusedPlaceId = null, focusedPlaceTimer = null; // highlighted marker after a list tap
 let places = {}, trips = {}, tab = "visited";
 let adminLevel = "off", adminLayer = null, adminContextLayer = null, geoCache = {};
-let showPins = true, choroAlpha = 0.7, choroMetric = "level", numberPins = false;
+let showPins = true, choroAlpha = 0.7, choroMetric = "level";
 let catColors = {}, markerMode = "cat", lastMarkerClick = 0;
 let levelColors = { ...LEVEL_COLORS }, addMode = false;
 // Per-user "做什麼" preferences: which presets appear in the picker, plus colour overrides.
 let categoryPicks = [...CATEGORY_DEFAULT_PICKS];
-let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0, legendCollapsed = false;
+let adminLayerLevel = null, adminContextLevel = null, adminRenderVersion = 0;
 let proximityStorage = null;
 try { proximityStorage = globalThis.localStorage; } catch(e) {}
 const initialProximityPreferences = readProximityPreferences(proximityStorage);
@@ -236,19 +236,25 @@ function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
 let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
-// "add" — the search box adds a Place; "filter" — it filters the list by Place
-// name (filter.q). Cycled by #searchModeToggle.
-let searchMode = "add";
-let regionMulti = false;
+// Slices of the app's view state, moved off free-standing globals one group
+// at a time (docs/REFACTOR_PLAN.md Phase 2).
+//   searchMode: "add" — the search box adds a Place; "filter" — filters the
+//     visited list by Place name (filter.q). Cycled by #searchModeToggle.
+//   lastNewVisitDate: the date of the last Visit created since load / since the
+//     Trip or date scope last changed — the "ditto" default.
+const state = {
+  searchMode: "add",
+  lastNewVisitDate: "",
+  numberPins: false,
+  regionMulti: false,
+  legendCollapsed: false
+};
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
 let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
 let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
-// The date of the last Visit created since load / since the Trip or date scope
-// last changed. Drives the "ditto" default in defaultDateForNewVisit.
-let lastNewVisitDate = "";
-function forgetLastNewVisitDate(){ lastNewVisitDate = ""; }
+function forgetLastNewVisitDate(){ state.lastNewVisitDate = ""; }
 
 function monthBounds(ym){
   if (!/^\d{4}-\d{2}$/.test(ym||"")) return null;
@@ -279,7 +285,7 @@ function applyDateScope(){
 function defaultDateForNewVisit(){
   const tripId = specificTripId();
   return defaultNewVisitDate({
-    lastNewVisitDate,
+    lastNewVisitDate: state.lastNewVisitDate,
     tripStart: tripId ? tripSequenceBounds(tripId).from : "",
     singleDay: singleDayDate(),
     dateScope,
@@ -779,8 +785,8 @@ async function renderApp(){
   document.getElementById("setBtn").onclick = openSettings;
   document.getElementById("friendsBtn").onclick = openFriendsManager;
   document.getElementById("multiBtn").onclick = e => {
-    regionMulti = !regionMulti;
-    e.target.classList.toggle("on", regionMulti);
+    state.regionMulti = !state.regionMulti;
+    e.target.classList.toggle("on", state.regionMulti);
   };
   const proximityRadiusInput = document.getElementById("proximityRadius");
   const saveProximityPreferences = () => writeProximityPreferences(proximityStorage, {
@@ -857,7 +863,7 @@ async function renderApp(){
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
     dateScope = "all";
-    searchMode = "add";
+    state.searchMode = "add";
     forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
@@ -993,7 +999,7 @@ function renderFilterChips(){
   const seq=sequenceContext();
   if (tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
-    html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
+    html += `<button class="fchip ${state.numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${state.numberPins?'●':'○'} ${label}</button>`;
   }
   if (filter.q.trim()){
     html += `<span class="fchip active">🔍 ${esc(filter.q.trim())} <b data-clearq="1">✕</b></span>`;
@@ -1005,7 +1011,7 @@ function renderFilterChips(){
   }
   el.innerHTML = html;
   const op = document.getElementById("orderPinToggle");
-  if (op) op.onclick = () => { numberPins=!numberPins; renderFilterChips(); renderMarkers(); };
+  if (op) op.onclick = () => { state.numberPins=!state.numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
     filter.regions.splice(+x.dataset.rx, 1); applyFilter();
   });
@@ -1015,7 +1021,7 @@ function renderFilterChips(){
   if (cq) cq.onclick = () => {
     filter.q = "";
     const input = document.getElementById("search");
-    if (input && searchMode === "filter") input.value = "";
+    if (input && state.searchMode === "filter") input.value = "";
     applyFilter();
   };
 }
@@ -1434,7 +1440,7 @@ function resetRuntimeState(){
   adminLevel = "off";
   proximityEnabled = false;
   regionLegendState = null;
-  regionMulti = false;
+  state.regionMulti = false;
   proximityMaskIndex = null;
   selectedRegionMaskCache = { identity:"", maskIndex:null };
   proximityGeometryCache.clear();
@@ -1583,7 +1589,7 @@ function renderMarkers(){
   if (!showPins) return;
 
   const seq=sequenceContext();
-  if (seq && numberPins){
+  if (seq && state.numberPins){
     const labelled=sequenceLabels();
     const totals={}; labelled.forEach(x=>totals[x.o.p.id]=(totals[x.o.p.id]||0)+1);
     const seen={};
@@ -1656,7 +1662,7 @@ function dateMarkerLegendBody(){
 function markerLegendBody(){
   if (!showPins) return "";
   const titles = { cat:"在這裡做什麼", level:"造訪深度", who:"誰去的", trip:"哪趟旅程", rating:"評分", dateFirst:"最早造訪", dateLast:"最後造訪" };
-  const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && numberPins;
+  const seq=sequenceContext(), orderMode=tab==="visited" && !!seq && state.numberPins;
   let order="";
   if(orderMode){
     const txt=seq.type==="trip" ? "D1-1 = 第1天第1站" : "數字 = 當日造訪順序";
@@ -1746,9 +1752,9 @@ function renderUnifiedLegend(){
   const hasProximity=proximityEnabled;
   if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
   el.style.display="block";
-  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${legendCollapsed?"▸":"▾"}</span></div>`;
-  el.innerHTML=head+(legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
-  document.getElementById("legendHead").onclick=()=>{ legendCollapsed=!legendCollapsed; renderUnifiedLegend(); };
+  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${state.legendCollapsed?"▸":"▾"}</span></div>`;
+  el.innerHTML=head+(state.legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
+  document.getElementById("legendHead").onclick=()=>{ state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
 }
 function renderMarkerLegend(){ renderUnifiedLegend(); }
 
@@ -2068,7 +2074,7 @@ function handleAdministrativeRegionClick(ev,level,codeProp){
     ...(level==="village" ? {countyCode:f.getProperty("COUNTYCODE")} : {})
   };
   const idx=filter.regions.findIndex(region=>region.key===entry.key && region.code===entry.code);
-  if(regionMulti){
+  if(state.regionMulti){
     if(idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
   }else{
     filter.regions=(idx>=0 && filter.regions.length===1) ? [] : [entry];
@@ -2424,13 +2430,13 @@ function openSeed(seed){
   if(existing) openEditor(existing.id,null,{addVisit:true});
   else openEditor(null,seed);
 }
-// Reflect the current searchMode in the box (placeholder, toggle glyph) and,
+// Reflect the current state.searchMode in the box (placeholder, toggle glyph) and,
 // when leaving filter mode, drop the keyword.
 function applySearchMode(){
   const input = document.getElementById("search");
   const toggle = document.getElementById("searchModeToggle");
   if (!input || !toggle) return;
-  if (searchMode === "filter"){
+  if (state.searchMode === "filter"){
     toggle.textContent = "🔍";
     input.placeholder = "篩選造訪…(依地點名稱)";
     if (input.value !== filter.q) input.value = filter.q;
@@ -2445,12 +2451,12 @@ function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
   document.getElementById("searchModeToggle").onclick = () => {
-    searchMode = searchMode === "add" ? "filter" : "add";
+    state.searchMode = state.searchMode === "add" ? "filter" : "add";
     applySearchMode();
     input.focus();
   };
   input.oninput = () => {
-    if (searchMode === "filter"){
+    if (state.searchMode === "filter"){
       filter.q = input.value;
       applyFilter();
       return;
@@ -2624,7 +2630,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       if(!isCurrent()) return;
       await repo.setContribution(savedVisitId,personal);
       if(isCreate){
-        lastNewVisitDate=date;
+        state.lastNewVisitDate=date;
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
         await repo.setDayOrder(date,normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]));
       }
