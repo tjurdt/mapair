@@ -107,7 +107,7 @@ assert.deepEqual(layoutViewState({map:true,filter:false,list:false},false), {
 assert.equal(layoutViewState({map:false,filter:true,list:true},false).compactSidebar, true, "closed content-only sidebar is compact");
 assert.equal(layoutViewState({map:false,filter:true,list:true},true).compactSidebar, false, "opening the layout menu temporarily expands the sidebar");
 assert.equal(layoutViewState({map:false,filter:true,list:true},false).contentHidden, true, "both content areas hide tabs and empty side content");
-const indexHtml=fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const appCss=fs.readFileSync(new URL("../src/styles/app.css", import.meta.url), "utf8");
 const mainSource=fs.readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const renderMarkersSource=mainSource.slice(mainSource.indexOf("function renderMarkers()"),mainSource.indexOf("function dateMarkerLegendBody()"));
 assert.equal(
@@ -119,10 +119,10 @@ assert.doesNotMatch(renderMarkersSource,/pin\.element/,"marker rendering does no
 assert.match(renderMarkersSource,/pin\.style\.cursor = "pointer";/,"the normal-mode PinElement is styled directly, not via a deprecated inner element");
 assert.match(renderMarkersSource,/content = pin;[\s\S]*?new AdvMarker\(\{ map, position:\{lat:p\.lat,lng:p\.lng\}, content,/,"the PinElement is passed to AdvancedMarkerElement as its content");
 assert.match(renderMarkersSource,/placeVisits\(p\)\.filter\(v=>visitPassFilter\(p,v\)\)\.length/,"a Place's repeated-Visit count is derived from the filtered Visit list");
-assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
-assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
-assert.match(indexHtml,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
-assert.match(indexHtml,/\.wrap\.layout-compact\{grid-template-columns:1fr;grid-template-rows:minmax\(0,1fr\) auto\}/,"mobile compact state expands the map vertically");
+assert.match(appCss,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
+assert.match(appCss,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
+assert.match(appCss,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
+assert.match(appCss,/\.wrap\.layout-compact\{grid-template-columns:1fr;grid-template-rows:minmax\(0,1fr\) auto\}/,"mobile compact state expands the map vertically");
 
 const combinedSurface = { adminLevel:"town", proximityEnabled:true };
 assert.deepEqual(

@@ -13,12 +13,20 @@ The abandoned `spaces/{spaceId}` multi-user design is archived under
 
 ## Repository shape
 
-- `index.html` — the document shell, all CSS, and an early non-module script that
-  installs global `error` / `unhandledrejection` handlers (`window.__fatal`).
-- `src/main.js` — the imperative application: shared mutable state, rendering,
-  Firebase access, Google Maps integration, and UI wiring. There is no router or
-  component framework; rendering replaces DOM subtrees with template strings and
-  rebinds handlers.
+- `index.html` — the document shell, a `<link>` to `src/styles/app.css`, and an
+  early non-module script that installs global `error` / `unhandledrejection`
+  handlers (`window.__fatal`).
+- `src/styles/app.css` — all of the app's CSS (one file; Vite hashes and links
+  it in the build).
+- `src/main.js` — the imperative application core: shared mutable state, the
+  render/data plumbing, Firebase access, Google Maps integration, and top-level
+  UI wiring. There is no router or component framework; rendering replaces DOM
+  subtrees with template strings and rebinds handlers.
+- `src/ui/` — the extracted UI surfaces: `modal.js`, `html.js` (`esc`), and the
+  `trip-editor` / `settings` / `friends` / `visit-editor` panels. Each takes an
+  injected context + callbacks from `main.js` and owns its own markup + wiring.
+- `src/domain/` — pure, tested helpers pulled out of `main.js`: `occurrences`,
+  `filter`, `marker-color`, `visit-defaults`.
 - `src/config.js` — `resolveRuntimeConfig()`: environment safety check and the
   embedded Firebase / Google configuration.
 - `src/no-space/` — Firebase-free domain logic plus the Firestore repository:
