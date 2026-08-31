@@ -58,7 +58,6 @@ import {
   quantitativeColor
 } from "./map-color-scales.js";
 import { createNoSpaceRepository } from "./no-space/repository.js";
-import { averageSubmittedRating, participantContributions } from "./no-space/contributions.js";
 import { normalizeDayOrder, reorderDayVisitIds } from "./no-space/day-order.js";
 import { canDeleteTrip, canDeleteVisit, retainCurrentParticipant } from "./no-space/policies.js";
 import { tripReferenceState, visitParticipantsFromTrip } from "./no-space/trips.js";
@@ -85,6 +84,7 @@ import { esc } from "./ui/html.js";
 import { openTripEditor } from "./ui/trip-editor.js";
 import { openSettingsPanel } from "./ui/settings.js";
 import { openFriendsPanel } from "./ui/friends.js";
+import { openVisitEditor } from "./ui/visit-editor.js";
 
 /* ============================================================
    1) 設定
@@ -2561,226 +2561,76 @@ function addDays(date,n){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 function openNoSpaceVisitEditor(id, seed, opts={}){
-  const repo=noSpaceRepository, editorSession=runtimeSession, editorUid=user.uid;
-  if (!repo || !runtimeSessionIsCurrent(editorSession,editorUid)) return;
+  const repo=noSpaceRepository, uid=user.uid;
+  if (!repo || !runtimeSessionIsCurrent(runtimeSession,uid)) return;
+  const isCurrent=currentRuntimeGuard();
+
   const runtimePlace=id?places[id]:null;
   const existingVisits=runtimePlace?placeVisits(runtimePlace):[];
   const focusIndex=Number.isFinite(Number(opts.focusVisitIndex))?Number(opts.focusVisitIndex):0;
   const existingVisit=!opts.addVisit&&id?existingVisits[focusIndex]||existingVisits[0]||null:null;
   const rawVisit=existingVisit?existingVisit._shared || noSpaceState.visits[existingVisit.id] || existingVisit:null;
   const creating=!rawVisit;
-  // Adding another Visit to a known Place (search-selected existing Place, or
-  // the list's DITTO button) carries over that Place's latest Visit category
-  // and participants as the starting point.
+  // Adding a Visit to a known Place (search-selected existing Place, or the
+  // list's DITTO button) carries over its latest Visit category + participants.
   const carryOver=opts.addVisit&&id?existingVisits[existingVisits.length-1]||null:null;
-  let selected=retainCurrentParticipant(rawVisit?.participantUserIds || carryOver?.participantIds || [editorUid],editorUid);
-  let selectedPlaceId=rawVisit?.placeId || id || "";
+
+  let initialSelected=retainCurrentParticipant(rawVisit?.participantUserIds || carryOver?.participantIds || [uid],uid);
+  const selectedPlaceId=rawVisit?.placeId || id || "";
   const initialPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId] || runtimePlace:seed || {};
   const initialTripId=rawVisit?.tripId || specificTripId() || "";
-  if (creating && initialTripId && trips[initialTripId]) selected=visitParticipantsFromTrip(trips[initialTripId],editorUid);
-  const allContributions=rawVisit?noSpaceState.contributions[rawVisit.id]||{}:{};
-  const scopedContributions=()=>participantContributions(allContributions,selected);
-  const mine=scopedContributions()[editorUid]||{};
-  // 造訪深度 is a shared Visit fact and decides whether the Visit is a stay.
+  if (creating && initialTripId && trips[initialTripId]) initialSelected=visitParticipantsFromTrip(trips[initialTripId],uid);
+
+  const initialDate=rawVisit?.date||defaultDateForNewVisit();
   const initialLevel=LEVEL_ORDER.includes(rawVisit?.level) ? rawVisit.level : (rawVisit?.kind==="stay" ? "住宿" : "旅遊");
-  const legacyImport=selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null;
-  const live=currentRuntimeGuard();
-  const allowNewPlace=creating&&!selectedPlaceId;
-  const memberList=orderedActiveMembers();
+
   const selectablePlaces={...noSpaceState.places};
   if(selectedPlaceId&&!selectablePlaces[selectedPlaceId]) selectablePlaces[selectedPlaceId]={id:selectedPlaceId,name:runtimePlace?.name||"Unknown place"};
-  const placeOptions=Object.values(selectablePlaces).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(place=>
-    `<option value="${esc(place.id)}" ${place.id===selectedPlaceId?'selected':''}>${esc(place.name||"未命名地點")}</option>`
-  ).join("");
-  const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(trip=>
-    `<option value="${esc(trip.id)}" ${trip.id===initialTripId?'selected':''}>${esc((trip.emoji?trip.emoji+" ":"")+(trip.name||""))}</option>`
-  ).join("");
-  const missingTripOption=rawVisit?.tripId&&!trips[rawVisit.tripId]
-    ?`<option value="${esc(rawVisit.tripId)}" selected>已刪除旅程</option>`:"";
-  const contributionRows=()=>{
-    const others=Object.entries(scopedContributions()).filter(([uid])=>uid!==editorUid);
-    return others.length?others.map(([uid,value])=>`
-      <div class="card compact" style="margin-bottom:8px">
-        <div class="cname">${esc(participantName(uid))}${value.rating?` · ★ ${value.rating}`:" · 尚未評分"}</div>
-        <div class="admin">${esc(value.memory||"尚未留下回憶")}</div>
-      </div>`).join(""):`<div class="admin">同行者尚未留下評分或回憶。</div>`;
-  };
-  const averageText=()=>{
-    const average=averageSubmittedRating(Object.values(scopedContributions()));
-    return `平均評分：${average==null?"尚未評分":`★ ${Math.round(average*100)/100}`}（只計已提交評分）`;
-  };
-  // 「做什麼」下拉：使用者勾選的預設 + 這筆造訪原本的預設值，「其他」永遠在最後，
-  // 選「其他」時打開自訂敘述框。非預設字串一律歸「其他」並帶入敘述框。
+  const placeOptions=Object.values(selectablePlaces).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(p=>({id:p.id,name:p.name}));
+  const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(t=>({id:t.id,name:t.name,emoji:t.emoji}));
+
   const currentCategory=rawVisit?.category||carryOver?.category||"";
   const categoryIsPreset=CATEGORY_PRESET_NAMES.includes(currentCategory)&&currentCategory!=="其他";
   const categoryOptionNames=[...new Set([
     ...CATEGORY_PRESET_NAMES.filter(name=>categoryPicks.includes(name)&&name!=="其他"),
     ...(categoryIsPreset?[currentCategory]:[])
   ])];
-  const categorySelected=categoryIsPreset?currentCategory:(currentCategory?"其他":"");
-  const categoryCustomText=(!categoryIsPreset&&currentCategory&&currentCategory!=="其他")?currentCategory:"";
-  const legacyImportHtml=legacyImport?`
-    <div class="editor-section legacy-record">
-      <div class="editor-section-head"><div><div class="editor-section-title">舊版共同記錄</div><div class="editor-section-note">從舊版保留下來，僅供閱讀。</div></div></div>
-      ${legacyImport.rating!=null?`<div class="legacy-record-row"><span>舊版評分</span><strong>★ ${esc(String(legacyImport.rating))}</strong></div>`:""}
-      ${legacyImport.review?`<div class="legacy-record-memory"><span>舊版回憶</span><p>${esc(legacyImport.review)}</p></div>`:""}
-      ${legacyImport.level?`<div class="legacy-record-row"><span>舊版足跡深度</span><strong>${esc(legacyImport.level)}</strong></div>`:""}
-    </div>`:"";
 
-  modal(`
-    <h2 style="margin-bottom:3px">${creating?"新增造訪":"編輯造訪"}</h2>
-    <div class="admin" style="margin-bottom:12px">同一天的足跡，可以在清單調整成你自己的順序。</div>
-    <div class="editor-section">
-      <div class="editor-section-head"><div><div class="editor-section-title">共同經歷</div><div class="editor-section-note">一起留下這次造訪的基本記錄。</div></div></div>
-      ${allowNewPlace
-        ? `<div class="field"><label>地點名稱</label><input id="ns_place_name" value="${esc(initialPlace?.name||seed?.name||"")}" placeholder="地點名稱"></div>`
-        : `<div class="field"><label>地點</label><select id="ns_place">${placeOptions}</select></div>`}
-      <div class="row">
-        <div class="field" style="flex:1"><label>日期</label><input type="date" id="ns_date" value="${rawVisit?.date||defaultDateForNewVisit()}"></div>
-        <div class="field" style="flex:1"><label>做什麼</label>
-          <select id="ns_category">
-            <option value="" ${categorySelected===""?'selected':''}>未指定</option>
-            ${categoryOptionNames.map(name=>`<option value="${esc(name)}" ${name===categorySelected?'selected':''}>${esc(name)}</option>`).join("")}
-            <option value="其他" ${categorySelected==="其他"?'selected':''}>其他</option>
-          </select>
-          <input id="ns_category_custom" placeholder="描述這個地點的活動" value="${esc(categoryCustomText)}" style="display:${categorySelected==="其他"?'block':'none'};margin-top:6px"></div>
-      </div>
-      <div class="field"><label>同行者</label>
-        <div class="pick partpick" id="ns_participants">${memberList.map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===editorUid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div>
-        <div id="ns_participants_hist" class="admin" style="margin-top:6px"></div>
-      </div>
-      <div class="field"><label>旅程</label><select id="ns_trip"><option value="">無</option>${missingTripOption}${tripOptions}</select></div>
-      <div class="row">
-        <div class="field" style="flex:1"><label>造訪深度</label><select id="ns_level">${LEVEL_ORDER.map(level=>`<option value="${esc(level)}" ${level===initialLevel?'selected':''}>${esc(level)}</option>`).join("")}</select></div>
-        <div class="field" id="ns_end_wrap" style="flex:1"><label>退房日期</label><input type="date" id="ns_end_date" value="${rawVisit?.endDate||addDays(rawVisit?.date||defaultDateForNewVisit(),1)}"></div>
-      </div>
-    </div>
-    <div class="editor-section">
-      <div class="editor-section-head"><div><div class="editor-section-title">我的記錄</div><div class="editor-section-note">這些內容只屬於你。</div></div></div>
-      <div class="field"><label>評分</label><div class="row" style="align-items:center"><input type="range" id="ns_rating" min="0" max="5" step="0.5" value="${mine.rating||0}" style="flex:1"><span id="ns_rating_value" style="width:70px;text-align:right">${mine.rating?`★ ${mine.rating}`:"尚未評分"}</span></div></div>
-      <div class="field"><label>回憶</label><textarea id="ns_memory" style="width:100%;min-height:72px" placeholder="寫下這次造訪的回憶">${esc(mine.memory||"")}</textarea></div>
-    </div>
-    ${rawVisit?`<div class="editor-section"><div class="editor-section-head"><div class="editor-section-title">同行者的記錄</div></div><div id="ns_other_contributions">${contributionRows()}</div><div class="admin contribution-average" id="ns_average">${averageText()}</div></div>`:""}
-    ${legacyImportHtml}
-    <div class="row"><button class="btn" id="ns_save">完成</button>${rawVisit&&canDeleteVisit(editorUid,rawVisit)?`<button class="danger" id="ns_delete">刪除這次造訪</button>`:""}</div>
-  `);
-  const g=id=>document.getElementById(id);
-  const endWrap=g("ns_end_wrap");
-  const refreshStay=()=>{ endWrap.style.display=g("ns_level").value==="住宿"?"block":"none"; };
-  refreshStay();
-  g("ns_level").onchange=refreshStay;
-  const categoryCustom=g("ns_category_custom");
-  // Recording 住宿 as the activity implies a 住宿-depth stay — whether it is
-  // picked from the list or typed into the free-text box.
-  const applyStayCategoryDepth=activity=>{
-    if(activity==="住宿" && g("ns_level").value!=="住宿"){ g("ns_level").value="住宿"; refreshStay(); }
-  };
-  g("ns_category").onchange=()=>{
-    const value=g("ns_category").value;
-    const isOther=value==="其他";
-    categoryCustom.style.display=isOther?"block":"none";
-    if(isOther) categoryCustom.focus();
-    applyStayCategoryDepth(value);
-  };
-  categoryCustom.onchange=()=>applyStayCategoryDepth(categoryCustom.value.trim());
-  g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
-  const refreshContributionVisibility=()=>{
-    if(g("ns_average")) g("ns_average").textContent=averageText();
-    if(g("ns_other_contributions")) g("ns_other_contributions").innerHTML=contributionRows();
-  };
-  const placeSelect=g("ns_place");
-  if(placeSelect) placeSelect.onchange=()=>{ selectedPlaceId=placeSelect.value; };
-  // Participants already on this Visit who are not selectable members
-  // (former friends, or people added before an unfriend). Kept on save; the
-  // creator can prune one, one-way — it cannot be re-added here.
-  const memberIdSet=new Set(memberList.map(m=>m.userId));
-  const renderHistoricalParticipants=()=>{
-    const box=g("ns_participants_hist"); if(!box) return;
-    const hist=selected.filter(id=>id!==editorUid && !memberIdSet.has(id));
-    box.style.display=hist.length?"block":"none";
-    box.innerHTML=hist.length
-      ?`也在這次造訪：${hist.map(id=>`<span class="chip" style="background:none;border:1px solid var(--line)">${esc(participantName(id))} <span data-histdel="${esc(id)}" role="button" tabindex="0" style="cursor:pointer;color:#b25b6b">✕</span></span>`).join(" ")}`
-      :"";
-    box.querySelectorAll("[data-histdel]").forEach(x=>{
-      const drop=()=>{ selected=selected.filter(item=>item!==x.dataset.histdel); renderHistoricalParticipants(); refreshContributionVisibility(); };
-      x.onclick=drop;
-      x.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); drop(); } };
-    });
-  };
-  g("ns_trip").onchange=()=>{
-    if(!creating||!g("ns_trip").value||!trips[g("ns_trip").value]) return;
-    selected=visitParticipantsFromTrip(trips[g("ns_trip").value],editorUid);
-    g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>chip.classList.toggle("on",selected.includes(chip.dataset.uid)));
-    renderHistoricalParticipants();
-    refreshContributionVisibility();
-  };
-  g("ns_participants").querySelectorAll("[data-uid]").forEach(chip=>{
-    const toggle=()=>{
-      const uid=chip.dataset.uid;
-      if(uid===editorUid) return;
-      selected=selected.includes(uid)?selected.filter(item=>item!==uid):[...selected,uid];
-      selected=retainCurrentParticipant(selected,editorUid);
-      chip.classList.toggle("on",selected.includes(uid));
-      refreshContributionVisibility();
-    };
-    chip.onclick=toggle;
-    chip.onkeydown=event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); toggle(); } };
-  });
-  renderHistoricalParticipants();
-  g("ns_save").onclick=async()=>{
-    if(!live()) return;
-    const nameInput=g("ns_place_name");
-    const name=nameInput?nameInput.value.trim():"";
-    const date=g("ns_date").value;
-    if(!date||(!selectedPlaceId&&!name)){ alert("請填寫地點名稱與日期。"); return; }
-    const level=g("ns_level").value;
-    const stay=level==="住宿";
-    if(stay && !(g("ns_end_date").value>date)){ alert("住宿需要一個晚於造訪日的退房日期。"); return; }
-    const targetPlace=selectedPlaceId?noSpaceState.places[selectedPlaceId]:seed||initialPlace;
-    const shared={
-      placeId:selectedPlaceId,
-      date,
-      category:g("ns_category").value==="其他"?(g("ns_category_custom").value.trim()||"其他"):g("ns_category").value,
-      participantUserIds:retainCurrentParticipant(selected,editorUid),
-      tripId:g("ns_trip").value||null,
-      level,
-      kind:stay?"stay":"visit",
-      endDate:stay?g("ns_end_date").value:"",
-      createdBy:rawVisit?.createdBy||editorUid
-    };
-    const personal={
-      rating:Number(g("ns_rating").value)>0?Number(g("ns_rating").value):null,
-      memory:g("ns_memory").value
-    };
-    let savedVisitId=rawVisit?.id||"";
-    try{
-      if(rawVisit){
-        await repo.updateVisit(rawVisit.id,shared);
-      }else if(selectedPlaceId){
-        const ref=await repo.createVisit(shared); savedVisitId=ref.id;
-      }else{
-        const created=await repo.createPlaceAndVisit({...(targetPlace||{}),name},shared);
-        savedVisitId=created.visitId; shared.placeId=created.placeId;
-      }
-      if(!live()) return;
+  openVisitEditor({
+    creating, currentUid:uid, rawVisit, seed,
+    legacyImport:selectedPlaceId?noSpaceState.legacyImports[selectedPlaceId]||null:null,
+    initialDate,
+    initialEndDate:rawVisit?.endDate||addDays(initialDate,1),
+    initialLevel, initialTripId,
+    categoryOptionNames,
+    categorySelected:categoryIsPreset?currentCategory:(currentCategory?"其他":""),
+    categoryCustomText:(!categoryIsPreset&&currentCategory&&currentCategory!=="其他")?currentCategory:"",
+    allowNewPlace:creating&&!selectedPlaceId,
+    newPlaceName:initialPlace?.name||seed?.name||"",
+    placeOptions, selectedPlaceId,
+    tripOptions,
+    missingTripId:rawVisit?.tripId&&!trips[rawVisit.tripId]?rawVisit.tripId:"",
+    tripsById:trips,
+    contributions:rawVisit?noSpaceState.contributions[rawVisit.id]||{}:{},
+    memberUids:orderedActiveMemberIds(),
+    participantName,
+    initialSelected,
+    isCurrent,
+    onSave: async ({ shared, personal, newPlace, creating:isCreate, date }) => {
+      let savedVisitId=rawVisit?.id||"";
+      if(rawVisit){ await repo.updateVisit(rawVisit.id,shared); }
+      else if(shared.placeId){ const ref=await repo.createVisit(shared); savedVisitId=ref.id; }
+      else { const created=await repo.createPlaceAndVisit(newPlace,shared); savedVisitId=created.visitId; shared.placeId=created.placeId; }
+      if(!isCurrent()) return;
       await repo.setContribution(savedVisitId,personal);
-      if(creating){
-        lastNewVisitDate = date;   // next new Visit in this context dittos this date
+      if(isCreate){
+        lastNewVisitDate=date;
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
-        const order=normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]);
-        await repo.setDayOrder(date,order);
+        await repo.setDayOrder(date,normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]));
       }
-      if(live()) closeModal();
-    }catch(error){ if(live()) alert(`無法儲存造訪：${error.message}`); }
-  };
-  const deleteButton=g("ns_delete");
-  if(deleteButton) deleteButton.onclick=async()=>{
-    if(!live()||!canDeleteVisit(editorUid,rawVisit)) return;
-    try{
-      await repo.deleteVisit(rawVisit.id);
-      if(live()) closeModal();
-    }catch(error){if(live())alert(`無法完整刪除造訪：${error.message}`);}
-  };
+    },
+    onDelete: () => repo.deleteVisit(rawVisit.id)
+  });
 }
 
 function openEditor(id, seed, opts={}){

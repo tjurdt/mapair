@@ -440,16 +440,18 @@ for (const [start,end] of [
 const fixture=JSON.parse(await readFile(new URL("./fixtures/mapair-no-space.json",import.meta.url),"utf8"));
 assert.deepEqual(findForbiddenClockFields(fixture),[]);
 assert.equal(fixture.documents.some(document=>document.path.startsWith("spaces/")),false);
-const editorBlock=mainSource.slice(mainSource.indexOf("function openNoSpaceVisitEditor"),mainSource.indexOf("function openEditor",mainSource.indexOf("function openNoSpaceVisitEditor")+1));
-assert.match(editorBlock,/const allowNewPlace=creating&&!selectedPlaceId/);
+const visitEditorSource=await readFile(new URL("../src/ui/visit-editor.js",import.meta.url),"utf8");
+const editorWrapper=mainSource.slice(mainSource.indexOf("function openNoSpaceVisitEditor"),mainSource.indexOf("function openEditor",mainSource.indexOf("function openNoSpaceVisitEditor")+1));
 // A brand-new Place name input is only offered while creating with no resolved
 // Place; an existing Visit sees the Place select, so it can never become a new Place.
-assert.match(editorBlock,/allowNewPlace[\s\S]{0,60}<input id="ns_place_name"/,"the new-Place name input is gated behind allowNewPlace");
-assert.match(editorBlock,/\}else\{\s*\n\s*const created=await repo\.createPlaceAndVisit/,"a new Place is only created when no Place is selected");
-assert.match(editorBlock,/value="\$\{esc\(rawVisit\.tripId\)\}" selected>已刪除旅程/,"a dangling Trip must remain selected until explicitly changed");
-assert.match(editorBlock,/tripId:g\("ns_trip"\)\.value\|\|null/,"explicitly selecting no Trip detaches the Visit");
-assert.doesNotMatch(editorBlock,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");
-assert.doesNotMatch(editorBlock,/placeName/,"Visit writes must not create a competing Place-name override");
+assert.match(editorWrapper,/allowNewPlace:creating&&!selectedPlaceId/,"the new-Place gate is computed in main.js");
+assert.match(visitEditorSource,/allowNewPlace[\s\S]{0,80}<input id="ns_place_name"/,"the new-Place name input is gated behind allowNewPlace");
+assert.match(editorWrapper,/const created=await repo\.createPlaceAndVisit\(newPlace,shared\)/,"a new Place is only created when no Place is selected (shared.placeId is falsy)");
+assert.match(editorWrapper,/missingTripId:rawVisit\?\.tripId&&!trips\[rawVisit\.tripId\]\?rawVisit\.tripId:""/,"a dangling Trip id is preserved");
+assert.match(visitEditorSource,/missingTripId \? `<option value="\$\{esc\(missingTripId\)\}" selected>已刪除旅程/,"and stays selected until explicitly changed");
+assert.match(visitEditorSource,/tripId: g\("ns_trip"\)\.value \|\| null/,"explicitly selecting no Trip detaches the Visit");
+assert.doesNotMatch(editorWrapper+visitEditorSource,/repo\.updatePlace\(/,"Visit editing cannot mutate global Place identity");
+assert.doesNotMatch(editorWrapper+visitEditorSource,/placeName/,"Visit writes must not create a competing Place-name override");
 assert.doesNotMatch(repositorySource,/\bupdatePlace\(/,"Phase A exposes no general global Place mutation method");
 const externalCreateBlock=repositorySource.slice(repositorySource.indexOf("async createPlaceAndVisit"),repositorySource.indexOf("updatePlaceCache"));
 assert.match(externalCreateBlock,/externalPlaceDocumentId\(objective\)/,"external Place reuse must use deterministic identity");

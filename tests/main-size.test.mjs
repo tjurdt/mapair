@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 // raising it needs an explicit reason in the PR. The small headroom over the
 // current size is only so a genuine bug fix inside main.js does not have to
 // touch this test.
-const MAX_LINES = 2875;
+const MAX_LINES = 2725;
 
 const source = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const lines = source.split("\n").length;

@@ -120,10 +120,19 @@ module.
    `openFriendsManager` is a wrapper injecting live-state getters
    (`getFriends` / `getIncomingRaw` return the current `noSpaceState` maps,
    which their listeners reassign), repo, guard, and the friend-code hooks.
-5. `src/ui/visit-editor.js` — `openNoSpaceVisitEditor` (most coupled; last).
+5. **`src/ui/visit-editor.js` (done).** The most coupled modal. `main.js`
+   resolves its state into a `ctx` (initial values + option lists + the
+   collections the live pieces need) and implements `onSave` / `onDelete`
+   against the repo; the module owns the form and builds the
+   `{ shared, personal, newPlace }` payload. `main.js`: 2860 → 2710.
 6. `src/ui/map-markers.js` / `map-surfaces.js` — `renderMarkers`,
    `renderAdministrativeLayer`, proximity coverage.
 7. `src/ui/shell.js` (the `renderApp` HTML) then CSS into `src/styles/`.
+
+Phase 3's modal extractions are complete (2–5). What is left in `main.js` is
+the shell, the render/data plumbing (`renderApp`, `renderMarkers`,
+`renderList`, `subscribeNoSpace`, `applyNoSpaceProjection`, the map surfaces),
+and the ~70 globals — which is now Phase 2's job.
 
 Extracting each surface surfaces exactly which globals it reads — that
 inventory feeds Phase 2.
