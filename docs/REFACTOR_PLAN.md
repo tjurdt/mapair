@@ -127,7 +127,11 @@ module.
    `{ shared, personal, newPlace }` payload. `main.js`: 2860 → 2710.
 6. `src/ui/map-markers.js` / `map-surfaces.js` — `renderMarkers`,
    `renderAdministrativeLayer`, proximity coverage.
-7. `src/ui/shell.js` (the `renderApp` HTML) then CSS into `src/styles/`.
+7. **CSS out of `index.html` (done).** The `<style>` block moved verbatim to
+   `src/styles/app.css`, linked from `<head>`; `index.html` is now 39 lines.
+   `ux-policies.test.mjs`'s layout-CSS assertions read the new file.
+8. `src/ui/shell.js` — the `renderApp` HTML (later; needs Phase 2's state
+   object first so the handler wiring has somewhere clean to live).
 
 Phase 3's modal extractions are complete (2–5). What is left in `main.js` is
 the shell, the render/data plumbing (`renderApp`, `renderMarkers`,

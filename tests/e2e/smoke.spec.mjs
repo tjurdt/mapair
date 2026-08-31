@@ -11,6 +11,8 @@ test("sign-in gate renders the shell, logout returns to the gate", async ({ page
   await signIn(page);
   await expect(page.locator("header .title")).toHaveText("我的足跡");
   await expect(page.locator("#list")).toBeVisible();
+  // src/styles/app.css is loaded (--paper ground on <body>).
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(250, 247, 242)");
 
   await page.click("#logout");
   await expect(page.locator("#login-test-a")).toBeVisible();
