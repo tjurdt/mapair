@@ -84,6 +84,8 @@ import {
 import { resolveMarkerColor } from "./domain/marker-color.js";
 import { defaultNewVisitDate } from "./domain/visit-defaults.js";
 import { modal, closeModal, closeAllModals } from "./ui/modal.js";
+import { esc } from "./ui/html.js";
+import { openTripEditor } from "./ui/trip-editor.js";
 
 /* ============================================================
    1) 設定
@@ -154,12 +156,6 @@ const LEVEL_ORDER  = ["經過","接地","旅遊","住宿","居住"];
 const LEVEL_COLORS = { "居住":"#7b2d3a","住宿":"#b25b6b","旅遊":"#d98b3f","接地":"#6f9c94","經過":"#c3d0cb" };
 
 /* 旅程圖示可選清單 */
-const EMOJIS = ["🧭","✈️","🚗","🚕","🚌","🚆","🚄","🚢","⛵","🚲","🏍️","🛵",
-  "🏔️","⛰️","🌋","🏕️","🏖️","🏝️","🏜️","🏞️","🌅","🌄","🌊","🗻","🗾",
-  "⛩️","🏯","🏰","🗼","🎡","🎢","🎑","🌸","🍁","🌺","🌴","🌲",
-  "🍜","🍣","🍶","🍵","☕","🍺","🍷","🍦","🍧","🧋","🍡","🍢",
-  "🎏","🎿","🏂","🏄","🚠","♨️","🦌","🐧","🐟","🦭","🐢","🦋",
-  "📷","🎒","🗺️","💕","❤️","🌈","⭐","🎉","🏡","🌇"];
 
 /* 「做什麼」系統預設選項(name -> 預設顏色)。使用者可在設定勾選常用項目與改色。
    「其他」永遠可選(不可取消),選「其他」時會出現自訂敘述框。 */
@@ -3024,80 +3020,17 @@ function renderTrips(el){
 }
 
 function openNoSpaceTripEditor(id,onDone){
-  const repo=noSpaceRepository, session=runtimeSession, uid=user.uid;
-  if(!repo||!runtimeSessionIsCurrent(session,uid)) return;
-  const trip=id?noSpaceState.trips[id]||trips[id]:null;
-  let selected=retainCurrentParticipant(trip?.participantUserIds||[uid],uid);
-  const live=currentRuntimeGuard();
-  modal(`
-    <h2 style="margin-bottom:3px">${trip?"編輯旅程":"新增旅程"}</h2>
-    <div class="admin" style="margin-bottom:12px">新增這趟旅程的造訪時，會自動帶入這些同行者。既有造訪不會改變。</div>
-    <div class="field"><label>圖示 + 名稱</label>
-      <div class="row" style="gap:8px;position:relative;align-items:stretch">
-        <button type="button" id="nst_emoji_btn" style="flex:0 0 52px;font-size:22px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer">${esc(trip?.emoji||"")||"➕"}</button>
-        <input id="nst_name" value="${esc(trip?.name||"")}" placeholder="例如：2026 夏日旅行" style="flex:1">
-        <input type="hidden" id="nst_emoji" value="${esc(trip?.emoji||"")}">
-        <div id="nst_emoji_pop" style="display:none;position:absolute;top:52px;left:0;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px;grid-template-columns:repeat(7,1fr);gap:2px;width:264px;max-height:220px;overflow:auto">
-          <button type="button" class="nst-emojibtn" data-e="" style="font-size:14px;border:none;background:none;cursor:pointer;padding:4px">無</button>
-          ${EMOJIS.map(e=>`<button type="button" class="nst-emojibtn" data-e="${e}" style="font-size:20px;border:none;background:none;cursor:pointer;padding:4px">${e}</button>`).join("")}
-        </div>
-      </div>
-    </div>
-    <div class="row">
-      <div class="field" style="flex:1"><label>開始日期</label><input type="date" id="nst_start" value="${trip?.startDate||""}"></div>
-      <div class="field" style="flex:1"><label>結束日期</label><input type="date" id="nst_end" value="${trip?.endDate||""}"></div>
-    </div>
-    <div class="field"><label>旅程顏色</label><input type="color" id="nst_color" value="${esc(trip?.color||'#3f7d78')}" style="width:100%;height:42px;padding:4px"></div>
-    <div class="field"><label>同行者</label><div class="pick partpick" id="nst_participants">${orderedActiveMembers().map(member=>`<span class="chip ${selected.includes(member.userId)?'on':''}" data-uid="${esc(member.userId)}" role="button" tabindex="0" ${member.userId===uid?'aria-disabled="true"':''}>${esc(participantName(member.userId))}</span>`).join("")}</div></div>
-    <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
-  `);
-  const g=id=>document.getElementById(id);
-  // Editing one trip date seeds the still-empty other one, so its month picker
-  // opens next to the date you just set instead of on today.
-  const seedOtherTripDate=(fromId,toId)=>{ if(g(fromId).value && !g(toId).value) g(toId).value=g(fromId).value; };
-  g("nst_start").onchange=()=>seedOtherTripDate("nst_start","nst_end");
-  g("nst_end").onchange=()=>seedOtherTripDate("nst_end","nst_start");
-  const emojiBtn=g("nst_emoji_btn"), emojiPop=g("nst_emoji_pop");
-  emojiBtn.onclick=()=>{ emojiPop.style.display=emojiPop.style.display==="none"?"grid":"none"; };
-  emojiPop.querySelectorAll(".nst-emojibtn").forEach(btn=>btn.onclick=()=>{
-    g("nst_emoji").value=btn.dataset.e;
-    emojiBtn.textContent=btn.dataset.e||"➕";
-    emojiPop.style.display="none";
+  const repo=noSpaceRepository;
+  if(!repo||!runtimeSessionIsCurrent(runtimeSession,user.uid)) return;
+  openTripEditor({
+    trip:id?noSpaceState.trips[id]||trips[id]:null,
+    currentUid:user.uid,
+    memberUids:orderedActiveMemberIds(),
+    participantName,
+    repo,
+    isCurrent:currentRuntimeGuard(),
+    onSaved:onDone
   });
-  g("nst_participants").querySelectorAll("[data-uid]").forEach(chip=>{
-    const toggle=()=>{
-      const participantUid=chip.dataset.uid;
-      if(participantUid===uid) return;
-      selected=selected.includes(participantUid)?selected.filter(item=>item!==participantUid):[...selected,participantUid];
-      selected=retainCurrentParticipant(selected,uid);
-      chip.classList.toggle("on",selected.includes(participantUid));
-    };
-    chip.onclick=toggle;
-    chip.onkeydown=event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();toggle();}};
-  });
-  const collect=()=>({
-    name:g("nst_name").value.trim(), emoji:g("nst_emoji").value.trim(),
-    startDate:g("nst_start").value, endDate:g("nst_end").value,
-    color:g("nst_color").value,
-    participantUserIds:retainCurrentParticipant(selected,uid), createdBy:trip?.createdBy||uid
-  });
-  g("nst_save").onclick=async()=>{
-    if(!live()) return;
-    const data=collect(); if(!data.name){alert("請填寫旅程名稱。");return;}
-    try{
-      let savedId=id;
-      if(trip) await repo.updateTrip(trip.id,data);
-      else { const ref=await repo.createTrip(data); savedId=ref.id; }
-      if(live()&&onDone) onDone({id:savedId,...data});
-      if(live()) closeModal();
-    }catch(error){if(live())alert(`無法儲存旅程：${error.message}`);}
-  };
-  const del=g("nst_delete");
-  if(del) del.onclick=async()=>{
-    if(!live()||!canDeleteTrip(uid,trip)) return;
-    try{await repo.deleteTrip(trip.id);if(live())closeModal();}
-    catch(error){if(live())alert(`無法刪除旅程：${error.message}`);}
-  };
 }
 
 function editTrip(id, onDone){
@@ -3109,7 +3042,6 @@ function editTrip(id, onDone){
    Helpers
    ============================================================ */
 function me(){ return user.displayName || user.email || "我"; }
-function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 /* ---------- 進入點(放最後,確保上面的 let 都宣告完) ---------- */
 try {
