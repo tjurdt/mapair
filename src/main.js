@@ -77,7 +77,7 @@ import {
   categoryPass,
   participantPass,
   placePasses,
-  regionsPass,
+  placeStaticPass,
   tripPass,
   visitPasses
 } from "./domain/filter.js";
@@ -239,7 +239,10 @@ function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
 function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
-let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
+let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
+// "add" — the search box adds a Place; "filter" — it filters the list by Place
+// name (filter.q). Cycled by #searchModeToggle.
+let searchMode = "add";
 let regionMulti = false;
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
@@ -429,7 +432,7 @@ function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="dai
 function visitMatchesTrip(v){ return tripPass(filter.tripId, v.tripId); }
 function visitMatchesCategory(p,v){ return categoryPass(filter.cats, visitCategory(p,v)); }
 function visitMatchesWho(p,v){ return participantPass(filter.who, visitWhoUids(p,v)); }
-function placeStaticFilter(p){ return regionsPass(filter.regions, p); }
+function placeStaticFilter(p){ return placeStaticPass(filter, p); }
 function visitPassFilter(p,v){ return visitPasses(p, v, filter, LIST_VISIT_FIELDS); }
 function passFilter(p){
   // Only Places with real Visit history exist in the active product; dormant
@@ -528,7 +531,7 @@ function visitReorderScope(){
   const available=isVisitReorderAvailable({
     categoryCount:filter.cats.size,
     regionCount:filter.regions.length,
-    textSearch:"",
+    textSearch:filter.q,
     tripId:filter.tripId,
     hasSpecificTrip:!!tripId
   });
@@ -687,6 +690,7 @@ async function renderApp(){
           </div>
         </div>
         <div class="search" id="searchWrap">
+          <button id="searchModeToggle" class="btn grey mini" title="切換：加入地點 / 篩選造訪" style="flex:0 0 auto">＋</button>
           <input id="search" placeholder="搜尋地點加入…(例:台北101、直島)" autocomplete="off"/>
           <div class="results" id="results" style="display:none"></div>
         </div>
@@ -848,11 +852,13 @@ async function renderApp(){
   document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
-    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
+    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
     dateScope = "all";
+    searchMode = "add";
     forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
+    applySearchMode();
     refreshFilterUI(); applyFilter();
   };
   applyDateScope();
@@ -974,7 +980,7 @@ function refreshFilterUI(){
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   updateProximityMaskControl();
-  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId;
+  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId||filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
@@ -985,6 +991,9 @@ function renderFilterChips(){
   if (tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
     html += `<button class="fchip ${numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${numberPins?'●':'○'} ${label}</button>`;
+  }
+  if (filter.q.trim()){
+    html += `<span class="fchip active">🔍 ${esc(filter.q.trim())} <b data-clearq="1">✕</b></span>`;
   }
   filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
   if (filter.placeId){
@@ -999,6 +1008,13 @@ function renderFilterChips(){
   });
   const cp = el.querySelector('[data-clearplace]');
   if (cp) cp.onclick = clearPlaceFilter;
+  const cq = el.querySelector('[data-clearq]');
+  if (cq) cq.onclick = () => {
+    filter.q = "";
+    const input = document.getElementById("search");
+    if (input && searchMode === "filter") input.value = "";
+    applyFilter();
+  };
 }
 
 /* ---------- Google Maps 載入 ---------- */
@@ -2588,10 +2604,37 @@ function openSeed(seed){
   if(existing) openEditor(existing.id,null,{addVisit:true});
   else openEditor(null,seed);
 }
+// Reflect the current searchMode in the box (placeholder, toggle glyph) and,
+// when leaving filter mode, drop the keyword.
+function applySearchMode(){
+  const input = document.getElementById("search");
+  const toggle = document.getElementById("searchModeToggle");
+  if (!input || !toggle) return;
+  if (searchMode === "filter"){
+    toggle.textContent = "🔍";
+    input.placeholder = "篩選造訪…(依地點名稱)";
+    if (input.value !== filter.q) input.value = filter.q;
+    clearSearchSuggestions();
+  } else {
+    toggle.textContent = "＋";
+    input.placeholder = "搜尋地點加入…(例:台北101、直島)";
+    if (filter.q){ filter.q = ""; input.value = ""; applyFilter(); }
+  }
+}
 function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
+  document.getElementById("searchModeToggle").onclick = () => {
+    searchMode = searchMode === "add" ? "filter" : "add";
+    applySearchMode();
+    input.focus();
+  };
   input.oninput = () => {
+    if (searchMode === "filter"){
+      filter.q = input.value;
+      applyFilter();
+      return;
+    }
     clearTimeout(searchTimer);
     if (!runtimeReady()){ clearSearchSuggestions(); return; }
     const q = input.value.trim();
@@ -2622,6 +2665,7 @@ function wireSearch(){
     }, 350);
   };
   document.addEventListener("click", e => { if(!e.target.closest(".search")) box.style.display="none"; });
+  applySearchMode();
 }
 
 async function searchPlace(q){

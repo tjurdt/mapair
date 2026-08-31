@@ -63,6 +63,7 @@ emulator database** first.
 - `entry-ux.spec.mjs` — new-Visit date defaults (today / Trip first day /
   scope start / ditto), Trip filter clearing the date scope, the 住宿
   activity → 住宿 depth link, and the Trip-editor date seeding.
+- `search-filter.spec.mjs` — the search box's add / filter-by-keyword toggle.
 
 These track the "Automation: Yes" rows of
 `docs/archive/baseline/BEHAVIOR_CHECKLIST.md`. Real map pixels, viewport

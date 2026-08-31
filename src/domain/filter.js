@@ -14,6 +14,19 @@ export function regionsPass(regions, place) {
   return regions.some((r) => place?.[r.key] === r.code);
 }
 
+// Free-text keyword filter, matched (case-insensitively, substring) against a
+// Place's name. An empty query passes everything.
+export function keywordPass(query, name) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  return String(name || "").toLowerCase().includes(q);
+}
+
+// Everything that filters a Place regardless of its Visits: regions + keyword.
+export function placeStaticPass(criteria, place) {
+  return regionsPass(criteria.regions, place) && keywordPass(criteria.q, place?.name);
+}
+
 export function participantPass(who, participantIds) {
   return who === "all" || (participantIds || []).includes(who);
 }
@@ -42,7 +55,7 @@ export function dateRangePass(date, checkout, from, to) {
 
 export function visitPasses(place, visit, criteria, resolve) {
   return (
-    regionsPass(criteria.regions, place) &&
+    placeStaticPass(criteria, place) &&
     participantPass(criteria.who, resolve.participantIds(place, visit)) &&
     tripPass(criteria.tripId, visit.tripId) &&
     categoryPass(criteria.cats, resolve.category(place, visit)) &&
@@ -63,7 +76,7 @@ export function hasActiveVisitConstraint(criteria) {
 // A Place passes when it clears the region filter and — if any Visit-level
 // constraint is active — at least one of `visits` passes.
 export function placePasses(place, visits, criteria, resolve) {
-  if (!regionsPass(criteria.regions, place)) return false;
+  if (!placeStaticPass(criteria, place)) return false;
   if (!hasActiveVisitConstraint(criteria)) return true;
   return visits.some((visit) => visitPasses(place, visit, criteria, resolve));
 }
