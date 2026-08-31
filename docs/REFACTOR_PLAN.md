@@ -96,11 +96,24 @@ making the `applyFilter()` cascade explicit instead of implicit.
 **Exit criteria:** one documented owner per former global; state transitions
 testable without a browser; Phase 0 suite green.
 
-## Phase 3 — Extract rendering surface by surface
+## Phase 3 — Extract rendering surface by surface *(in progress)*
 
-One UI surface per PR, markup and CSS classes unchanged, order: modal helpers →
-filter controls → list/cards → Trips → Visit editor → settings → shell/layout →
-CSS out of `index.html`. Mirrors `MIGRATION_PLAN.md` stages 5–7.
+One UI surface per PR into `src/ui/`, markup and CSS classes unchanged, each
+guarded by the E2E suite. `main.js` keeps a one-line `openXxx()` that calls the
+module.
+
+1. **`src/ui/modal.js` (done).** `modal` / `closeModal` / `closeAllModals`,
+   plus `currentRuntimeGuard()` in `main.js` replacing the three hand-rolled
+   `live()` closures (one snapshot-guard definition, not N).
+2. `src/ui/trip-editor.js` — `openNoSpaceTripEditor` (most self-contained).
+3. `src/ui/settings.js` — `openNoSpaceSettings`.
+4. `src/ui/friends.js` — `openFriendsManager`. **Add its first E2E first**
+   (currently zero coverage), then extract.
+5. `src/ui/visit-editor.js` — `openNoSpaceVisitEditor` (most coupled; last).
+6. Shell / layout, then CSS out of `index.html` into `src/styles/`.
+
+Extracting each surface surfaces exactly which globals it reads — that
+inventory feeds Phase 2.
 
 ## Phase 4 — Cheap known-bug fixes (independent small PRs, not bundled)
 
