@@ -40,8 +40,13 @@ async function installGoogleMapsStub(page) {
       constructor(el, opts) {
         this.el = el;
         this.opts = opts;
+        this._listeners = {};
+        window.__mapairMap = this;
       }
-      addListener() { return noopHandle; }
+      addListener(event, callback) {
+        (this._listeners[event] ||= []).push(callback);
+        return noopHandle;
+      }
       setCenter() {}
       setZoom() {}
       getZoom() { return 12; }
@@ -49,6 +54,12 @@ async function installGoogleMapsStub(page) {
       panTo() {}
       setOptions() {}
     }
+    // Simulate a user clicking the map at (lat, lng) — the app only wires this
+    // in add mode, so callers enable it first.
+    window.__mapairFireMapClick = (lat, lng) => {
+      const event = { latLng: { lat: () => lat, lng: () => lng } };
+      (window.__mapairMap?._listeners?.click || []).forEach((cb) => cb(event));
+    };
     class FakeAdvancedMarker {
       constructor(opts = {}) {
         Object.assign(this, opts);

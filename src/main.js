@@ -82,6 +82,7 @@ import {
   visitPasses
 } from "./domain/filter.js";
 import { resolveMarkerColor } from "./domain/marker-color.js";
+import { defaultNewVisitDate } from "./domain/visit-defaults.js";
 
 /* ============================================================
    1) 設定
@@ -245,6 +246,10 @@ let layoutDismissController = null;
 let dateScope = "month";   // month / lastmonth / pickedMonth / today / custom / all
 let pickedMonth = new Date().toISOString().slice(0,7);
 let regionLegendState = null;
+// The date of the last Visit created since load / since the Trip or date scope
+// last changed. Drives the "ditto" default in defaultDateForNewVisit.
+let lastNewVisitDate = "";
+function forgetLastNewVisitDate(){ lastNewVisitDate = ""; }
 
 function monthBounds(ym){
   if (!/^\d{4}-\d{2}$/.test(ym||"")) return null;
@@ -273,13 +278,15 @@ function applyDateScope(){
   // custom: 由使用者的起訖輸入決定
 }
 function defaultDateForNewVisit(){
-  // 明確旅程優先於任何月份篩選。
-  if (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]?.startDate) return trips[filter.tripId].startDate;
-  if (singleDayDate()) return singleDayDate();
-  const today=new Date().toISOString().slice(0,10);
-  if (dateScope === "month") return today; // 本月新增預設今天
-  if (["lastmonth","pickedMonth"].includes(dateScope) && filter.from) return filter.from;
-  return today;
+  const tripId = specificTripId();
+  return defaultNewVisitDate({
+    lastNewVisitDate,
+    tripStart: tripId ? tripSequenceBounds(tripId).from : "",
+    singleDay: singleDayDate(),
+    dateScope,
+    rangeStart: filter.from,
+    today: new Date().toISOString().slice(0,10)
+  });
 }
 const CODEKEY = { county:"countyCode", town:"townCode", village:"villCode" };
 const REGION_GEO = {
@@ -813,6 +820,7 @@ async function renderApp(){
   };
   document.getElementById("fl_scope").onchange = e => {
     dateScope = e.target.value;
+    forgetLastNewVisitDate();
     if (dateScope === "pickedMonth" && !pickedMonth) pickedMonth=currentMonth(0);
     applyDateScope();
     if (dateScope === "custom"){ document.getElementById("filterPanel").style.display = "block"; document.getElementById("fl_more").textContent="更多 ▴"; }
@@ -826,13 +834,23 @@ async function renderApp(){
     if(!e.target.value) return;
     pickedMonth=e.target.value; dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
   };
-  document.getElementById("fl_trip").onchange = e => { filter.tripId = e.target.value; applyFilter(); };
+  document.getElementById("fl_trip").onchange = e => {
+    filter.tripId = e.target.value;
+    forgetLastNewVisitDate();
+    // Picking a specific Trip shows the whole Trip, not the current month.
+    if (e.target.value!=="all" && e.target.value!=="daily" && trips[e.target.value]){
+      dateScope = "all"; filter.from = ""; filter.to = "";
+      refreshFilterUI();
+    }
+    applyFilter();
+  };
   document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
   document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
     filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"" };
     dateScope = "all";
+    forgetLastNewVisitDate();
     document.getElementById("filterPanel").style.display = "none";
     document.getElementById("fl_more").textContent="更多 ▾";
     refreshFilterUI(); applyFilter();
@@ -1563,6 +1581,7 @@ function resetRuntimeState(){
   resetNoSpaceState();
   friendsManagerRefresh = null;
   reconcilingRequests.clear();
+  forgetLastNewVisitDate();
   places = {};
   trips = {};
   spaceCats = [];
@@ -2783,11 +2802,19 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
   refreshStay();
   g("ns_level").onchange=refreshStay;
   const categoryCustom=g("ns_category_custom");
+  // Recording 住宿 as the activity implies a 住宿-depth stay — whether it is
+  // picked from the list or typed into the free-text box.
+  const applyStayCategoryDepth=activity=>{
+    if(activity==="住宿" && g("ns_level").value!=="住宿"){ g("ns_level").value="住宿"; refreshStay(); }
+  };
   g("ns_category").onchange=()=>{
-    const isOther=g("ns_category").value==="其他";
+    const value=g("ns_category").value;
+    const isOther=value==="其他";
     categoryCustom.style.display=isOther?"block":"none";
     if(isOther) categoryCustom.focus();
+    applyStayCategoryDepth(value);
   };
+  categoryCustom.onchange=()=>applyStayCategoryDepth(categoryCustom.value.trim());
   g("ns_rating").oninput=()=>{ const rating=Number(g("ns_rating").value); g("ns_rating_value").textContent=rating?`★ ${rating}`:"尚未評分"; };
   const refreshContributionVisibility=()=>{
     if(g("ns_average")) g("ns_average").textContent=averageText();
@@ -2870,6 +2897,7 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
       if(!live()) return;
       await repo.setContribution(savedVisitId,personal);
       if(creating){
+        lastNewVisitDate = date;   // next new Visit in this context dittos this date
         const visible=[...Object.values(noSpaceState.visits),{...shared,id:savedVisitId}];
         const order=normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]);
         await repo.setDayOrder(date,order);
@@ -2915,6 +2943,7 @@ function renderTrips(el){
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
     filter.tripId = t.id; tab = "visited";
+    forgetLastNewVisitDate();
     dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
@@ -2957,6 +2986,11 @@ function openNoSpaceTripEditor(id,onDone){
     <div class="row"><button class="btn" id="nst_save">完成</button>${trip&&canDeleteTrip(uid,trip)?`<button class="danger" id="nst_delete">刪除旅程</button>`:""}</div>
   `);
   const g=id=>document.getElementById(id);
+  // Editing one trip date seeds the still-empty other one, so its month picker
+  // opens next to the date you just set instead of on today.
+  const seedOtherTripDate=(fromId,toId)=>{ if(g(fromId).value && !g(toId).value) g(toId).value=g(fromId).value; };
+  g("nst_start").onchange=()=>seedOtherTripDate("nst_start","nst_end");
+  g("nst_end").onchange=()=>seedOtherTripDate("nst_end","nst_start");
   const emojiBtn=g("nst_emoji_btn"), emojiPop=g("nst_emoji_pop");
   emojiBtn.onclick=()=>{ emojiPop.style.display=emojiPop.style.display==="none"?"grid":"none"; };
   emojiPop.querySelectorAll(".nst-emojibtn").forEach(btn=>btn.onclick=()=>{
