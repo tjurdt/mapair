@@ -96,8 +96,10 @@ one `render()` dispatch, making the `applyFilter()` cascade explicit.
    `numberPins` / `regionMulti` / `legendCollapsed`.
 2. **`state.tab` (done).** Careful around the `.tab` CSS class.
 3. **`state.dateScope` + `state.pickedMonth` (done).** Bundled with 2.
-4. `state.filter` (the `{ who, tripId, cats, from, to, regions, placeId, q }`
-   object — the big one). Its own PR.
+4. **`state.filter` (done).** The `{ who, tripId, cats, from, to, regions,
+   placeId, q }` object. The regex namespacing briefly mangled the
+   `./domain/filter.js` import path and a few comments — caught by
+   `npm run build` (not lint, not the node tests).
 5. Map presentation (`markerMode`, `choroAlpha`, `choroMetric`, `showPins`,
    `adminLevel`, `proximityEnabled`, `addMode`, `tab`-adjacent).
 6. Then: `setState(patch)` / named actions, folding the `applyFilter()` /

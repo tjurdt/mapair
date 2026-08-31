@@ -235,11 +235,11 @@ function friendEntries(){ return Object.values(noSpaceState.friends || {}); }
 function friendEntryOf(uid){ return (noSpaceState.friends || {})[uid] || null; }
 function friendUserIds(){ return friendEntries().filter(f => f.state === "linked").map(f => f.friendUid); }
 function friendPinnedUids(){ return friendEntries().filter(f => f.pinned && f.state === "linked").map(f => f.friendUid); }
-let filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
 // The app's view state, being moved off free-standing globals one group at a
 // time (docs/REFACTOR_PLAN.md Phase 2).
 const state = {
   tab: "visited",
+  filter: { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" },
   // dateScope: month / lastmonth / pickedMonth / today / custom / all.
   // pickedMonth backs the pickedMonth scope.
   dateScope: "month",
@@ -272,17 +272,17 @@ function currentMonth(offset=0){
 function applyDateScope(){
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), pad = n => String(n).padStart(2,"0");
   const today = `${y}-${pad(m+1)}-${pad(now.getDate())}`;
-  if (state.dateScope === "today"){ filter.from = today; filter.to = today; }
+  if (state.dateScope === "today"){ state.filter.from = today; state.filter.to = today; }
   else if (state.dateScope === "month"){
-    state.pickedMonth=currentMonth(0); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
+    state.pickedMonth=currentMonth(0); const b=monthBounds(state.pickedMonth); state.filter.from=b.from; state.filter.to=b.to;
   }
   else if (state.dateScope === "lastmonth"){
-    state.pickedMonth=currentMonth(-1); const b=monthBounds(state.pickedMonth); filter.from=b.from; filter.to=b.to;
+    state.pickedMonth=currentMonth(-1); const b=monthBounds(state.pickedMonth); state.filter.from=b.from; state.filter.to=b.to;
   }
   else if (state.dateScope === "pickedMonth"){
-    const b=monthBounds(state.pickedMonth); if(b){ filter.from=b.from; filter.to=b.to; }
+    const b=monthBounds(state.pickedMonth); if(b){ state.filter.from=b.from; state.filter.to=b.to; }
   }
-  else if (state.dateScope === "all"){ filter.from = ""; filter.to = ""; }
+  else if (state.dateScope === "all"){ state.filter.from = ""; state.filter.to = ""; }
   // custom: 由使用者的起訖輸入決定
 }
 function defaultDateForNewVisit(){
@@ -292,7 +292,7 @@ function defaultDateForNewVisit(){
     tripStart: tripId ? tripSequenceBounds(tripId).from : "",
     singleDay: singleDayDate(),
     dateScope: state.dateScope,
-    rangeStart: filter.from,
+    rangeStart: state.filter.from,
     today: new Date().toISOString().slice(0,10)
   });
 }
@@ -366,8 +366,8 @@ function participantFilterCandidateIds(){
   return [...orderedActiveMemberIds(), ...referencedHistoricalIds];
 }
 function sanitizeParticipantFilter(){
-  if (filter.who !== "all" && !participantFilterCandidateIds().includes(filter.who)){
-    filter.who = "all";
+  if (state.filter.who !== "all" && !participantFilterCandidateIds().includes(state.filter.who)){
+    state.filter.who = "all";
   }
 }
 function normalizedVisit(p,v,i=0){
@@ -429,27 +429,27 @@ const AREA_VISIT_FIELDS = {
   checkout:stayCheckout
 };
 const placeTrips = p => [...new Set(placeVisits(p).map(v=>v.tripId).filter(Boolean))];
-const singleDayDate = () => (filter.from && filter.to && filter.from === filter.to) ? filter.from : "";
-function specificTripId(){ return (filter.tripId!=="all" && filter.tripId!=="daily" && trips[filter.tripId]) ? filter.tripId : ""; }
-// Thin bindings of domain/filter.js to the live `filter` state. Kept as named
+const singleDayDate = () => (state.filter.from && state.filter.to && state.filter.from === state.filter.to) ? state.filter.from : "";
+function specificTripId(){ return (state.filter.tripId!=="all" && state.filter.tripId!=="daily" && trips[state.filter.tripId]) ? state.filter.tripId : ""; }
+// Thin bindings of domain/filter.js to the live `state.filter` object. Kept as named
 // helpers because getDayOccurrences / representativeDateOccurrence call them
 // individually.
-function visitMatchesTrip(v){ return tripPass(filter.tripId, v.tripId); }
-function visitMatchesCategory(p,v){ return categoryPass(filter.cats, visitCategory(p,v)); }
-function visitMatchesWho(p,v){ return participantPass(filter.who, visitWhoUids(p,v)); }
-function placeStaticFilter(p){ return placeStaticPass(filter, p); }
-function visitPassFilter(p,v){ return visitPasses(p, v, filter, LIST_VISIT_FIELDS); }
+function visitMatchesTrip(v){ return tripPass(state.filter.tripId, v.tripId); }
+function visitMatchesCategory(p,v){ return categoryPass(state.filter.cats, visitCategory(p,v)); }
+function visitMatchesWho(p,v){ return participantPass(state.filter.who, visitWhoUids(p,v)); }
+function placeStaticFilter(p){ return placeStaticPass(state.filter, p); }
+function visitPassFilter(p,v){ return visitPasses(p, v, state.filter, LIST_VISIT_FIELDS); }
 function passFilter(p){
   // Only Places with real Visit history exist in the active product; dormant
   // legacy wishlist-only records are invisible everywhere.
   if (!hasVisitHistory(p)) return false;
-  return placePasses(p, placeVisits(p), filter, LIST_VISIT_FIELDS);
+  return placePasses(p, placeVisits(p), state.filter, LIST_VISIT_FIELDS);
 }
 // Whether the user has deliberately narrowed the list (anything beyond the
 // default "this month" view). Drives the per-card DITTO affordance.
 function listIsFiltered(){
-  return filter.who!=="all" || filter.tripId!=="all" || filter.cats.size>0
-    || filter.regions.length>0 || !!filter.q.trim() || !!filter.placeId
+  return state.filter.who!=="all" || state.filter.tripId!=="all" || state.filter.cats.size>0
+    || state.filter.regions.length>0 || !!state.filter.q.trim() || !!state.filter.placeId
     || state.dateScope!=="month";
 }
 // Occurrence build / key / date / ordering primitives live in
@@ -482,7 +482,7 @@ function getFilteredVisitOccurrences(){
   const out=[];
   Object.values(places).forEach(p=>{
     if(!hasVisitHistory(p) || !placeStaticFilter(p)) return;
-    if(filter.placeId && p.id!==filter.placeId) return;  // tapping a marker narrows the list to that Place
+    if(state.filter.placeId && p.id!==state.filter.placeId) return;  // tapping a marker narrows the list to that Place
     placeVisits(p).forEach((v,visitIndex)=>{ if(visitPassFilter(p,v)) out.push(buildOccurrence(p,v,visitIndex,v.date,"",false)); });
   });
   return out.sort(sortOccurrences);
@@ -502,8 +502,8 @@ function tripSequenceBounds(tripId){
   }));
   related.sort();
   let from=t.startDate||related[0]||"", to=t.endDate||related[related.length-1]||from;
-  if(filter.from && (!from || filter.from>from)) from=filter.from;
-  if(filter.to && (!to || filter.to<to)) to=filter.to;
+  if(state.filter.from && (!from || state.filter.from>from)) from=state.filter.from;
+  if(state.filter.to && (!to || state.filter.to<to)) to=state.filter.to;
   return {from,to};
 }
 function tripDayNoByDate(date,tripId,all=[]){
@@ -541,16 +541,16 @@ function sequenceLabels(){
 function visitReorderScope(){
   const tripId=specificTripId();
   const available=isVisitReorderAvailable({
-    categoryCount:filter.cats.size,
-    regionCount:filter.regions.length,
-    textSearch:filter.q,
-    tripId:filter.tripId,
+    categoryCount:state.filter.cats.size,
+    regionCount:state.filter.regions.length,
+    textSearch:state.filter.q,
+    tripId:state.filter.tripId,
     hasSpecificTrip:!!tripId
   });
   if(!available) return null;
   return {
     tripId,
-    participantId:filter.who==="all"?"":filter.who
+    participantId:state.filter.who==="all"?"":state.filter.who
   };
 }
 
@@ -851,20 +851,20 @@ async function renderApp(){
     state.pickedMonth=e.target.value; state.dateScope="pickedMonth"; applyDateScope(); refreshFilterUI(); applyFilter();
   };
   document.getElementById("fl_trip").onchange = e => {
-    filter.tripId = e.target.value;
+    state.filter.tripId = e.target.value;
     forgetLastNewVisitDate();
     // Picking a specific Trip shows the whole Trip, not the current month.
     if (e.target.value!=="all" && e.target.value!=="daily" && trips[e.target.value]){
-      state.dateScope = "all"; filter.from = ""; filter.to = "";
+      state.dateScope = "all"; state.filter.from = ""; state.filter.to = "";
       refreshFilterUI();
     }
     applyFilter();
   };
-  document.getElementById("fl_who").onchange  = e => { filter.who = e.target.value; applyFilter(); };
-  document.getElementById("fl_from").onchange = e => { filter.from = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
-  document.getElementById("fl_to").onchange   = e => { filter.to = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_who").onchange  = e => { state.filter.who = e.target.value; applyFilter(); };
+  document.getElementById("fl_from").onchange = e => { state.filter.from = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
+  document.getElementById("fl_to").onchange   = e => { state.filter.to = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_clear").onclick = () => {
-    filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
+    state.filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
     state.dateScope = "all";
     state.searchMode = "add";
     forgetLastNewVisitDate();
@@ -887,7 +887,7 @@ function openSettings(){
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
   if(!map || layoutState.map || state.tab==="trips") return;
-  if(!shouldAutoFitViewport({tripId:filter.tripId,regionCount:filter.regions.length})) return;
+  if(!shouldAutoFitViewport({tripId:state.filter.tripId,regionCount:state.filter.regions.length})) return;
   const pts=Object.values(places).filter(p=>passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
   const uniq=[]; const seen=new Set();
@@ -918,8 +918,8 @@ function setFocusedPlace(id){
   renderMarkers();
 }
 function clearPlaceFilter(){
-  if(!filter.placeId && !focusedPlaceId) return;
-  filter.placeId = "";
+  if(!state.filter.placeId && !focusedPlaceId) return;
+  state.filter.placeId = "";
   focusedPlaceId = null; clearTimeout(focusedPlaceTimer);
   applyFilter({ fitViewport:false });
 }
@@ -945,8 +945,8 @@ function applyFilter({fitViewport=true}={}){
   renderFilterChips();
   const shouldFit=shouldFitFilterViewport({
     requested:fitViewport,
-    tripId:filter.tripId,
-    regionCount:filter.regions.length
+    tripId:state.filter.tripId,
+    regionCount:state.filter.regions.length
   });
   if(shouldFit) scheduleFilterFit();
   else {
@@ -964,7 +964,7 @@ function refreshFilterUI(){
   scope.value = state.dateScope;
   trip.innerHTML = `<option value="all">全部旅程</option><option value="daily">日常</option>` +
     Object.values(trips).map(t=>`<option value="${t.id}">${esc((t.emoji?t.emoji+" ":"")+t.name)}</option>`).join("");
-  trip.value = filter.tripId;
+  trip.value = state.filter.tripId;
   const who = document.getElementById("fl_who");
   // Active Members (self first, then by name) + only the historical participants
   // that actually appear in loaded data (Phase 2 §8, §9). If the current
@@ -973,18 +973,18 @@ function refreshFilterUI(){
   const whoUidsList = participantFilterCandidateIds();
   who.innerHTML = `<option value="all">所有同行者</option>` +
     whoUidsList.map(uid=>`<option value="${esc(uid)}">${esc(participantName(uid))}</option>`).join("");
-  who.value = filter.who;
-  document.getElementById("fl_from").value = filter.from;
-  document.getElementById("fl_to").value = filter.to;
+  who.value = state.filter.who;
+  document.getElementById("fl_from").value = state.filter.from;
+  document.getElementById("fl_to").value = state.filter.to;
   const mq=document.getElementById("monthQuick"), mi=document.getElementById("fl_month");
   if(mq){ mq.classList.toggle("show",state.dateScope==="pickedMonth"); }
   if(mi) mi.value=state.pickedMonth||currentMonth(0);
   const fc = document.getElementById("fl_cats");
   fc.innerHTML = spaceCats.length
-    ? spaceCats.map(c=>`<span class="chip ${filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
+    ? spaceCats.map(c=>`<span class="chip ${state.filter.cats.has(c)?'on':''}" data-c="${esc(c)}">${esc(c)}</span>`).join("")
     : `<span style="font-size:12px;color:var(--ink-soft)">尚無分類</span>`;
   fc.querySelectorAll(".chip").forEach(ch => ch.onclick = () => {
-    const k = ch.dataset.c; filter.cats.has(k)?filter.cats.delete(k):filter.cats.add(k);
+    const k = ch.dataset.c; state.filter.cats.has(k)?state.filter.cats.delete(k):state.filter.cats.add(k);
     ch.classList.toggle("on"); applyFilter();
   });
   renderFilterChips();
@@ -992,37 +992,37 @@ function refreshFilterUI(){
 function renderFilterChips(){
   const el = document.getElementById("filterChips"); if (!el) return;
   updateProximityMaskControl();
-  const active = filter.who!=="all"||filter.tripId!=="all"||filter.cats.size||filter.from||filter.to||filter.regions.length||filter.placeId||filter.q.trim();
+  const active = state.filter.who!=="all"||state.filter.tripId!=="all"||state.filter.cats.size||state.filter.from||state.filter.to||state.filter.regions.length||state.filter.placeId||state.filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip active">篩選中 · ${n}</span>` : "";
-  if (["month","lastmonth","pickedMonth"].includes(state.dateScope) && filter.from){
-    html += `<span class="fchip">${esc(filter.from.slice(0,7).replace("-","/"))}</span>`;
+  if (["month","lastmonth","pickedMonth"].includes(state.dateScope) && state.filter.from){
+    html += `<span class="fchip">${esc(state.filter.from.slice(0,7).replace("-","/"))}</span>`;
   }
   const seq=sequenceContext();
   if (state.tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1 順序" : "1·2·3 順序";
     html += `<button class="fchip ${state.numberPins?'active':''}" id="orderPinToggle" title="地圖依造訪順序編號">${state.numberPins?'●':'○'} ${label}</button>`;
   }
-  if (filter.q.trim()){
-    html += `<span class="fchip active">🔍 ${esc(filter.q.trim())} <b data-clearq="1">✕</b></span>`;
+  if (state.filter.q.trim()){
+    html += `<span class="fchip active">🔍 ${esc(state.filter.q.trim())} <b data-clearq="1">✕</b></span>`;
   }
-  filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
-  if (filter.placeId){
-    const fp = places[filter.placeId];
+  state.filter.regions.forEach((r,i) => html += `<span class="fchip">${esc(r.name)} <b data-rx="${i}">✕</b></span>`);
+  if (state.filter.placeId){
+    const fp = places[state.filter.placeId];
     html += `<span class="fchip active">📍 ${esc(fp?.name || "這個地標")} <b data-clearplace="1">✕</b></span>`;
   }
   el.innerHTML = html;
   const op = document.getElementById("orderPinToggle");
   if (op) op.onclick = () => { state.numberPins=!state.numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
-    filter.regions.splice(+x.dataset.rx, 1); applyFilter();
+    state.filter.regions.splice(+x.dataset.rx, 1); applyFilter();
   });
   const cp = el.querySelector('[data-clearplace]');
   if (cp) cp.onclick = clearPlaceFilter;
   const cq = el.querySelector('[data-clearq]');
   if (cq) cq.onclick = () => {
-    filter.q = "";
+    state.filter.q = "";
     const input = document.getElementById("search");
     if (input && state.searchMode === "filter") input.value = "";
     applyFilter();
@@ -1492,10 +1492,10 @@ function markerDateBounds(){
     const b=tripSequenceBounds(tid);
     if(b.from&&b.to&&b.from<=b.to) return b;
   }
-  if(filter.from && filter.to) return {from:filter.from,to:filter.to};
+  if(state.filter.from && state.filter.to) return {from:state.filter.from,to:state.filter.to};
   const ds=getFilteredVisitOccurrences().map(occurrenceDate).filter(Boolean).sort();
   const today=new Date().toISOString().slice(0,10);
-  return {from:filter.from||ds[0]||today,to:filter.to||ds[ds.length-1]||ds[0]||today};
+  return {from:state.filter.from||ds[0]||today,to:state.filter.to||ds[ds.length-1]||ds[0]||today};
 }
 function dateBaseColor(date,bounds=markerDateBounds()){
   const total=Math.max(1,dayDiff(bounds.from,bounds.to)), pos=Math.max(0,Math.min(total,dayDiff(bounds.from,date)));
@@ -1519,8 +1519,8 @@ function representativeDateOccurrence(p,mode){
     }
     const co=stayCheckout(v); if(!co) return;
     let from=v.date,to=co;
-    if(filter.from&&filter.from>from) from=filter.from;
-    if(filter.to&&filter.to<to) to=filter.to;
+    if(state.filter.from&&state.filter.from>from) from=state.filter.from;
+    if(state.filter.to&&state.filter.to<to) to=state.filter.to;
     enumerateDates(from,to).forEach(d=>{
       for(const anchor of stayAnchorsOnDate(v.date,co,d)) arr.push(buildOccurrence(p,v,visitIndex,d,anchor,true));
     });
@@ -1640,8 +1640,8 @@ function renderMarkers(){
     // 📍 chip's ✕, clears it.
     m.addListener("gmp-click", () => {
       lastMarkerClick = Date.now();
-      if (filter.placeId === p.id){ clearPlaceFilter(); return; }
-      filter.placeId = p.id;
+      if (state.filter.placeId === p.id){ clearPlaceFilter(); return; }
+      state.filter.placeId = p.id;
       if (state.tab !== "visited") state.tab = "visited";
       applyFilter({ fitViewport:false });
       setFocusedPlace(p.id);
@@ -1741,7 +1741,7 @@ function regionLegendBody(){
 }
 function proximityLegendBody(){
   if(!proximityEnabled) return "";
-  const maskMode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  const maskMode=resolveProximityMaskMode(state.filter.regions,proximityMaskTaiwan);
   const landText=maskMode.type==="regions" ? `已選行政區 × ${maskMode.count}`
     : maskMode.type==="taiwan" ? "臺灣陸地" : "無遮罩";
   const seedText=proximitySeedCount ? `${proximitySeedCount} 個造訪地點` : "目前篩選下沒有造訪地點";
@@ -1850,7 +1850,7 @@ function areaVisitsForPlace(place){
   return Array.isArray(place?.visits) ? place.visits : [];
 }
 function areaVisitPassFilter(place,visit){
-  return visitPasses(place, visit, filter, AREA_VISIT_FIELDS);
+  return visitPasses(place, visit, state.filter, AREA_VISIT_FIELDS);
 }
 function mapAreaPlacePassFilter(place){
   return areaVisitsForPlace(place).some(visit=>areaVisitPassFilter(place,visit));
@@ -1929,7 +1929,7 @@ function updateProximityMaskControl(){
   const maskLabel=document.getElementById("proximityMaskLabel");
   const regionStatus=document.getElementById("proximityRegionStatus");
   if(!maskLabel || !regionStatus) return;
-  const mode=resolveProximityMaskMode(filter.regions,proximityMaskTaiwan);
+  const mode=resolveProximityMaskMode(state.filter.regions,proximityMaskTaiwan);
   maskLabel.style.display=mode.type==="regions" ? "none" : "flex";
   regionStatus.style.display=mode.type==="regions" ? "inline" : "none";
   regionStatus.textContent=mode.type==="regions" ? `限制於已選 ${mode.count} 個行政區` : "";
@@ -2017,7 +2017,7 @@ function proximityGeometryKey(seeds,maskMode){
   return `${formatProximityRadius(proximityRadius)}:${maskMode.identity}:${seedKey}`;
 }
 async function renderProximityCoverage(requestVersion){
-  const selectedRegions=filter.regions.map(region=>({...region}));
+  const selectedRegions=state.filter.regions.map(region=>({...region}));
   const seeds=selectEligibleProximitySeeds(places, mapAreaPlacePassFilter);
   const maskMode=resolveProximityMaskMode(selectedRegions,proximityMaskTaiwan);
   proximitySeedCount=seeds.length;
@@ -2076,11 +2076,11 @@ function handleAdministrativeRegionClick(ev,level,codeProp){
     name:parts.filter(Boolean).join(""),
     ...(level==="village" ? {countyCode:f.getProperty("COUNTYCODE")} : {})
   };
-  const idx=filter.regions.findIndex(region=>region.key===entry.key && region.code===entry.code);
+  const idx=state.filter.regions.findIndex(region=>region.key===entry.key && region.code===entry.code);
   if(state.regionMulti){
-    if(idx>=0) filter.regions.splice(idx,1); else filter.regions.push(entry);
+    if(idx>=0) state.filter.regions.splice(idx,1); else state.filter.regions.push(entry);
   }else{
-    filter.regions=(idx>=0 && filter.regions.length===1) ? [] : [entry];
+    state.filter.regions=(idx>=0 && state.filter.regions.length===1) ? [] : [entry];
   }
   state.tab="visited";
   document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("on",button.dataset.t==="visited"));
@@ -2107,7 +2107,7 @@ async function renderAdministrativeLayer(){
     if(requestVersion!==adminRenderVersion || adminLevel!==level) return;
     alert("行政區圖資載入失敗，請確認 geo/ 圖資已包含在 repo：\n"+e.message);
     adminLevel="off";
-    filter.regions=[];
+    state.filter.regions=[];
     removeAdministrativeLayer();
     updateSurfaceControls();
     renderList();
@@ -2146,7 +2146,7 @@ async function renderAdministrativeLayer(){
     }
     return null;
   };
-  const selectedCodes=new Set(filter.regions
+  const selectedCodes=new Set(state.filter.regions
     .filter(region=>region.key===CODEKEY[level])
     .map(region=>String(region.code)));
   const hasBlackout=shouldShowRegionBlackout({adminLevel:level,regionCount:selectedCodes.size});
@@ -2251,8 +2251,8 @@ function toggleMapSurface(control){
 
   const changed=next.adminLevel!==adminLevel;
   adminLevel=next.adminLevel;
-  if(filter.regions.length && (changed || adminLevel==="off")){
-    filter.regions=[];
+  if(state.filter.regions.length && (changed || adminLevel==="off")){
+    state.filter.regions=[];
     renderList();
     renderFilterChips();
   }
@@ -2266,7 +2266,7 @@ function toggleMapSurface(control){
 const effOrd = p => (p.ord != null ? p.ord : (p.createdAt?.seconds || 0));
 function renderList(){
   if (!runtimeReady()){ showLoadingState(); return; }
-  if (filter.placeId && !places[filter.placeId]) filter.placeId = "";  // Place gone (last Visit deleted)
+  if (state.filter.placeId && !places[state.filter.placeId]) state.filter.placeId = "";  // Place gone (last Visit deleted)
   if (state.tab !== "visited" && state.tab !== "trips") state.tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === state.tab));
   document.getElementById("searchWrap").style.display = state.tab === "trips" ? "none" : "block";
@@ -2279,7 +2279,7 @@ function renderList(){
 
   const tripId=specificTripId();
   let occ=tripId ? sequenceOccurrences() : getFilteredVisitOccurrences();
-  if(filter.placeId) occ=occ.filter(o=>o.p.id===filter.placeId);
+  if(state.filter.placeId) occ=occ.filter(o=>o.p.id===state.filter.placeId);
   if(!tripId){
     occ.sort((a,b)=>{
       const d=occurrenceDate(b).localeCompare(occurrenceDate(a)); if(d) return d;
@@ -2343,7 +2343,7 @@ function stayAnchorCardHTML(o,label,date){
 }
 function renderDayVisitList(el,date){
   let seq=getDayOccurrences(date);
-  if(filter.placeId) seq=seq.filter(o=>o.p.id===filter.placeId);
+  if(state.filter.placeId) seq=seq.filter(o=>o.p.id===state.filter.placeId);
   if(!seq.length){ el.innerHTML=`<div class="empty">這一天沒有符合的造訪紀錄。</div>`; return; }
   const tripId=specificTripId(), labels=new Map(sequenceLabels().map(x=>[occurrenceKey(x.o),x.label]));
   let html=`<div class="daysep">${tripId?`D${tripDayNoByDate(date,tripId,seq)} · `:""}${esc(date)}</div>`;
@@ -2442,12 +2442,12 @@ function applySearchMode(){
   if (state.searchMode === "filter"){
     toggle.textContent = "🔍";
     input.placeholder = "篩選造訪…(依地點名稱)";
-    if (input.value !== filter.q) input.value = filter.q;
+    if (input.value !== state.filter.q) input.value = state.filter.q;
     clearSearchSuggestions();
   } else {
     toggle.textContent = "＋";
     input.placeholder = "搜尋地點加入…(例:台北101、直島)";
-    if (filter.q){ filter.q = ""; input.value = ""; applyFilter(); }
+    if (state.filter.q){ state.filter.q = ""; input.value = ""; applyFilter(); }
   }
 }
 function wireSearch(){
@@ -2460,7 +2460,7 @@ function wireSearch(){
   };
   input.oninput = () => {
     if (state.searchMode === "filter"){
-      filter.q = input.value;
+      state.filter.q = input.value;
       applyFilter();
       return;
     }
@@ -2669,9 +2669,9 @@ function renderTrips(el){
   document.getElementById("newtrip").onclick = () => editTrip();
   list.forEach(t => document.getElementById("t_"+t.id).onclick = ev => {
     if (ev.target.dataset.edit || ev.target.dataset.del) return;
-    filter.tripId = t.id; state.tab = "visited";
+    state.filter.tripId = t.id; state.tab = "visited";
     forgetLastNewVisitDate();
-    state.dateScope = "all"; filter.from=""; filter.to="";   // 從旅程卡進入時預設看完整旅程
+    state.dateScope = "all"; state.filter.from=""; state.filter.to="";   // 從旅程卡進入時預設看完整旅程
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t==="visited"));
     refreshFilterUI(); applyFilter();
   });
