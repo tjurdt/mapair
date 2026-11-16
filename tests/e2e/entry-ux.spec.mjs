@@ -69,19 +69,22 @@ test("after adding one Visit the next one dittos its date", async ({ page }) => 
   await expect(page.locator("#ns_date")).toHaveValue("2026-08-03");
 });
 
-test("the stay toggle reveals a checkout date one day later, and saves a stay", async ({ page }) => {
+test("picking the 住宿 purpose asks for a checkout date one day later, and saves a stay", async ({ page }) => {
   await signIn(page);
   await openNewVisitEditor(page);
 
   await expect(page.locator("#ns_end_date")).toBeHidden();
   await page.fill("#ns_date", "2026-08-10");
-  await page.click("#ns_stay");
+  await page.click('#ns_purpose [data-purpose="住宿"]');
   await expect(page.locator("#ns_end_date")).toBeVisible();
   await expect(page.locator("#ns_end_date")).toHaveValue("2026-08-11");
+  // Un-picking 住宿 hides it again; picking it back restores it.
+  await page.click('#ns_purpose [data-purpose="住宿"]');
+  await expect(page.locator("#ns_end_date")).toBeHidden();
+  await page.click('#ns_purpose [data-purpose="住宿"]');
 
   await page.fill("#ns_place_name", "測試旅館");
-  await page.click('#ns_purpose [data-purpose="其他"]');
-  await page.click("#ns_save");
+  await page.click("#ns_save"); // ✕ = save and close
   await expect(page.locator(".modal-bg")).toHaveCount(0);
   await page.selectOption("#fl_scope", "custom");
   await page.fill("#fl_from", "2026-08-10");
@@ -98,4 +101,28 @@ test("editing one Trip date seeds the empty other date", async ({ page }) => {
 
   await page.fill("#nst_start", "2027-03-10");
   await expect(page.locator("#nst_end")).toHaveValue("2027-03-10"); // feature 6
+});
+
+test("tapping outside an untouched new-Visit editor closes it without saving", async ({ page }) => {
+  await signIn(page);
+  await page.selectOption("#fl_scope", "all");
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+  await openNewVisitEditor(page);
+  await page.mouse.click(5, 5);
+  await expect(page.locator(".modal-bg")).toHaveCount(0);
+  await page.waitForTimeout(300);
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+});
+
+test("✕ on an edited Visit saves the change", async ({ page }) => {
+  await signIn(page);
+  await page.selectOption("#fl_scope", "custom");
+  await page.fill("#fl_from", "2026-08-02");
+  await page.fill("#fl_to", "2026-08-02");
+  await page.locator("#list .card[data-pid]", { hasText: "測試大學" }).first().click();
+  await page.click('#ns_purpose [data-purpose="考察"]');
+  await page.click("#ns_save");
+  await expect(page.locator(".modal-bg")).toHaveCount(0);
+  await page.locator("#list .card[data-pid]", { hasText: "測試大學" }).first().click();
+  await expect(page.locator('#ns_purpose [data-purpose="考察"]')).toHaveClass(/\bon\b/);
 });

@@ -3,12 +3,11 @@ import { PURPOSE_NAMES, LEGACY_CATEGORY_MAP, purposeOf, categoryToStore } from "
 import { classifyAreaDepth, depthByPlace, placeAreaKey, DEPTH_ORDER } from "../src/domain/area-depth.js";
 import { isForeignPlace, resolveTripType, tripTypePass, TRIP_TYPE_KEYS } from "../src/domain/trip-type.js";
 import { tripPass, visitPasses } from "../src/domain/filter.js";
-import { readFileSync } from "node:fs";
 import { emojiMatches, searchEmoji } from "../src/ui/emoji-picker.js";
 import { nextStarRating } from "../src/ui/visit-editor.js";
 
 /* purposes */
-assert.deepEqual(PURPOSE_NAMES, ["交通", "文史", "自然", "考察", "娛樂", "飲食", "其他"]);
+assert.deepEqual(PURPOSE_NAMES, ["交通", "文史", "自然", "考察", "娛樂", "飲食", "住宿", "其他"]);
 for (const [legacy, purpose] of Object.entries(LEGACY_CATEGORY_MAP)) {
   assert.ok(PURPOSE_NAMES.includes(purpose), `${legacy} maps to a real purpose`);
 }
@@ -20,7 +19,10 @@ assert.equal(purposeOf("餐飲"), "飲食");
 assert.equal(purposeOf("咖啡"), "飲食");
 assert.equal(purposeOf("景點"), "文史");
 assert.equal(purposeOf("工作"), "考察");
-assert.equal(purposeOf("住宿"), "其他");
+assert.equal(purposeOf("住宿"), "住宿");
+assert.equal(purposeOf("海景民宿"), "住宿");
+assert.equal(purposeOf("dinner"), "其他", "'inn' only as a whole word");
+assert.equal(purposeOf("咖啡", "stay"), "住宿", "a stay always reads as 住宿");
 assert.equal(purposeOf("飲食"), "飲食", "new values pass through");
 assert.equal(purposeOf("  自然 "), "自然", "trimmed");
 assert.equal(purposeOf(""), "", "no category stays empty");
@@ -78,7 +80,7 @@ assert.equal(placeAreaKey({ id: "p" }), "place:p");
 }
 
 /* trip type */
-assert.deepEqual(TRIP_TYPE_KEYS, ["daily", "domestic", "abroad", "overseas"]);
+assert.deepEqual(TRIP_TYPE_KEYS, ["daily", "domestic", "overseas"]);
 assert.equal(isForeignPlace({ lat: 25.03, lng: 121.56 }), false, "Taipei");
 assert.equal(isForeignPlace({ lat: 23.57, lng: 119.58 }), false, "Penghu");
 assert.equal(isForeignPlace({ lat: 24.43, lng: 118.32 }), false, "Kinmen");
@@ -91,7 +93,8 @@ assert.equal(isForeignPlace({ lat: 25, lng: 121.5, admin: { country: "日本" } 
 assert.equal(isForeignPlace({ lat: 99, lng: 999, countyCode: "63000" }), false, "a Taiwan county code is domestic");
 assert.equal(isForeignPlace({}), false, "no coordinates: not foreign");
 
-assert.equal(resolveTripType("abroad", [{ lat: 25, lng: 121.5 }]), "abroad", "stored type wins");
+assert.equal(resolveTripType("daily", [{ lat: 35.68, lng: 139.76 }]), "daily", "stored type wins");
+assert.equal(resolveTripType("abroad", [{ lat: 25, lng: 121.5 }]), "overseas", "former 國外 merges into 出國");
 assert.equal(resolveTripType(undefined, [{ lat: 25, lng: 121.5 }, { lat: 35.68, lng: 139.76 }]), "overseas", "any foreign Place -> 出國");
 assert.equal(resolveTripType("bogus", [{ lat: 25, lng: 121.5 }]), "domestic");
 assert.equal(resolveTripType(undefined, []), "domestic");
@@ -125,7 +128,7 @@ assert.equal(emojiMatches("拉麵 麵 ramen noodle", "麵 pizza"), false);
 assert.equal(emojiMatches("anything", ""), true);
 
 {
-  const data = JSON.parse(readFileSync(new URL("../src/data/emoji.json", import.meta.url), "utf8"));
+  const { default: data } = await import("../src/data/emoji.js");
   assert.ok(data.list.length > 1800, "the full emoji set is bundled");
   const first = (q) => searchEmoji(data.list, q)[0]?.[0];
   assert.equal(first("拉麵"), "🍜", "Taiwan keyword supplement");

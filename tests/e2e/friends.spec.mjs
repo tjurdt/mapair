@@ -9,7 +9,8 @@ test.beforeEach(() => reseed());
 
 test("a shareable friend code is generated on first open", async ({ page }) => {
   await signIn(page);
-  await page.click("#friendsBtn");
+  await page.click("#setBtn");
+    await page.click("#ns_friends_open");
   await expect(page.locator(".modal h2")).toHaveText("好友");
 
   await expect(page.locator("#fm_mycode")).not.toHaveText("產生中…");
@@ -18,7 +19,8 @@ test("a shareable friend code is generated on first open", async ({ page }) => {
 
 test("adding your own id is rejected", async ({ page }) => {
   await signIn(page);
-  await page.click("#friendsBtn");
+  await page.click("#setBtn");
+    await page.click("#ns_friends_open");
 
   await page.fill("#fm_uid", "test-user-a");
   await page.click("#fm_add");
@@ -37,13 +39,15 @@ test("two users complete the invite → accept → link handshake", async ({ bro
     await signIn(pageB, "b");
 
     // B sends an invite to A's id.
-    await pageB.click("#friendsBtn");
+    await pageB.click("#setBtn");
+    await pageB.click("#ns_friends_open");
     await pageB.fill("#fm_uid", "test-user-a");
     await pageB.click("#fm_add");
     await expect(pageB.locator("#fm_outgoing")).toContainText("test-user-a");
 
     // A sees it and accepts.
-    await pageA.click("#friendsBtn");
+    await pageA.click("#setBtn");
+    await pageA.click("#ns_friends_open");
     await expect(pageA.locator("#fm_incoming")).toContainText("test-user-b");
     await pageA.locator("#fm_incoming .fm_accept").click();
 
@@ -55,7 +59,8 @@ test("two users complete the invite → accept → link handshake", async ({ bro
     // The payoff: B is now a selectable participant in A's Visit editor.
     await pageA.evaluate(() => document.querySelectorAll(".modal-bg").forEach((m) => m.remove()));
     await setDateRange(pageA, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
-    await pageA.locator("#list .card[data-pid]", { hasText: "河畔咖啡" }).first().locator("[data-ditto]").click();
+    await pageA.locator("#list .card[data-pid]", { hasText: "河畔咖啡" }).first().click();
+    await pageA.click("#ns_ditto");
     await expect(pageA.locator('#ns_participants [data-uid="test-user-b"]')).toHaveCount(1);
   } finally {
     await ctxA.close();

@@ -1,4 +1,4 @@
-// The seven visit purposes ("造訪目的"), and the read-time mapping that folds
+// The eight visit purposes ("造訪目的"), and the read-time mapping that folds
 // every older category (the 20 former presets plus free-text "其他" entries)
 // onto them.
 //
@@ -14,6 +14,7 @@ export const PURPOSES = Object.freeze([
   Object.freeze({ name: "考察", icon: "🔍", color: "#3f7d78" }),
   Object.freeze({ name: "娛樂", icon: "🎡", color: "#c2603f" }),
   Object.freeze({ name: "飲食", icon: "🍜", color: "#d98b3f" }),
+  Object.freeze({ name: "住宿", icon: "🛏️", color: "#b25b6b" }),
   Object.freeze({ name: "其他", icon: "📍", color: "#9aa5ad" })
 ]);
 
@@ -30,11 +31,12 @@ export const LEGACY_CATEGORY_MAP = Object.freeze({
   自然: "自然", 戶外: "自然",
   交通: "交通",
   教育: "考察", 工作: "考察",
-  住宿: "其他", 醫療: "其他", 生活: "其他", 住家: "其他", 其他: "其他"
+  住宿: "住宿", 醫療: "其他", 生活: "其他", 住家: "其他", 其他: "其他"
 });
 
 // Free-text categories: first keyword group that matches wins.
 const KEYWORD_RULES = [
+  ["住宿", /住宿|旅館|飯店|酒店|民宿|旅店|青旅|hotel|hostel|\binn\b|airbnb/i],
   ["飲食", /餐|食|吃|飯|麵|咖啡|茶|酒|小吃|甜點|早午|夜市|bar|cafe|food|restaurant/i],
   ["交通", /車站|機場|港|捷運|高鐵|火車|巴士|客運|轉乘|渡輪|station|airport/i],
   ["文史", /寺|廟|宮|教堂|古蹟|老街|博物|美術|紀念|歷史|文化|展覽|遺址|城|museum|temple|shrine/i],
@@ -43,8 +45,12 @@ const KEYWORD_RULES = [
   ["娛樂", /玩|遊樂|樂園|購物|逛|電影|演唱|表演|球|運動|派對|生日|唱歌|ktv|shopping|concert/i]
 ];
 
-/** Purpose for any stored category value ("" stays "" — no purpose chosen). */
-export function purposeOf(raw) {
+/**
+ * Purpose for any stored category value ("" stays "" — no purpose chosen).
+ * A stay (`kind === "stay"`) always reads as 住宿.
+ */
+export function purposeOf(raw, kind) {
+  if (kind === "stay") return "住宿";
   const value = typeof raw === "string" ? raw.trim() : "";
   if (!value) return "";
   if (PURPOSE_COLORS[value]) return value;

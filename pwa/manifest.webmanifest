@@ -1,10 +1,11 @@
 {
+  "id": "mapair",
   "name": "Mapair 足跡",
   "short_name": "Mapair",
   "description": "記錄去過的地方與旅程",
   "lang": "zh-Hant",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "../",
+  "scope": "../",
   "display": "standalone",
   "orientation": "any",
   "theme_color": "#152230",

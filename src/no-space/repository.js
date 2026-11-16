@@ -175,7 +175,7 @@ export function createNoSpaceRepository({ db, firestore, uid }){
     // document as tripTypes.{tripId}; the shared Trip schema is unchanged.
     updateOwnTripType(tripId, type){
       const id = assertDocumentId(tripId, "tripId");
-      if (!["daily","domestic","abroad","overseas"].includes(type)) throw new Error("Unknown trip type.");
+      if (!["daily","domestic","overseas"].includes(type)) throw new Error("Unknown trip type.");
       return setDoc(ref(noSpacePaths.user(uid)), { tripTypes:{ [id]:type }, updatedAt:stamp() }, { merge:true });
     },
     // Personal display preferences on the User document (not shared Visit data).

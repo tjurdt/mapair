@@ -2,12 +2,12 @@ import { esc } from "./html.js";
 import { icon } from "./icons.js";
 
 // Full emoji picker with keyword search (中文 or English). The dataset
-// (src/data/emoji.json, built by scripts/build-emoji-data.mjs) is loaded on
+// (src/data/emoji.js, built by scripts/build-emoji-data.mjs) is loaded on
 // first open, so it never weighs on app start-up.
 
 let dataPromise = null;
 function loadEmojiData() {
-  dataPromise ||= import("../data/emoji.json").then((mod) => mod.default || mod);
+  dataPromise ||= import("../data/emoji.js").then((mod) => mod.default);
   return dataPromise;
 }
 

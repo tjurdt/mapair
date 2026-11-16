@@ -30,6 +30,15 @@ export default [
     }
   },
   {
+    // Service worker
+    files: ["sw.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "script",
+      globals: { ...globals.serviceworker }
+    }
+  },
+  {
     // Node tooling and tests
     files: [
       "scripts/**/*.mjs",

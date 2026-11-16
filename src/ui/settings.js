@@ -49,8 +49,7 @@ export function openSettingsPanel({
   modal(`
     <div class="ed-head" data-title="設定">
       <input id="ns_name" class="ed-title" value="${esc(values.displayName)}" placeholder="顯示名稱" aria-label="顯示名稱">
-      <button type="button" class="iconbtn primary" id="ns_done" title="儲存" aria-label="儲存">${icon("check", 20)}</button>
-      <button type="button" class="iconbtn" id="ns_close" title="關閉" aria-label="關閉">${icon("x", 20)}</button>
+      <button type="button" class="iconbtn primary" id="ns_done" title="儲存並關閉" aria-label="儲存並關閉">${icon("x", 20)}</button>
     </div>
     <div class="srow"><span>${icon("pin", 16)} 標記</span>
       <input type="checkbox" id="ns_pins" ${values.showPins ? "checked" : ""} aria-label="顯示地點標記">
@@ -69,7 +68,7 @@ export function openSettingsPanel({
       <button type="button" class="btn grey" id="ns_friends_open">${icon("users", 16)} 好友</button>
       <button type="button" class="btn grey" id="ns_logout">${icon("logout", 16)} 登出</button>
     </div>
-  `, { className: "dialog" });
+  `, { className: "dialog", onDismiss: () => saveAndClose() });
 
   const mode = document.getElementById("ns_markermode");
   mode.value = values.markerMode;
@@ -81,7 +80,6 @@ export function openSettingsPanel({
     metric.onchange = (event) => onMetric(event.target.value);
   }
 
-  document.getElementById("ns_close").onclick = () => closeModal();
   document.getElementById("ns_pins").onchange = (event) => onShowPins(event.target.checked);
   document.getElementById("ns_alpha").oninput = (event) => onAlpha((+event.target.value) / 100);
   document.querySelectorAll(".ns_catcolor").forEach((input) => input.oninput = () => { draftCatColors[input.dataset.cat] = input.value; });
@@ -90,12 +88,14 @@ export function openSettingsPanel({
   document.getElementById("ns_friends_open").onclick = () => onOpenFriends();
   document.getElementById("ns_logout").onclick = () => { closeModal(); onLogout(); };
 
-  document.getElementById("ns_done").onclick = async () => {
+  // ✕ (or a backdrop tap) saves and closes.
+  async function saveAndClose() {
     await onSave({
       displayName: document.getElementById("ns_name").value,
       categoryColors: changedColors(draftCatColors, catColors, catalog.purposeColors, purposeNames),
       levelColors: changedColors(draftLevelColors, levelColors, catalog.levelDefaults, catalog.levelOrder)
     });
     closeModal();
-  };
+  }
+  document.getElementById("ns_done").onclick = () => saveAndClose();
 }

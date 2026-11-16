@@ -42,13 +42,15 @@ export function openVisitEditor(ctx) {
     initialDate, initialEndDate, initialTripId, initialCategory,
     allowNewPlace, newPlaceName, placeOptions, tripOptions, missingTripId,
     tripsById, contributions, memberUids, participantName,
-    isCurrent, onSave, onDelete
+    isCurrent, onSave, onDelete, onDitto
   } = ctx;
 
   let selected = retainCurrentParticipant([...ctx.initialSelected], currentUid);
   let selectedPlaceId = ctx.selectedPlaceId;
-  let purpose = purposeOf(initialCategory);
-  let stay = rawVisit?.kind === "stay";
+  let purpose = purposeOf(initialCategory, rawVisit?.kind);
+  // A stay is simply the 住宿 purpose: picking it asks for a checkout date.
+  const isStay = () => purpose === "住宿";
+  let dirty = false;
   const memberIdSet = new Set(memberUids);
   const mine = contributions[currentUid] || {};
   let rating = Number(mine.rating) || 0;
@@ -74,14 +76,14 @@ export function openVisitEditor(ctx) {
   modal(`
     <div class="ed-head" data-title="${creating ? "新增造訪" : "編輯造訪"}">
       ${placeField}
-      <button type="button" class="iconbtn primary" id="ns_save" title="儲存" aria-label="儲存">${icon("check", 20)}</button>
+      ${!creating && onDitto ? `<button type="button" class="iconbtn" id="ns_ditto" title="這裡再記一筆" aria-label="這裡再記一筆">${icon("copy", 18)}</button>` : ""}
       ${canDelete ? `<button type="button" class="iconbtn danger" id="ns_delete" title="刪除" aria-label="刪除">${icon("trash", 19)}</button>` : ""}
-      <button type="button" class="iconbtn" id="ns_cancel" title="取消" aria-label="取消">${icon("x", 20)}</button>
+      <button type="button" class="iconbtn primary" id="ns_save" title="儲存並關閉" aria-label="儲存並關閉">${icon("x", 20)}</button>
     </div>
     <div class="ed-row">
       <input type="date" id="ns_date" value="${esc(initialDate)}" aria-label="日期">
-      <button type="button" class="iconbtn toggle ${stay ? "on" : ""}" id="ns_stay" title="住宿" aria-label="住宿" aria-pressed="${stay}">${icon("bed", 19)}</button>
-      <input type="date" id="ns_end_date" value="${esc(initialEndDate)}" aria-label="退房日期" title="退房日期" ${stay ? "" : "hidden"}>
+      <span class="ed-arrow" id="ns_end_arrow" ${isStay() ? "" : "hidden"}>→</span>
+      <input type="date" id="ns_end_date" value="${esc(initialEndDate)}" aria-label="退房日期" title="退房日期" ${isStay() ? "" : "hidden"}>
     </div>
     <div class="purpose-pick" id="ns_purpose" role="radiogroup" aria-label="造訪目的">${PURPOSES.map((p) =>
       `<button type="button" class="pp ${p.name === purpose ? "on" : ""}" data-purpose="${p.name}" style="--pc:${p.color}" role="radio" aria-checked="${p.name === purpose}"><span>${p.icon}</span>${p.name}</button>`).join("")}</div>
@@ -93,25 +95,25 @@ export function openVisitEditor(ctx) {
     ${showCompanions ? `<div class="pick partpick" id="ns_participants">${memberUids.map((uid) => `<span class="chip ${selected.includes(uid) ? "on" : ""}" data-uid="${esc(uid)}" role="button" tabindex="0" ${uid === currentUid ? 'aria-disabled="true"' : ""}>${esc(participantName(uid))}</span>`).join("")}<span id="ns_participants_hist"></span></div>` : ""}
     <div id="ns_other_contributions">${othersHTML()}</div>
     ${legacyHTML}
-  `, { className: "dialog" });
+  `, { className: "dialog", onDismiss: () => saveAndClose({ onlyIfChanged: true }) });
 
   const g = (id) => document.getElementById(id);
-
-  g("ns_cancel").onclick = () => closeModal();
+  const card = g("ns_date").closest(".modal");
+  card.addEventListener("input", () => { dirty = true; });
+  card.addEventListener("click", (event) => { if (event.target.closest("[data-purpose],[data-star],[data-uid],[data-histdel]")) dirty = true; });
 
   const endDate = g("ns_end_date");
-  g("ns_stay").onclick = () => {
-    stay = !stay;
-    g("ns_stay").classList.toggle("on", stay);
-    g("ns_stay").setAttribute("aria-pressed", String(stay));
-    endDate.hidden = !stay;
-    if (stay && !(endDate.value > g("ns_date").value)) endDate.value = nextDay(g("ns_date").value);
+  const syncStay = () => {
+    endDate.hidden = !isStay();
+    g("ns_end_arrow").hidden = !isStay();
+    if (isStay() && !(endDate.value > g("ns_date").value)) endDate.value = nextDay(g("ns_date").value);
+    if (isStay() && !endDate.hidden && creating) endDate.focus();
   };
   // Until a stay is switched on, the checkout simply trails the date by a night;
   // once on, it only moves when the date overtakes it.
   g("ns_date").addEventListener("change", () => {
     const date = g("ns_date").value;
-    if (date && (!stay || !(endDate.value > date))) endDate.value = nextDay(date);
+    if (date && (!isStay() || !(endDate.value > date))) endDate.value = nextDay(date);
   });
 
   g("ns_purpose").querySelectorAll("[data-purpose]").forEach((button) => button.onclick = () => {
@@ -121,6 +123,7 @@ export function openVisitEditor(ctx) {
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     });
+    syncStay();
   });
 
   const starsEl = g("ns_stars");
@@ -173,12 +176,18 @@ export function openVisitEditor(ctx) {
   });
   renderHistoricalParticipants();
 
-  g("ns_save").onclick = async () => {
-    if (!isCurrent()) return;
+  // ✕ = save and close. A backdrop tap does the same, but only when something
+  // was changed; an untouched editor just closes without writing.
+  let saving = false;
+  async function saveAndClose({ onlyIfChanged = false } = {}) {
+    if (!isCurrent() || saving) return;
     const nameInput = g("ns_place_name");
     const name = nameInput ? nameInput.value.trim() : "";
+    if ((onlyIfChanged || !creating) && !dirty) { closeModal(); return; }
+    if (creating && !selectedPlaceId && !name) { closeModal(); return; }
     const date = g("ns_date").value;
-    if (!date || (!selectedPlaceId && !name)) { alert("請填寫地點與日期。"); return; }
+    if (!date) { alert("請填寫日期。"); return; }
+    const stay = isStay();
     if (stay && !(endDate.value > date)) { alert("退房日期要晚於入住日。"); return; }
     const previousLevel = rawVisit?.level && rawVisit.level !== "住宿" ? rawVisit.level : "旅遊";
     const shared = {
@@ -193,11 +202,16 @@ export function openVisitEditor(ctx) {
       createdBy: rawVisit?.createdBy || currentUid
     };
     const personal = { rating: rating > 0 ? rating : null, memory: g("ns_memory").value };
+    saving = true;
     try {
       await onSave({ shared, personal, newPlace: (!selectedPlaceId && name) ? { ...(seed || {}), name } : null, creating, date });
       if (isCurrent()) closeModal();
     } catch (error) { if (isCurrent()) alert(`無法儲存：${error.message}`); }
-  };
+    finally { saving = false; }
+  }
+  g("ns_save").onclick = () => saveAndClose();
+  const dittoButton = g("ns_ditto");
+  if (dittoButton) dittoButton.onclick = () => { closeModal(); onDitto(); };
 
   const deleteButton = g("ns_delete");
   if (deleteButton) deleteButton.onclick = async () => {

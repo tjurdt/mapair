@@ -18,7 +18,7 @@ test("creating a Trip adds it to the Trips list", async ({ page }) => {
   await expect(page.locator('.ed-head[data-title="新增旅程"]')).toBeVisible();
   await page.fill("#nst_name", "測試新旅程");
   await page.fill("#nst_start", "2026-09-01");
-  await page.click("#nst_save");
+  await page.click("#nst_save"); // ✕ = save and close
 
   await expect(page.locator(".modal-bg")).toHaveCount(0);
   await expect(page.locator("#list .triprow")).toHaveCount(2);
@@ -40,4 +40,18 @@ test("renaming then deleting a Trip through the editor", async ({ page }) => {
   await page.click("#nst_delete");
   await expect(page.locator(".modal-bg")).toHaveCount(0);
   await expect(page.locator("#list .triprow")).toHaveCount(0);
+});
+
+test("only three trip types: 日常 / 國內 / 出國", async ({ page }) => {
+  await openTrips(page);
+  await page.click("#newtrip");
+  await expect(page.locator("#nst_type [data-type]")).toHaveText(["🏠 日常", "🚆 國內", "✈️ 出國"]);
+});
+
+test("a new Trip left without a name closes without being created", async ({ page }) => {
+  await openTrips(page);
+  await page.click("#newtrip");
+  await page.click("#nst_save");
+  await expect(page.locator(".modal-bg")).toHaveCount(0);
+  await expect(page.locator("#list .triprow")).toHaveCount(1);
 });
