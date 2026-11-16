@@ -1,4 +1,4 @@
-// The eight visit purposes ("造訪目的"), and the read-time mapping that folds
+// The nine visit purposes ("造訪目的"), and the read-time mapping that folds
 // every older category (the 20 former presets plus free-text "其他" entries)
 // onto them.
 //
@@ -13,6 +13,7 @@ export const PURPOSES = Object.freeze([
   Object.freeze({ name: "自然", icon: "🌿", color: "#4f9d5f" }),
   Object.freeze({ name: "考察", icon: "🔍", color: "#3f7d78" }),
   Object.freeze({ name: "娛樂", icon: "🎡", color: "#c2603f" }),
+  Object.freeze({ name: "購物", icon: "🛍️", color: "#c0508a" }),
   Object.freeze({ name: "飲食", icon: "🍜", color: "#d98b3f" }),
   Object.freeze({ name: "住宿", icon: "🛏️", color: "#b25b6b" }),
   Object.freeze({ name: "其他", icon: "📍", color: "#9aa5ad" })
@@ -26,7 +27,7 @@ export const PURPOSE_FALLBACK = "其他";
 // Former preset names -> purpose.
 export const LEGACY_CATEGORY_MAP = Object.freeze({
   餐飲: "飲食", 咖啡: "飲食",
-  購物: "娛樂", 娛樂: "娛樂", 運動: "娛樂", 社交: "娛樂", 慶祝: "娛樂",
+  購物: "購物", 娛樂: "娛樂", 運動: "娛樂", 社交: "娛樂", 慶祝: "娛樂",
   文化: "文史", 景點: "文史", 宗教: "文史",
   自然: "自然", 戶外: "自然",
   交通: "交通",
@@ -42,7 +43,8 @@ const KEYWORD_RULES = [
   ["文史", /寺|廟|宮|教堂|古蹟|老街|博物|美術|紀念|歷史|文化|展覽|遺址|城|museum|temple|shrine/i],
   ["自然", /山|海|湖|溪|河|瀑布|公園|步道|森林|島|海灘|溫泉|花|nature|park|beach|trail/i],
   ["考察", /考察|研究|調查|工作|會議|開會|上課|學|研討|出差|田野/],
-  ["娛樂", /玩|遊樂|樂園|購物|逛|電影|演唱|表演|球|運動|派對|生日|唱歌|ktv|shopping|concert/i]
+  ["購物", /購物|逛街|商場|商圈|百貨|賣場|商店|超市|市集|outlet|mall|shop/i],
+  ["娛樂", /玩|遊樂|樂園|逛|電影|演唱|表演|球|運動|派對|生日|唱歌|ktv|concert/i]
 ];
 
 /**

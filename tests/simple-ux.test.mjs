@@ -7,7 +7,7 @@ import { emojiMatches, searchEmoji } from "../src/ui/emoji-picker.js";
 import { nextStarRating } from "../src/ui/visit-editor.js";
 
 /* purposes */
-assert.deepEqual(PURPOSE_NAMES, ["交通", "文史", "自然", "考察", "娛樂", "飲食", "住宿", "其他"]);
+assert.deepEqual(PURPOSE_NAMES, ["交通", "文史", "自然", "考察", "娛樂", "購物", "飲食", "住宿", "其他"]);
 for (const [legacy, purpose] of Object.entries(LEGACY_CATEGORY_MAP)) {
   assert.ok(PURPOSE_NAMES.includes(purpose), `${legacy} maps to a real purpose`);
 }
@@ -33,6 +33,9 @@ assert.equal(purposeOf("合歡山步道"), "自然");
 assert.equal(purposeOf("台北車站轉乘"), "交通");
 assert.equal(purposeOf("田野調查"), "考察");
 assert.equal(purposeOf("看電影"), "娛樂");
+assert.equal(purposeOf("購物"), "購物", "the former 購物 preset is its own purpose");
+assert.equal(purposeOf("信義區逛街"), "購物");
+assert.equal(purposeOf("百貨公司"), "購物");
 assert.equal(purposeOf("隨便寫的"), "其他", "unknown free text -> 其他");
 
 assert.equal(categoryToStore("飲食", "咖啡"), "咖啡", "kept the mapped purpose: original text preserved");

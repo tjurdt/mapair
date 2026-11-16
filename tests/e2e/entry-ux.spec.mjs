@@ -69,6 +69,21 @@ test("after adding one Visit the next one dittos its date", async ({ page }) => 
   await expect(page.locator("#ns_date")).toHaveValue("2026-08-03");
 });
 
+test("all nine purposes, 購物 included, fit on one row even at phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await signIn(page);
+  await openNewVisitEditor(page);
+  const buttons = page.locator("#ns_purpose [data-purpose]");
+  await expect(buttons).toHaveCount(9);
+  await expect(page.locator('#ns_purpose [data-purpose="購物"]')).toContainText("購物");
+  const rows = await buttons.evaluateAll((els) => els.map((el) => ({
+    top: Math.round(el.getBoundingClientRect().top),
+    clipped: el.scrollWidth > el.clientWidth
+  })));
+  expect(new Set(rows.map((r) => r.top)).size).toBe(1);
+  expect(rows.filter((r) => r.clipped)).toHaveLength(0);
+});
+
 test("picking the 住宿 purpose asks for a checkout date one day later, and saves a stay", async ({ page }) => {
   await signIn(page);
   await openNewVisitEditor(page);
