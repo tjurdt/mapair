@@ -29,9 +29,8 @@ export function openTripEditor({ trip, type, currentUid, memberUids, participant
     <div class="ed-head" data-title="${trip ? "編輯旅程" : "新增旅程"}">
       <button type="button" class="emojibtn" id="nst_emoji_btn" title="圖示" aria-label="圖示">${esc(emoji) || "🧭"}</button>
       <input id="nst_name" class="ed-title" value="${esc(trip?.name || "")}" placeholder="旅程名稱" aria-label="旅程名稱">
-      <button type="button" class="iconbtn primary" id="nst_save" title="儲存" aria-label="儲存">${icon("check", 20)}</button>
       ${trip && canDeleteTrip(currentUid, trip) ? `<button type="button" class="iconbtn danger" id="nst_delete" title="刪除" aria-label="刪除">${icon("trash", 19)}</button>` : ""}
-      <button type="button" class="iconbtn" id="nst_cancel" title="取消" aria-label="取消">${icon("x", 20)}</button>
+      <button type="button" class="iconbtn primary" id="nst_save" title="儲存並關閉" aria-label="儲存並關閉">${icon("x", 20)}</button>
     </div>
     <div class="seg typeseg" id="nst_type" role="radiogroup" aria-label="類型">${TRIP_TYPES.map((t) =>
       `<button type="button" class="${t.key === tripType ? "on" : ""}" data-type="${t.key}" role="radio" aria-checked="${t.key === tripType}">${t.icon} ${t.label}</button>`).join("")}</div>
@@ -42,10 +41,13 @@ export function openTripEditor({ trip, type, currentUid, memberUids, participant
       <input type="color" id="nst_color" value="${esc(trip?.color || "#3f7d78")}" aria-label="顏色" title="顏色">
     </div>
     ${showCompanions ? `<div class="pick partpick" id="nst_participants">${memberUids.map((memberUid) => `<span class="chip ${selected.includes(memberUid) ? "on" : ""}" data-uid="${esc(memberUid)}" role="button" tabindex="0" ${memberUid === currentUid ? 'aria-disabled="true"' : ""}>${esc(participantName(memberUid))}</span>`).join("")}</div>` : ""}
-  `, { className: "dialog" });
+  `, { className: "dialog", onDismiss: () => saveAndClose({ onlyIfChanged: true }) });
 
   const g = (id) => document.getElementById(id);
-  g("nst_cancel").onclick = () => closeModal();
+  let dirty = false;
+  const card = g("nst_name").closest(".modal");
+  card.addEventListener("input", () => { dirty = true; });
+  card.addEventListener("click", (event) => { if (event.target.closest("[data-type],[data-uid]")) dirty = true; });
 
   // Editing one trip date seeds the still-empty other one, so its month picker
   // opens next to the date you just set instead of on today.
@@ -55,7 +57,7 @@ export function openTripEditor({ trip, type, currentUid, memberUids, participant
 
   g("nst_emoji_btn").onclick = () => openEmojiPicker({
     current: emoji,
-    onPick: (value) => { emoji = value; g("nst_emoji_btn").textContent = value || "🧭"; }
+    onPick: (value) => { emoji = value; dirty = true; g("nst_emoji_btn").textContent = value || "🧭"; }
   });
 
   g("nst_type").querySelectorAll("[data-type]").forEach((button) => button.onclick = () => {
@@ -85,10 +87,18 @@ export function openTripEditor({ trip, type, currentUid, memberUids, participant
     participantUserIds: retainCurrentParticipant(selected, currentUid), createdBy: trip?.createdBy || currentUid
   });
 
-  g("nst_save").onclick = async () => {
-    if (!isCurrent()) return;
+  // ✕ = save and close; a backdrop tap saves only if something changed.
+  // A new Trip with no name is simply discarded.
+  let saving = false;
+  async function saveAndClose({ onlyIfChanged = false } = {}) {
+    if (!isCurrent() || saving) return;
+    if ((onlyIfChanged || trip) && !dirty) { closeModal(); return; }
     const data = collect();
-    if (!data.name) { alert("請填寫旅程名稱。"); return; }
+    if (!data.name) {
+      if (!trip) { closeModal(); return; }
+      alert("請填寫旅程名稱。"); return;
+    }
+    saving = true;
     try {
       let savedId = trip?.id;
       if (trip) await repo.updateTrip(trip.id, data);
@@ -97,7 +107,9 @@ export function openTripEditor({ trip, type, currentUid, memberUids, participant
       if (isCurrent() && onSaved) onSaved({ id: savedId, ...data });
       if (isCurrent()) closeModal();
     } catch (error) { if (isCurrent()) alert(`無法儲存旅程：${error.message}`); }
-  };
+    finally { saving = false; }
+  }
+  g("nst_save").onclick = () => saveAndClose();
 
   const del = g("nst_delete");
   if (del) del.onclick = async () => {

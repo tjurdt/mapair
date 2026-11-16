@@ -1,55 +1,32 @@
 import { test, expect } from "@playwright/test";
 import { signIn, reseed, setDateRange, FIXTURE_MONTH } from "./helpers.mjs";
 
-// Feature 9: the search box toggles between "add a Place" and "filter the
-// visited list by Place name".
+// One search box: your own matching Places come first (★), then Google results
+// (stubbed empty here). Picking one records a new Visit there.
 
 test.beforeEach(() => reseed());
 
-test("the toggle cycles the search box between add and filter modes", async ({ page }) => {
+test("typing lists your own matching Places and picking one opens a new Visit", async ({ page }) => {
   await signIn(page);
-
-  const input = page.locator("#search");
-  await expect(input).toHaveAttribute("placeholder", /搜尋地點新增/);
-  await expect(page.locator("#searchModeToggle")).not.toHaveClass(/\bon\b/);
-
-  await page.click("#searchModeToggle");
-  await expect(input).toHaveAttribute("placeholder", /篩選清單/);
-  await expect(page.locator("#searchModeToggle")).toHaveClass(/\bon\b/);
-
-  await page.click("#searchModeToggle");
-  await expect(input).toHaveAttribute("placeholder", /搜尋地點新增/);
-});
-
-test("filter mode narrows the list by Place name and the chip clears it", async ({ page }) => {
-  await signIn(page);
+  // Wait until the Places have loaded (the list shows the fixture month).
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+  await page.locator("#list .card[data-pid]").first().waitFor();
 
-  await page.click("#searchModeToggle");
   await page.fill("#search", "咖啡");
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(4);
-  await expect(page.locator("#list .card[data-pid]", { hasText: "河畔咖啡" })).toHaveCount(4);
-  await expect(page.locator("#filterChips")).toContainText("🔍 咖啡");
+  const own = page.locator("#results [data-own]");
+  await expect(own).toHaveCount(1);
+  await expect(own.first()).toContainText("河畔咖啡");
 
-  await page.fill("#search", "車站");
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(1);
-  await expect(page.locator("#list .card[data-pid]").first()).toContainText("山線車站");
-
-  await page.locator("#filterChips [data-clearq]").click();
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
-});
-
-test("leaving filter mode drops the keyword", async ({ page }) => {
-  await signIn(page);
-  await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
-
-  await page.click("#searchModeToggle");
-  await page.fill("#search", "咖啡");
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(4);
-
-  await page.click("#searchModeToggle"); // back to add mode
+  await own.first().click();
+  await expect(page.locator('.ed-head[data-title="新增造訪"]')).toBeVisible();
+  await expect(page.locator("#ns_place")).toHaveValue("place-test-no-space-cafe");
   await expect(page.locator("#search")).toHaveValue("");
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
-  await expect(page.locator("#filterChips")).not.toContainText("🔍");
+});
+
+test("no match shows 找不到 and clearing hides the results", async ({ page }) => {
+  await signIn(page);
+  await page.fill("#search", "zzzz");
+  await expect(page.locator("#results")).toContainText("找不到");
+  await page.fill("#search", "");
+  await expect(page.locator("#results")).toBeHidden();
 });

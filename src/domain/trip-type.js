@@ -1,9 +1,8 @@
-// Trip types, modelled on the expense app's scope kinds: 日常 / 國內 / 國外 / 出國.
+// Trip types, modelled on the expense app's scope kinds: 日常 / 國內 / 出國.
 //
-//   daily     日常  everyday life at home (also: Visits with no Trip at all)
+//   daily     日常  everyday life (also: Visits with no Trip at all)
 //   domestic  國內  a trip inside Taiwan
-//   abroad    國外  everyday life while living abroad
-//   overseas  出國  a trip abroad
+//   overseas  出國  anything abroad (a former "abroad"/國外 value reads as this)
 //
 // The type is stored per user on users/{uid}.tripTypes ({ tripId: type }) — the
 // shared Trip document's schema is unchanged. A Trip with no stored type is
@@ -12,7 +11,6 @@
 export const TRIP_TYPES = Object.freeze([
   Object.freeze({ key: "daily", label: "日常", icon: "🏠" }),
   Object.freeze({ key: "domestic", label: "國內", icon: "🚆" }),
-  Object.freeze({ key: "abroad", label: "國外", icon: "🌏" }),
   Object.freeze({ key: "overseas", label: "出國", icon: "✈️" })
 ]);
 export const TRIP_TYPE_KEYS = Object.freeze(TRIP_TYPES.map((t) => t.key));
@@ -45,6 +43,7 @@ export function isForeignPlace(place) {
 
 /** Stored type if valid, else 出國 when any of the Trip's Places is foreign, else 國內. */
 export function resolveTripType(stored, tripPlaces = []) {
+  if (stored === "abroad") return "overseas";
   if (isTripType(stored)) return stored;
   return tripPlaces.some(isForeignPlace) ? "overseas" : "domestic";
 }

@@ -1,9 +1,9 @@
-// Renders the PWA / home-screen PNG icons from public/icon.svg with Playwright's
+// Renders the PWA / home-screen PNG icons from pwa/icon.svg with Playwright's
 // Chromium (already a dev dependency), so no native image library is needed.
 //
 //   node scripts/build-icons.mjs
 //
-// Outputs (public/): icon-192.png, icon-512.png, icon-maskable-512.png
+// Outputs (pwa/): icon-192.png, icon-512.png, icon-maskable-512.png
 // (full-bleed background, artwork inside the 80% safe zone),
 // apple-touch-icon.png (180, full-bleed — iOS rounds the corners itself),
 // favicon-32.png.
@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 
-const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
+const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "../pwa");
 const svg = readFileSync(resolve(publicDir, "icon.svg"), "utf8");
 // Full-bleed variant: square background, artwork scaled into the safe zone.
 const fullBleed = (scale) => svg

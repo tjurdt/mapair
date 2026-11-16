@@ -235,16 +235,13 @@ const state = {
   // pickedMonth backs the pickedMonth scope.
   dateScope: "month",
   pickedMonth: new Date().toISOString().slice(0, 7),
-  // searchMode: "add" — the search box adds a Place; "filter" — filters the
-  // visited list by Place name (filter.q). Cycled by #searchModeToggle.
-  searchMode: "add",
   // lastNewVisitDate: the last Visit created since load / since the Trip or
   // date scope changed — the "ditto" default.
   lastNewVisitDate: "",
   numberPins: false,
   regionMulti: false,
-  // Folded by default on phones, where the legend would cover the small map.
-  legendCollapsed: typeof matchMedia === "function" && matchMedia("(max-width:760px)").matches
+  // The legend opens from its round button under 設定; closed by default.
+  legendCollapsed: true
 };
 let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
 let layoutDismissController = null;
@@ -402,7 +399,7 @@ function placeVisits(p){
 function hasVisitHistory(p){
   return !!p && ((Array.isArray(p.visits) && p.visits.length > 0) || !!p.visitedOn);
 }
-function visitCategory(p,v){ return purposeOf(v?.category || (p.categories||[])[0] || ""); }
+function visitCategory(p,v){ return purposeOf(v?.category || (p.categories||[])[0] || "", v?.kind); }
 function visitWhoUids(p,v){ return resolveVisitParticipants(v, p, legacyParticipantContext()).participantIds; }
 function visitWhoText(p,v){ return participantSummaryText(visitWhoUids(p,v)); }
 function visitKind(v){ return v?.kind === "stay" ? "stay" : "visit"; }
@@ -417,7 +414,7 @@ function stayNights(v){
 const LIST_VISIT_FIELDS = { participantIds:visitWhoUids, category:visitCategory, checkout:stayCheckout, tripType:id=>tripTypeOf(id) };
 const AREA_VISIT_FIELDS = {
   participantIds:visitWhoUids,
-  category:(place,visit)=>purposeOf(visit?.category),
+  category:(place,visit)=>purposeOf(visit?.category,visit?.kind),
   checkout:stayCheckout,
   tripType:id=>tripTypeOf(id)
 };
@@ -449,13 +446,6 @@ function passFilter(p){
   // legacy wishlist-only records are invisible everywhere.
   if (!hasVisitHistory(p)) return false;
   return placePasses(p, placeVisits(p), state.filter, LIST_VISIT_FIELDS);
-}
-// Whether the user has deliberately narrowed the list (anything beyond the
-// default "this month" view). Drives the per-card DITTO affordance.
-function listIsFiltered(){
-  return state.filter.who!=="all" || state.filter.tripId!=="all" || state.filter.cats.size>0
-    || state.filter.regions.length>0 || !!state.filter.q.trim() || !!state.filter.placeId
-    || state.dateScope!=="month";
 }
 // Occurrence build / key / date / ordering primitives live in
 // src/domain/occurrences.js. `sortOccurrences` binds the comparator to this
@@ -612,7 +602,7 @@ function renderGate(){
   document.getElementById("app").innerHTML = `
   <div class="center"><div class="gate">
     ${localBadge()}
-    <img class="gate-logo" src="./icon.svg" alt="">
+    <img class="gate-logo" src="./pwa/icon.svg" alt="">
     <h1>Mapair</h1>
     <p>記錄去過的地方與旅程</p>
     <button class="btn" id="login" style="margin-top:16px;padding:12px 22px">用 Google 登入</button>
@@ -647,21 +637,22 @@ async function renderApp(){
     <div class="wrap">
       <div class="mapcol">
         <div id="map"></div>
-        <div id="maptop">
-          <div id="mapctl" role="group" aria-label="地圖圖層">
-            <button data-l="off" class="on" title="地標">標記</button>
-            <button data-l="county" title="縣市">縣市</button>
-            <button data-l="town" title="鄉鎮市區">鄉鎮</button>
-            <button data-l="village" title="村里">村里</button>
-            <button data-l="proximity" title="鄰近涵蓋">鄰近</button>
-          </div>
-          ${localBadge()}
-        </div>
+        <div id="maptop">${localBadge()}</div>
         <div id="mapfab">
           <button id="addBtn" class="fab" title="在地圖上點選新增" aria-label="新增地點">${icon("plus",20)}</button>
           <button id="locBtn" class="fab" title="定位：附近地點" aria-label="定位">${icon("locate",20)}</button>
-          <button id="friendsBtn" class="fab" title="好友" aria-label="好友">${icon("users",19)}</button>
+          <div class="fabwrap">
+            <button id="layersBtn" class="fab" title="圖層" aria-label="圖層" aria-expanded="false">${icon("layers",19)}</button>
+            <div id="mapctl" class="fabmenu" role="group" aria-label="地圖圖層">
+              <button data-l="off" class="on">標記</button>
+              <button data-l="county">縣市</button>
+              <button data-l="town">鄉鎮</button>
+              <button data-l="village">村里</button>
+              <button data-l="proximity">鄰近</button>
+            </div>
+          </div>
           <button id="setBtn" class="fab" title="設定" aria-label="設定">${icon("gear",19)}</button>
+          <button id="legendBtn" class="fab" title="圖例" aria-label="圖例" aria-expanded="false"><span class="legendicon"></span></button>
         </div>
         <button id="multiBtn" title="複選行政區" style="display:none">複選</button>
         <div id="proximityCtl" style="display:none">
@@ -679,18 +670,11 @@ async function renderApp(){
             <button class="tab" data-t="trips" title="旅程">${icon("route",15)}<span>旅程</span></button>
           </div>
           <div class="search" id="searchWrap">
-            <button id="searchModeToggle" class="iconbtn" title="切換：新增地點 / 篩選清單" aria-label="切換搜尋模式">＋</button>
-            <input id="search" placeholder="搜尋地點新增" autocomplete="off" enterkeyhint="search"/>
+            <span class="search-ic">${icon("search",16)}</span>
+            <input id="search" type="search" placeholder="搜尋地點" autocomplete="off" enterkeyhint="search"/>
             <div class="results" id="results" style="display:none"></div>
           </div>
-          <div class="layoutctl" id="layoutCtl">
-            <button class="iconbtn" id="layoutBtn" title="版面" aria-label="版面" aria-controls="layoutMenu" aria-expanded="false">${icon("layout",17)}</button>
-            <div class="layoutmenu" id="layoutMenu">
-              <button id="toggleMap">地圖</button>
-              <button id="toggleFilter">篩選</button>
-              <button id="toggleList">清單</button>
-            </div>
-          </div>
+          <button class="iconbtn" id="layoutBtn" title="版面：地圖＋清單" aria-label="切換版面">${icon("layout",17)}</button>
         </div>
         <div id="filterbar">
           <div class="frow">
@@ -709,57 +693,51 @@ async function renderApp(){
 
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => { state.tab = b.dataset.t; renderList(); });
 
-  // 版面收合不佔固定高度：地圖 / 篩選 / 清單可各自開關
+  // 版面：一顆按鈕循環 地圖＋清單 → 只有地圖 → 只有清單
   const wrapEl = document.querySelector(".wrap");
-  const layoutCtl = document.getElementById("layoutCtl");
-  const layoutMenu = document.getElementById("layoutMenu");
   const layoutBtn = document.getElementById("layoutBtn");
-  const resizeVisibleMap = () => {
-    if(map&&!layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"),50);
-  };
+  const LAYOUTS = [
+    ["split", { map:false, filter:false, list:false }, "地圖＋清單"],
+    ["map", { map:false, filter:true, list:true }, "只有地圖"],
+    ["list", { map:true, filter:false, list:false }, "只有清單"]
+  ];
   const applyLayoutState = () => {
-    const view=layoutViewState(layoutState,layoutMenu.classList.contains("open"));
+    const view=layoutViewState(layoutState,false);
     wrapEl.classList.toggle("map-hidden",view.mapHidden);
     wrapEl.classList.toggle("filter-hidden",view.filterHidden);
     wrapEl.classList.toggle("list-hidden",view.listHidden);
     wrapEl.classList.toggle("content-hidden",view.contentHidden);
-    wrapEl.classList.toggle("layout-menu-open",view.menuOpen);
     wrapEl.classList.toggle("layout-compact",view.compactSidebar);
-    [["toggleMap","map","地圖"],["toggleFilter","filter","篩選"],["toggleList","list","清單"]].forEach(([id,key,label])=>{
-      const b=document.getElementById(id); if(!b) return;
-      b.textContent = label;
-      b.classList.toggle("off", layoutState[key]);
-    });
-    resizeVisibleMap();
+    const current=LAYOUTS.find(([,v])=>v.map===layoutState.map&&v.list===layoutState.list)||LAYOUTS[0];
+    layoutBtn.title=`版面：${current[2]}`;
+    layoutBtn.dataset.layout=current[0];
+    if(map&&!layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"),50);
   };
-  const setLayoutMenuOpen = open => {
-    layoutMenu.classList.toggle("open",open);
-    layoutBtn.setAttribute("aria-expanded",String(open));
+  layoutBtn.onclick = () => {
+    const i=LAYOUTS.findIndex(([key])=>key===layoutBtn.dataset.layout);
+    layoutState={...LAYOUTS[(i+1)%LAYOUTS.length][1]};
     applyLayoutState();
   };
-  layoutBtn.onclick = e => {
-    e.stopPropagation();
-    setLayoutMenuOpen(!layoutMenu.classList.contains("open"));
-  };
-  document.getElementById("toggleMap").onclick = () => { layoutState.map=!layoutState.map; applyLayoutState(); };
-  document.getElementById("toggleFilter").onclick = () => { layoutState.filter=!layoutState.filter; applyLayoutState(); };
-  document.getElementById("toggleList").onclick = () => { layoutState.list=!layoutState.list; applyLayoutState(); };
   layoutDismissController?.abort();
   layoutDismissController=new AbortController();
-  document.addEventListener("click",e=>{
-    if(layoutMenu.classList.contains("open")&&!layoutCtl.contains(e.target)) setLayoutMenuOpen(false);
-  },{signal:layoutDismissController.signal});
-  document.addEventListener("keydown",e=>{
-    if(e.key==="Escape"&&layoutMenu.classList.contains("open")){
-      setLayoutMenuOpen(false); layoutBtn.focus();
-    }
-  },{signal:layoutDismissController.signal});
+  // 圖層選單：點圖層鈕開關，點選後或點其他地方收起
+  const layersBtn=document.getElementById("layersBtn"), layerMenu=document.getElementById("mapctl");
+  const setLayerMenu=open=>{ layerMenu.classList.toggle("open",open); layersBtn.setAttribute("aria-expanded",String(open)); };
+  layersBtn.onclick=e=>{
+    e.stopPropagation();
+    const open=!layerMenu.classList.contains("open");
+    if(open && !state.legendCollapsed){ state.legendCollapsed=true; renderUnifiedLegend(); }
+    setLayerMenu(open);
+  };
+  document.addEventListener("click",e=>{ if(!e.target.closest(".fabwrap")) setLayerMenu(false); },{signal:layoutDismissController.signal});
+  document.getElementById("legendBtn").onclick=e=>{ e.stopPropagation(); setLayerMenu(false); state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
   applyLayoutState();
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
   subscribeNoSpace();
   document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
+    layerMenu.classList.remove("open");
     toggleMapSurface(b.dataset.l);
     renderMarkers();
   });
@@ -771,7 +749,6 @@ async function renderApp(){
   };
   document.getElementById("locBtn").onclick = locateNearby;
   document.getElementById("setBtn").onclick = openSettings;
-  document.getElementById("friendsBtn").onclick = openFriendsManager;
   document.getElementById("multiBtn").onclick = e => {
     state.regionMulti = !state.regionMulti;
     e.currentTarget.classList.toggle("on", state.regionMulti);
@@ -844,9 +821,7 @@ async function renderApp(){
   document.getElementById("fl_clear").onclick = () => {
     state.filter = { who:"all", tripId:"all", cats:new Set(), from:"", to:"", regions:[], placeId:"", q:"" };
     state.dateScope = "all";
-    state.searchMode = "add";
     forgetLastNewVisitDate();
-    applySearchMode();
     refreshFilterUI(); applyFilter();
   };
   applyDateScope();
@@ -1000,7 +975,7 @@ function renderFilterChips(){
   const active = state.filter.who!=="all"||state.filter.tripId!=="all"||state.filter.cats.size||state.filter.from||state.filter.to||state.filter.regions.length||state.filter.placeId||state.filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
   const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
-  let html = `<span class="fchip count">${n} 筆</span>`;
+  let html = active ? `<span class="fchip count">${n} 筆</span>` : "";
   const seq=sequenceContext();
   if (state.tab==="visited" && seq){
     const label=seq.type==="trip" ? "D1-1" : "1·2·3";
@@ -1015,6 +990,7 @@ function renderFilterChips(){
     html += `<span class="fchip active">📍 ${esc(fp?.name || "這個地標")} <b data-clearplace="1">✕</b></span>`;
   }
   el.innerHTML = html;
+  el.parentElement.style.display = html ? "" : "none";
   const op = document.getElementById("orderPinToggle");
   if (op) op.onclick = () => { state.numberPins=!state.numberPins; renderFilterChips(); renderMarkers(); };
   el.querySelectorAll('[data-rx]').forEach(x => x.onclick = () => {
@@ -1025,8 +1001,6 @@ function renderFilterChips(){
   const cq = el.querySelector('[data-clearq]');
   if (cq) cq.onclick = () => {
     state.filter.q = "";
-    const input = document.getElementById("search");
-    if (input && state.searchMode === "filter") input.value = "";
     applyFilter();
   };
 }
@@ -1135,12 +1109,12 @@ function reconcileFriendRequests(session, uid){
 }
 
 function updateFriendsBadge(){
-  const btn = document.getElementById("friendsBtn");
+  const btn = document.getElementById("setBtn");
   if (!btn) return;
   const n = incomingFriendRequests().length;
   btn.dataset.badge = n ? String(n) : "";
   btn.classList.toggle("badged", n > 0);
-  btn.title = n ? `好友（${n} 則邀請）` : "好友";
+  btn.title = n ? `設定（${n} 則好友邀請）` : "設定";
 }
 
 let friendsManagerRefresh = null;
@@ -1759,11 +1733,11 @@ function renderUnifiedLegend(){
   const hasMarker=showPins;
   const hasRegion=!!regionLegendState && shouldShowAdministrativeLegend({adminLevel,proximityEnabled});
   const hasProximity=proximityEnabled;
-  if(!hasMarker && !hasRegion && !hasProximity){ el.style.display="none"; return; }
+  const btn=document.getElementById("legendBtn");
+  if(btn){ btn.classList.toggle("on",!state.legendCollapsed); btn.setAttribute("aria-expanded",String(!state.legendCollapsed)); }
+  if(state.legendCollapsed || (!hasMarker && !hasRegion && !hasProximity)){ el.style.display="none"; return; }
   el.style.display="block";
-  const head=`<div class="legendhead" id="legendHead"><span>圖例</span><span>${state.legendCollapsed?"▸":"▾"}</span></div>`;
-  el.innerHTML=head+(state.legendCollapsed?"":markerLegendBody()+regionLegendBody()+proximityLegendBody());
-  document.getElementById("legendHead").onclick=()=>{ state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
+  el.innerHTML=markerLegendBody()+regionLegendBody()+proximityLegendBody();
 }
 function renderMarkerLegend(){ renderUnifiedLegend(); }
 
@@ -1873,7 +1847,7 @@ function visitAreaMetrics(pls){
 function areaDepthVisits(place){
   return areaVisitsForPlace(place)
     .filter(visit=>areaVisitPassFilter(place,visit))
-    .map(visit=>({ placeId:place.id, kind:visitKind(visit), purpose:purposeOf(visit?.category) }));
+    .map(visit=>({ placeId:place.id, kind:visitKind(visit), purpose:purposeOf(visit?.category,visit?.kind) }));
 }
 function deepestFilteredLevel(placeList){
   return classifyAreaDepth((placeList||[]).flatMap(areaDepthVisits)) || null;
@@ -1925,6 +1899,7 @@ function updateSurfaceControls(){
     const active=b.dataset.l==="proximity" ? proximityEnabled : b.dataset.l===adminLevel;
     b.classList.toggle("on",active);
   });
+  document.getElementById("layersBtn")?.classList.toggle("on", adminLevel!=="off" || proximityEnabled);
   const administrative=adminLevel!=="off";
   const multi=document.getElementById("multiBtn");
   const proximity=document.getElementById("proximityCtl");
@@ -2341,10 +2316,9 @@ function visitCardHTML(o,label,date,orderInfo=null){
   const p=o.p,v=o.v,cat=visitCategory(p,v),col=cat?catColor(cat):CATEGORY_NONE_COLOR;
   const key=`${p.id}:${o.visitIndex}`;
   return `<div class="card compact" id="vc_${p.id}_${o.visitIndex}" data-visit-key="${key}" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="--pc:${col}">
-    ${daynumHTML(label)}<span class="picon" title="${esc(cat||"未指定")}">${cat?PURPOSE_ICONS[cat]:"·"}</span>
+    ${sequenceContext()?daynumHTML(label):""}<span class="picon" title="${esc(cat||"未指定")}">${cat?PURPOSE_ICONS[cat]:"·"}</span>
     <div class="cbody"><div class="cname">${esc(p.name)}</div><div class="cmeta">${visitMetaHTML(p,v)}</div></div>
     ${orderInfo?`<div class="ordcol" aria-label="同日順序"><button class="ordbtn" data-vmove="up" data-vkey="${key}" data-date="${esc(date)}" title="往前" aria-label="往前" ${orderInfo.position===1?'disabled':''}>▲</button><button class="ordbtn" data-vmove="down" data-vkey="${key}" data-date="${esc(date)}" title="往後" aria-label="往後" ${orderInfo.position===orderInfo.total?'disabled':''}>▼</button></div>`:""}
-    ${listIsFiltered() ? `<button class="delx" data-ditto="${p.id}" title="這裡再記一筆" aria-label="這裡再記一筆">${icon("copy",15)}</button>` : ""}
   </div>`;
 }
 function stayAnchorCardHTML(o,label,date){
@@ -2352,7 +2326,7 @@ function stayAnchorCardHTML(o,label,date){
   const nights=stayNights(v), n=o.stayAnchor==="morning"?Math.max(1,dayDiff(v.date,date)):Math.max(1,dayDiff(v.date,date)+1);
   const edge=o.stayAnchor==="morning"?`退房出發 ${Math.min(n,nights)}/${nights}`:`夜宿 ${Math.min(n,nights)}/${nights}`;
   return `<div class="card compact stayanchor" data-stay-anchor="1" data-date="${esc(date)}" data-pid="${p.id}" data-vidx="${o.visitIndex}" style="--pc:${col}">
-    ${daynumHTML(label)}<span class="picon">${icon("bed",15)}</span>
+    ${sequenceContext()?daynumHTML(label):""}<span class="picon">${icon("bed",15)}</span>
     <div class="cbody"><div class="cname">${esc(p.name)}</div><div class="cmeta"><span class="stayedge">${edge}</span>${tripBadge(v.tripId)}</div></div>
   </div>`;
 }
@@ -2371,13 +2345,9 @@ function renderDayVisitList(el,date){
 }
 function wireVisitCards(el){
   el.querySelectorAll('[data-pid][data-vidx]').forEach(c=>c.onclick=ev=>{
-    if(ev.target.closest("[data-vmove]")||ev.target.closest("[data-ditto]")) return;
+    if(ev.target.closest("[data-vmove]")) return;
     focusMapOnPlace(places[c.dataset.pid]);
     openEditor(c.dataset.pid,null,{focusVisitIndex:+c.dataset.vidx});
-  });
-  el.querySelectorAll("[data-ditto]").forEach(b=>b.onclick=ev=>{
-    ev.stopPropagation();
-    openEditor(b.dataset.ditto,null,{addVisit:true});
   });
   el.querySelectorAll("[data-vmove]").forEach(b=>b.onclick=ev=>{ev.stopPropagation();moveVisitOccurrence(b.dataset.vkey,b.dataset.date,b.dataset.vmove);});
 }
@@ -2435,53 +2405,25 @@ function openSeed(seed){
   if(existing) openEditor(existing.id,null,{addVisit:true});
   else openEditor(null,seed);
 }
-// Reflect the current state.searchMode in the box (placeholder, toggle glyph) and,
-// when leaving filter mode, drop the keyword.
-function applySearchMode(){
-  const input = document.getElementById("search");
-  const toggle = document.getElementById("searchModeToggle");
-  if (!input || !toggle) return;
-  if (state.searchMode === "filter"){
-    toggle.innerHTML = icon("search",16);
-    toggle.classList.add("on");
-    input.placeholder = "篩選清單";
-    if (input.value !== state.filter.q) input.value = state.filter.q;
-    clearSearchSuggestions();
-  } else {
-    toggle.innerHTML = icon("plus",17);
-    toggle.classList.remove("on");
-    input.placeholder = "搜尋地點新增";
-    if (state.filter.q){ state.filter.q = ""; input.value = ""; applyFilter(); }
-  }
-}
+// One search box: your own matching Places first (★), then Google results.
+// Picking either records a new Visit there.
 function wireSearch(){
   const input = document.getElementById("search");
   const box = document.getElementById("results");
-  document.getElementById("searchModeToggle").onclick = () => {
-    state.searchMode = state.searchMode === "add" ? "filter" : "add";
-    applySearchMode();
-    input.focus();
-  };
   input.oninput = () => {
-    if (state.searchMode === "filter"){
-      state.filter.q = input.value;
-      applyFilter();
-      return;
-    }
     clearTimeout(searchTimer);
     if (!runtimeReady()){ clearSearchSuggestions(); return; }
     const q = input.value.trim();
-    if (q.length < 2){ box.style.display="none"; return; }
-    searchTimer = setTimeout(async () => {
-      // Capture the authenticated runtime and request generation before lookup.
-      const reqSession = runtimeSession;
-      const reqSeq = ++searchReqSeq;
-      const reqCurrent = () => reqSeq === searchReqSeq && reqSession === runtimeSession;
-      let rs = [];
-      try { rs = await searchPlace(q); } catch(e){ console.warn(e); }
-      if (!reqCurrent()){ box.style.display = "none"; return; }
-      box.innerHTML = rs.map((r,i)=>`<div data-i="${i}">${esc(r.name)}</div>`).join("") || `<div>找不到</div>`;
+    if (!q){ box.style.display="none"; return; }
+    const own = Object.values(places).filter(p => hasVisitHistory(p) && (p.name||"").toLowerCase().includes(q.toLowerCase())).slice(0, 5);
+    const render = rs => {
+      box.innerHTML = own.map((p,i)=>`<div data-own="${i}"><span class="nbmark">★</span>${esc(p.name)}</div>`).join("") +
+        rs.map((r,i)=>`<div data-i="${i}">${esc(r.name)}</div>`).join("") || `<div>找不到</div>`;
       box.style.display = "block";
+      box.querySelectorAll("div[data-own]").forEach(d => d.onclick = () => {
+        box.style.display="none"; input.value="";
+        openEditor(own[+d.dataset.own].id, null, { addVisit:true });
+      });
       box.querySelectorAll("div[data-i]").forEach(d => d.onclick = async () => {
         const r = rs[+d.dataset.i]; box.style.display="none"; input.value="";
         if (!reqCurrent()) return;   // suggestions belonged to a superseded request
@@ -2491,14 +2433,23 @@ function wireSearch(){
           sessionToken = null;                       // 選定後結束 session(計費最佳化)
           const lat = place.location.lat(), lng = place.location.lng();
           const admin = await reverseGeocode(lat, lng);
-          if (!reqCurrent()) return;   // switched Space mid-selection (§5)
+          if (!reqCurrent()) return;
           openSeed({ name:place.displayName||r.name, lat, lng, admin, source:"google", extId:r.prediction.placeId });
         } catch(e){ alert("取得地點失敗:"+e.message); }
       });
+    };
+    const reqSession = runtimeSession;
+    const reqSeq = ++searchReqSeq;
+    const reqCurrent = () => reqSeq === searchReqSeq && reqSession === runtimeSession;
+    render([]);
+    if (q.length < 2) return;
+    searchTimer = setTimeout(async () => {
+      let rs = [];
+      try { rs = await searchPlace(q); } catch(e){ console.warn(e); }
+      if (reqCurrent() && input.value.trim() === q) render(rs);
     }, 350);
   };
   document.addEventListener("click", e => { if(!e.target.closest(".search")) box.style.display="none"; });
-  applySearchMode();
 }
 
 async function searchPlace(q){
@@ -2659,7 +2610,8 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
         await repo.setDayOrder(date,normalizeDayOrder(date,visible,noSpaceState.dayOrders[date]?.visitIds||[]));
       }
     },
-    onDelete: () => repo.deleteVisit(rawVisit.id)
+    onDelete: () => repo.deleteVisit(rawVisit.id),
+    onDitto: selectedPlaceId ? () => openEditor(selectedPlaceId,null,{addVisit:true}) : null
   });
 }
 

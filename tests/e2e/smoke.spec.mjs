@@ -9,7 +9,7 @@ test.beforeEach(() => reseed());
 
 test("sign-in gate renders the shell, logout returns to the gate", async ({ page }) => {
   await signIn(page);
-  await expect(page.locator("#mapctl")).toBeVisible();
+  await expect(page.locator("#mapfab")).toBeVisible();
   await expect(page.locator("#list")).toBeVisible();
   // src/styles/app.css is loaded (--paper ground on <body>).
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(247, 244, 239)");
@@ -112,7 +112,6 @@ test("clicking a visit opens the editor with its stored data", async ({ page }) 
   await expect(page.locator('.ed-head[data-title="編輯造訪"]')).toBeVisible();
   await expect(page.locator("#ns_date")).toHaveValue("2026-08-02");
   await expect(page.locator('#ns_purpose [data-purpose="交通"]')).toHaveClass(/on/);
-  await expect(page.locator("#ns_stay")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator("#ns_end_date")).toBeHidden();
 });
 
