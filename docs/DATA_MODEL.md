@@ -180,14 +180,14 @@ Trip labels use `D{day}-{position}`. Single-day labels use consecutive integers.
 
 ## Visit purposes
 
-`src/domain/purposes.js` defines eight purposes: 交通 / 文史 / 自然 / 考察 /
-娛樂 / 飲食 / 住宿 / 其他. A stay (`kind:"stay"`) always reads as 住宿, and
+`src/domain/purposes.js` defines nine purposes: 交通 / 文史 / 自然 / 考察 /
+娛樂 / 購物 / 飲食 / 住宿 / 其他. A stay (`kind:"stay"`) always reads as 住宿, and
 picking 住宿 in the editor is what makes a Visit a stay (it then asks for the
 checkout date). Every stored `category` is passed through `purposeOf()`
 wherever it is displayed, filtered, coloured, or counted:
 
 - a purpose name passes through;
-- the 20 former presets map by table (餐飲/咖啡 → 飲食, 購物/娛樂/運動/社交/慶祝 →
+- the 20 former presets map by table (餐飲/咖啡 → 飲食, 購物 → 購物, 娛樂/運動/社交/慶祝 →
   娛樂, 文化/景點/宗教 → 文史, 自然/戶外 → 自然, 教育/工作 → 考察, 交通 → 交通,
   住宿 → 住宿, 醫療/生活/住家/其他 → 其他);
 - free text is matched by keyword (餐/食/咖啡… → 飲食, 寺/廟/博物… → 文史, …),
