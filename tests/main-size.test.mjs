@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 // extraction PR shrinks the file. Raising it needs an explicit reason: a
 // Phase 2 state-namespacing slice adds `state.` prefixes (a small, deliberate
 // bump), or a genuine bug fix needs a couple of lines.
-const MAX_LINES = 2760;
+const MAX_LINES = 2747;
 
 const source = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const lines = source.split("\n").length;

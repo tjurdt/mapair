@@ -9,12 +9,14 @@ test.beforeEach(() => reseed());
 
 test("sign-in gate renders the shell, logout returns to the gate", async ({ page }) => {
   await signIn(page);
-  await expect(page.locator("header .title")).toHaveText("我的足跡");
+  await expect(page.locator("#mapctl")).toBeVisible();
   await expect(page.locator("#list")).toBeVisible();
   // src/styles/app.css is loaded (--paper ground on <body>).
-  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(250, 247, 242)");
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(247, 244, 239)");
 
-  await page.click("#logout");
+  // Sign-out lives in settings.
+  await page.click("#setBtn");
+  await page.click("#ns_logout");
   await expect(page.locator("#login-test-a")).toBeVisible();
 });
 
@@ -40,7 +42,7 @@ test("date range drives the visited list", async ({ page }) => {
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
 
   await setDateRange(page, "2020-01-01", "2020-12-31");
-  await expect(page.locator("#list")).toContainText("沒有符合的造訪紀錄");
+  await expect(page.locator("#list")).toContainText("沒有符合的造訪");
 });
 
 test("repeated visits to one place stay as separate occurrences", async ({ page }) => {
@@ -61,12 +63,28 @@ test("participant filter narrows to that person's visits", async ({ page }) => {
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(2);
 });
 
-test("category filter narrows the visited list", async ({ page }) => {
+test("purpose filter narrows the visited list (legacy categories mapped on read)", async ({ page }) => {
   await signIn(page);
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
 
-  await page.click('#fl_cats .chip:text-is("咖啡")');
-  await expect(page.locator("#list .card[data-pid]")).toHaveCount(2);
+  // 咖啡 ×2, 晚餐, 早餐 all read as 飲食; the chip shows the count.
+  await expect(page.locator('#fl_cats [data-c="飲食"]')).toContainText("4");
+  await page.click('#fl_cats [data-c="飲食"]');
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(4);
+  await page.click('#fl_cats [data-c="飲食"]');
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+});
+
+test("trip type filter: 國內 covers the fixture trip, 日常 the trip-less visits", async ({ page }) => {
+  await signIn(page);
+  await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
+
+  await page.selectOption("#fl_trip", "type:domestic");
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(3);
+  await page.selectOption("#fl_trip", "type:daily");
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(4);
+  await page.selectOption("#fl_trip", "type:overseas");
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(0);
 });
 
 test("selecting a trip shows the day-numbered sequence", async ({ page }) => {
@@ -82,7 +100,7 @@ test("a stay renders its nights and checkout", async ({ page }) => {
   await signIn(page);
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
 
-  await expect(page.locator("#list .card[data-pid]", { hasText: "海邊旅店" })).toContainText("住宿 2晚");
+  await expect(page.locator("#list .card[data-pid]", { hasText: "海邊旅店" })).toContainText("2晚");
 });
 
 test("clicking a visit opens the editor with its stored data", async ({ page }) => {
@@ -91,16 +109,18 @@ test("clicking a visit opens the editor with its stored data", async ({ page }) 
 
   await page.locator("#list .card[data-pid]", { hasText: "山線車站" }).first().click();
 
-  await expect(page.locator(".modal h2")).toHaveText("編輯造訪");
+  await expect(page.locator('.ed-head[data-title="編輯造訪"]')).toBeVisible();
   await expect(page.locator("#ns_date")).toHaveValue("2026-08-02");
-  await expect(page.locator("#ns_level")).toHaveValue("接地");
+  await expect(page.locator('#ns_purpose [data-purpose="交通"]')).toHaveClass(/on/);
+  await expect(page.locator("#ns_stay")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#ns_end_date")).toBeHidden();
 });
 
 test("settings modal opens and a display toggle does not break the shell", async ({ page }) => {
   await signIn(page);
 
   await page.click("#setBtn");
-  await expect(page.locator(".modal h2")).toHaveText("設定");
+  await expect(page.locator('.ed-head[data-title="設定"]')).toBeVisible();
 
   await page.uncheck("#ns_pins");
   await expect(page.locator("#ns_markermode")).toBeVisible();

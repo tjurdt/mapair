@@ -5,11 +5,13 @@
 //
 // `html` is the card's inner HTML; callers wire the controls inside it after
 // this returns. Kept as a plain string template — no framework.
+// `opts.className` adds classes to the card (e.g. "dialog" for the compact,
+// vertically centred editor card).
 
-export function modal(html) {
+export function modal(html, opts = {}) {
   const backdrop = document.createElement("div");
-  backdrop.className = "modal-bg";
-  backdrop.innerHTML = `<div class="modal">${html}</div>`;
+  backdrop.className = "modal-bg" + (opts.className ? ` ${opts.className}-bg` : "");
+  backdrop.innerHTML = `<div class="modal${opts.className ? ` ${opts.className}` : ""}">${html}</div>`;
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) closeModal();
   });
@@ -23,5 +25,5 @@ export function closeModal() {
 }
 
 export function closeAllModals() {
-  document.querySelectorAll(".modal-bg").forEach((backdrop) => backdrop.remove());
+  document.querySelectorAll(".modal-bg, .emoji-layer").forEach((layer) => layer.remove());
 }

@@ -10,15 +10,15 @@ test("the toggle cycles the search box between add and filter modes", async ({ p
   await signIn(page);
 
   const input = page.locator("#search");
-  await expect(input).toHaveAttribute("placeholder", /搜尋地點加入/);
-  await expect(page.locator("#searchModeToggle")).toHaveText("＋");
+  await expect(input).toHaveAttribute("placeholder", /搜尋地點新增/);
+  await expect(page.locator("#searchModeToggle")).not.toHaveClass(/\bon\b/);
 
   await page.click("#searchModeToggle");
-  await expect(input).toHaveAttribute("placeholder", /篩選造訪/);
-  await expect(page.locator("#searchModeToggle")).toHaveText("🔍");
+  await expect(input).toHaveAttribute("placeholder", /篩選清單/);
+  await expect(page.locator("#searchModeToggle")).toHaveClass(/\bon\b/);
 
   await page.click("#searchModeToggle");
-  await expect(input).toHaveAttribute("placeholder", /搜尋地點加入/);
+  await expect(input).toHaveAttribute("placeholder", /搜尋地點新增/);
 });
 
 test("filter mode narrows the list by Place name and the chip clears it", async ({ page }) => {

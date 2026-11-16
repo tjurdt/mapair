@@ -85,12 +85,12 @@ shape**).
 | Field | Meaning |
 | --- | --- |
 | `id` | UUID when available, otherwise a timestamp/random fallback. Legacy normalized Visits receive an in-memory `legacy_{index}` ID. |
-| `level` | Shared visit depth ("造訪深度"): `經過` / `接地` / `旅遊` / `住宿` / `居住`. Everyone on the Visit sees the same value; missing/unknown → `旅遊` (or `住宿` if a legacy `kind:"stay"`). |
+| `level` | Stored for schema/rules compatibility only. The editor writes `住宿` for a stay and otherwise keeps the existing value (new Visits: `旅遊`). **Not displayed**: depth is now derived per area (see **Derived visit depth**). |
 | `kind` | `visit` or `stay`, **derived** from `level` (`住宿` → `stay`). Still written for mixed-client compatibility. A legacy `kind:"stay"` with no `level` is read as `住宿`. |
 | `date` | Visit date or stay arrival date, formatted `YYYY-MM-DD`. Visits without a date are omitted when saving. |
 | `endDate` | Checkout date, required when `level` is `住宿`; empty otherwise. Must be after `date`. |
 | `tripId` | Referenced Trip document ID, or an empty string for daily life. |
-| `category` | One category/purpose for this occurrence. |
+| `category` | One purpose for this occurrence. New saves use one of the seven purposes; older values are mapped on read (see **Visit purposes**). |
 | `participantIds` | Array of participant UIDs. In the projection this equals the stored `visits/{id}.participantUserIds`. |
 | `who` | Array of participant UIDs. In the projection, set identical to `participantIds`. Only a genuine legacy record has a `who` that can differ. |
 | `order` | Projected per-user position among ordinary Visits on the same day, from `users/{uid}/dayOrders/{date}`. Not a stored Visit field. |
@@ -178,6 +178,36 @@ and another user's ordering is unaffected. Stay anchors remain fixed.
 
 Trip labels use `D{day}-{position}`. Single-day labels use consecutive integers. Trip day numbering is based on the Trip start date, or on the earliest occurrence when the Trip has no start date.
 
+## Visit purposes
+
+`src/domain/purposes.js` defines seven purposes: 交通 / 文史 / 自然 / 考察 /
+娛樂 / 飲食 / 其他. Every stored `category` is passed through `purposeOf()`
+wherever it is displayed, filtered, coloured, or counted:
+
+- a purpose name passes through;
+- the 20 former presets map by table (餐飲/咖啡 → 飲食, 購物/娛樂/運動/社交/慶祝 →
+  娛樂, 文化/景點/宗教 → 文史, 自然/戶外 → 自然, 教育/工作 → 考察, 交通 → 交通,
+  住宿/醫療/生活/住家/其他 → 其他);
+- free text is matched by keyword (餐/食/咖啡… → 飲食, 寺/廟/博物… → 文史, …),
+  else 其他.
+
+Stored values are **not rewritten**. When an editor saves a Visit whose
+purpose the user left unchanged, the original text is kept
+(`categoryToStore`), so opening and saving never loses wording.
+
+## Derived visit depth
+
+`src/domain/area-depth.js` derives depth for an area from the filter-passing
+Visits inside it:
+
+1. any stay (`kind:"stay"`) → `住宿`;
+2. else 3+ distinct Places with 2+ different purposes → `旅遊`;
+3. else → `接地`.
+
+The choropleth classifies each county / town / village. The marker "深度" mode
+uses the Place's town (`townCode`), or its reverse-geocoded
+country/county/city outside Taiwan. `居住` and `經過` no longer exist in the UI.
+
 ## Trip
 
 | Field | Meaning |
@@ -187,6 +217,14 @@ Trip labels use `D{day}-{position}`. Single-day labels use consecutive integers.
 | `startDate`, `endDate` | Inclusive displayed Trip range. |
 | `color` | Marker/tag color associated with the Trip. |
 | `createdBy`, `createdAt` | Creator UID and server timestamp. |
+
+**Trip type** (日常 / 國內 / 國外 / 出國, `src/domain/trip-type.js`) is a
+per-user preference stored on `users/{uid}.tripTypes` as `{ tripId: "daily" |
+"domestic" | "abroad" | "overseas" }`, so the shared Trip schema and its
+Firestore rule are unchanged. A Trip with no stored type is inferred on read:
+any of its Places outside Taiwan (by `admin.country`, else coordinates) →
+出國, otherwise 國內. The trip filter accepts `type:<key>`; Visits with no Trip
+count as 日常.
 
 Trips do not own Places or Visit arrays. Membership is determined by `visit.tripId`. Trip counts distinguish Visit count from unique Place count. Deleting a Trip currently does not rewrite referencing Visits.
 

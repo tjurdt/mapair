@@ -28,7 +28,7 @@ test("every marker colour mode re-renders without error", async ({ page }) => {
   await signIn(page);
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
   await page.click("#setBtn");
-  await expect(page.locator(".modal h2")).toHaveText("設定");
+  await expect(page.locator('.ed-head[data-title="設定"]')).toBeVisible();
 
   for (const mode of ["cat", "level", "who", "trip", "rating", "dateFirst", "dateLast", "cat"]) {
     await page.selectOption("#ns_markermode", mode);
@@ -43,15 +43,15 @@ test("marker colour follows the latest visit's data per mode", async ({ page }) 
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
   await page.click("#setBtn");
 
-  // 河畔咖啡's latest fixture Visit (2026-08-05) is category 咖啡, level 旅遊,
-  // participants A+B.
+  // 河畔咖啡's latest fixture Visit (2026-08-05) is category 咖啡 (purpose 飲食),
+  // participants A+B. It is the only Place in 大安區 -> derived depth 接地.
   await page.selectOption("#ns_markermode", "cat");
   await page.waitForTimeout(40);
-  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#a9724a"); // 咖啡 preset
+  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#d98b3f"); // 飲食
 
   await page.selectOption("#ns_markermode", "level");
   await page.waitForTimeout(40);
-  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#d98b3f"); // 旅遊
+  expect(await markerBackgroundByTitle(page, "河畔咖啡")).toBe("#6f9c94"); // 接地
 
   await page.selectOption("#ns_markermode", "who");
   await page.waitForTimeout(40);
@@ -64,7 +64,7 @@ test("trip sequence numbered markers render without error", async ({ page }) => 
   await page.selectOption("#fl_trip", "trip-test-no-space-summer");
 
   await page.click("#orderPinToggle");
-  await expect(page.locator("#orderPinToggle")).toContainText("●");
+  await expect(page.locator("#orderPinToggle")).toHaveAttribute("aria-pressed", "true");
   await page.waitForTimeout(40);
 
   const markerCount = await page.evaluate(() => window.__mapairTestMarkers.length);
