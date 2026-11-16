@@ -55,3 +55,20 @@ test("a new Trip left without a name closes without being created", async ({ pag
   await expect(page.locator(".modal-bg")).toHaveCount(0);
   await expect(page.locator("#list .triprow")).toHaveCount(1);
 });
+
+test("while filtering one Trip, ✎ next to the trip filter opens that Trip's editor", async ({ page }) => {
+  await signIn(page);
+  await expect(page.locator("#fl_trip_edit")).toBeHidden();
+  await page.selectOption("#fl_trip", "trip-test-no-space-summer");
+  await expect(page.locator("#fl_trip_edit")).toBeVisible();
+  await page.click("#fl_trip_edit");
+  await expect(page.locator('.ed-head[data-title="編輯旅程"]')).toBeVisible();
+  await expect(page.locator("#nst_name")).toHaveValue("三人夏日旅行");
+  await page.fill("#nst_name", "夏日旅行改");
+  await page.click("#nst_save");
+  await expect(page.locator(".modal-bg")).toHaveCount(0);
+  await expect(page.locator("#fl_trip option:checked")).toContainText("夏日旅行改");
+
+  await page.selectOption("#fl_trip", "all");
+  await expect(page.locator("#fl_trip_edit")).toBeHidden();
+});

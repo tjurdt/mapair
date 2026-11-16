@@ -69,7 +69,7 @@ A Place is the stable geographic entity. It owns properties that are shared acro
 
 A Place exists in the active product **only because it has real Visit history** — a non-empty embedded `visits` array, or (read compat) a legacy `visitedOn` date. The central `hasVisitHistory(place)` gate encodes this and is applied before a Place appears in the list, on the map, in participant/category filters, in statistics/counts, or in administrative and proximity coverage.
 
-Creating a Place always creates its first Visit at the same time (Phase 2 new-Visit defaults). Deleting a Place's **last** remaining Visit deletes the whole Place document — the code never writes an empty active Place and never downgrades a Place to `status:"wishlist"`. Deleting one of several Visits just rewrites the `visits` array.
+Creating a Place always creates its first Visit at the same time (Phase 2 new-Visit defaults). **Renaming** from the Visit editor never edits the Place (its objective fields are immutable under the rules): `repository.renamePlace` creates a new Place at the same coordinates/admin with the new name and moves the edited Visit plus the user's other editable Visits at the old Place onto it. The old Place document stays as it was (other people's Visits keep pointing at it). Deleting a Place's **last** remaining Visit deletes the whole Place document — the code never writes an empty active Place and never downgrades a Place to `status:"wishlist"`. Deleting one of several Visits just rewrites the `visits` array.
 
 ### Legacy wishlist documents (removed feature)
 

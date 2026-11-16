@@ -19,7 +19,8 @@ test("typing lists your own matching Places and picking one opens a new Visit", 
 
   await own.first().click();
   await expect(page.locator('.ed-head[data-title="新增造訪"]')).toBeVisible();
-  await expect(page.locator("#ns_place")).toHaveValue("place-test-no-space-cafe");
+  await expect(page.locator("#ns_place_name")).toHaveValue("河畔咖啡");
+  await expect(page.locator("#ns_place_name")).toHaveAttribute("data-place-id", "place-test-no-space-cafe");
   await expect(page.locator("#search")).toHaveValue("");
 });
 

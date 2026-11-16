@@ -40,13 +40,13 @@ export function openVisitEditor(ctx) {
   const {
     creating, currentUid, rawVisit, seed, legacyImport,
     initialDate, initialEndDate, initialTripId, initialCategory,
-    allowNewPlace, newPlaceName, placeOptions, tripOptions, missingTripId,
+    placeName, tripOptions, missingTripId,
     tripsById, contributions, memberUids, participantName,
     isCurrent, onSave, onDelete, onDitto
   } = ctx;
 
   let selected = retainCurrentParticipant([...ctx.initialSelected], currentUid);
-  let selectedPlaceId = ctx.selectedPlaceId;
+  const selectedPlaceId = ctx.selectedPlaceId;
   let purpose = purposeOf(initialCategory, rawVisit?.kind);
   // A stay is simply the 住宿 purpose: picking it asks for a checkout date.
   const isStay = () => purpose === "住宿";
@@ -69,9 +69,8 @@ export function openVisitEditor(ctx) {
       <div class="ed-note">${legacyImport.rating != null ? `★${esc(String(legacyImport.rating))}` : ""}${legacyImport.review ? `<p>${esc(legacyImport.review)}</p>` : ""}</div>
     </details>` : "";
 
-  const placeField = allowNewPlace
-    ? `<input id="ns_place_name" class="ed-title" value="${esc(newPlaceName)}" placeholder="地點名稱" aria-label="地點">`
-    : `<select id="ns_place" class="ed-title" aria-label="地點">${placeOptions.map((p) => `<option value="${esc(p.id)}" ${p.id === selectedPlaceId ? "selected" : ""}>${esc(p.name || "未命名地點")}</option>`).join("")}</select>`;
+  // Always a plain text field: type to name a new Place or rename this one.
+  const placeField = `<input id="ns_place_name" class="ed-title" value="${esc(placeName)}" placeholder="地點名稱" aria-label="地點名稱" data-place-id="${esc(selectedPlaceId || "")}">`;
 
   modal(`
     <div class="ed-head" data-title="${creating ? "新增造訪" : "編輯造訪"}">
@@ -136,8 +135,6 @@ export function openVisitEditor(ctx) {
 
   const refreshOthers = () => { const box = g("ns_other_contributions"); if (box) box.innerHTML = othersHTML(); };
 
-  const placeSelect = g("ns_place");
-  if (placeSelect) placeSelect.onchange = () => { selectedPlaceId = placeSelect.value; };
 
   // Participants already on this Visit who are not selectable members (former
   // friends). Kept on save; the creator can prune one, one-way.
@@ -181,8 +178,8 @@ export function openVisitEditor(ctx) {
   let saving = false;
   async function saveAndClose({ onlyIfChanged = false } = {}) {
     if (!isCurrent() || saving) return;
-    const nameInput = g("ns_place_name");
-    const name = nameInput ? nameInput.value.trim() : "";
+    const name = g("ns_place_name").value.trim();
+    if (selectedPlaceId && !name) { alert("請填寫地點名稱。"); return; }
     if ((onlyIfChanged || !creating) && !dirty) { closeModal(); return; }
     if (creating && !selectedPlaceId && !name) { closeModal(); return; }
     const date = g("ns_date").value;
@@ -204,7 +201,11 @@ export function openVisitEditor(ctx) {
     const personal = { rating: rating > 0 ? rating : null, memory: g("ns_memory").value };
     saving = true;
     try {
-      await onSave({ shared, personal, newPlace: (!selectedPlaceId && name) ? { ...(seed || {}), name } : null, creating, date });
+      await onSave({
+        shared, personal, creating, date,
+        newPlace: (!selectedPlaceId && name) ? { ...(seed || {}), name } : null,
+        rename: selectedPlaceId && name !== String(placeName || "").trim() ? name : ""
+      });
       if (isCurrent()) closeModal();
     } catch (error) { if (isCurrent()) alert(`無法儲存：${error.message}`); }
     finally { saving = false; }

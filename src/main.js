@@ -22,7 +22,6 @@ import {
   MAP_SURFACE_Z_INDEX,
   hasFinitePlaceCoordinates,
   isVisitReorderAvailable,
-  layoutViewState,
   ordinaryOccurrences,
   resolveVisitMoveTarget,
   shouldShowReorderControls,
@@ -58,7 +57,7 @@ import {
 } from "./map-color-scales.js";
 import { createNoSpaceRepository } from "./no-space/repository.js";
 import { normalizeDayOrder, reorderDayVisitIds } from "./no-space/day-order.js";
-import { retainCurrentParticipant } from "./no-space/policies.js";
+import { canEditVisitSharedFacts, retainCurrentParticipant } from "./no-space/policies.js";
 import { tripReferenceState, visitParticipantsFromTrip } from "./no-space/trips.js";
 import { knownParticipantUserIds, projectNoSpaceRuntime } from "./no-space/visits.js";
 import {
@@ -86,6 +85,7 @@ import { openFriendsPanel } from "./ui/friends.js";
 import { openVisitEditor } from "./ui/visit-editor.js";
 import { icon } from "./ui/icons.js";
 import { openNearbyPicker, dayLabel } from "./ui/nearby-picker.js";
+import { listCover, mapPadding } from "./ui/list-panel.js";
 import { PURPOSES, PURPOSE_NAMES, PURPOSE_COLORS, PURPOSE_ICONS, purposeOf } from "./domain/purposes.js";
 import { DEPTH_ORDER, DEPTH_COLORS, classifyAreaDepth, depthByPlace } from "./domain/area-depth.js";
 import { TRIP_TYPES, TRIP_TYPE_BY_KEY, resolveTripType } from "./domain/trip-type.js";
@@ -243,7 +243,8 @@ const state = {
   // The legend opens from its round button under 設定; closed by default.
   legendCollapsed: true
 };
-let layoutState = { map:false, filter:false, list:false };   // false=顯示，true=收合
+// The map is always full size; the list is a panel over it, shown or hidden.
+let listHidden = false;
 let layoutDismissController = null;
 let regionLegendState = null;
 function forgetLastNewVisitDate(){ state.lastNewVisitDate = ""; }
@@ -639,12 +640,15 @@ async function renderApp(){
         <div id="map"></div>
         <div id="maptop">${localBadge()}</div>
         <div id="mapfab">
+          <button id="listBtn" class="fab on" title="隱藏清單" aria-label="清單" aria-pressed="true">${icon("list",19)}</button>
           <button id="addBtn" class="fab" title="在地圖上點選新增" aria-label="新增地點">${icon("plus",20)}</button>
           <button id="locBtn" class="fab" title="定位：附近地點" aria-label="定位">${icon("locate",20)}</button>
           <div class="fabwrap">
             <button id="layersBtn" class="fab" title="圖層" aria-label="圖層" aria-expanded="false">${icon("layers",19)}</button>
             <div id="mapctl" class="fabmenu" role="group" aria-label="地圖圖層">
-              <button data-l="off" class="on">標記</button>
+              <button data-pins class="${showPins?"on":""}" aria-pressed="${showPins}">${icon("pin",14)} 地標點</button>
+              <hr>
+              <button data-l="off" class="on">不分區</button>
               <button data-l="county">縣市</button>
               <button data-l="town">鄉鎮</button>
               <button data-l="village">村里</button>
@@ -674,12 +678,12 @@ async function renderApp(){
             <input id="search" type="search" placeholder="搜尋地點" autocomplete="off" enterkeyhint="search"/>
             <div class="results" id="results" style="display:none"></div>
           </div>
-          <button class="iconbtn" id="layoutBtn" title="版面：地圖＋清單" aria-label="切換版面">${icon("layout",17)}</button>
         </div>
         <div id="filterbar">
           <div class="frow">
             <select id="fl_scope" class="fmini" aria-label="日期"></select>
             <select id="fl_trip" class="fmini" aria-label="旅程"></select>
+            <button id="fl_trip_edit" class="iconbtn" title="編輯這段旅程" aria-label="編輯這段旅程" hidden>✎</button>
             <select id="fl_who" class="fmini" aria-label="同行者"></select>
           </div>
           <div class="monthquick" id="monthQuick"><input type="month" id="fl_month" aria-label="選擇月份"></div>
@@ -693,31 +697,17 @@ async function renderApp(){
 
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => { state.tab = b.dataset.t; renderList(); });
 
-  // 版面：一顆按鈕循環 地圖＋清單 → 只有地圖 → 只有清單
+  // 清單：固定位置的按鈕，只有顯示 / 隱藏兩種；地圖永遠全尺寸、不會移動。
   const wrapEl = document.querySelector(".wrap");
-  const layoutBtn = document.getElementById("layoutBtn");
-  const LAYOUTS = [
-    ["split", { map:false, filter:false, list:false }, "地圖＋清單"],
-    ["map", { map:false, filter:true, list:true }, "只有地圖"],
-    ["list", { map:true, filter:false, list:false }, "只有清單"]
-  ];
-  const applyLayoutState = () => {
-    const view=layoutViewState(layoutState,false);
-    wrapEl.classList.toggle("map-hidden",view.mapHidden);
-    wrapEl.classList.toggle("filter-hidden",view.filterHidden);
-    wrapEl.classList.toggle("list-hidden",view.listHidden);
-    wrapEl.classList.toggle("content-hidden",view.contentHidden);
-    wrapEl.classList.toggle("layout-compact",view.compactSidebar);
-    const current=LAYOUTS.find(([,v])=>v.map===layoutState.map&&v.list===layoutState.list)||LAYOUTS[0];
-    layoutBtn.title=`版面：${current[2]}`;
-    layoutBtn.dataset.layout=current[0];
-    if(map&&!layoutState.map) setTimeout(()=>google.maps.event.trigger(map,"resize"),50);
+  const listBtn = document.getElementById("listBtn");
+  const applyListState = () => {
+    wrapEl.classList.toggle("list-hidden", listHidden);
+    listBtn.classList.toggle("on", !listHidden);
+    listBtn.setAttribute("aria-pressed", String(!listHidden));
+    listBtn.title = listHidden ? "顯示清單" : "隱藏清單";
   };
-  layoutBtn.onclick = () => {
-    const i=LAYOUTS.findIndex(([key])=>key===layoutBtn.dataset.layout);
-    layoutState={...LAYOUTS[(i+1)%LAYOUTS.length][1]};
-    applyLayoutState();
-  };
+  listBtn.onclick = () => { listHidden = !listHidden; applyListState(); };
+  applyListState();
   layoutDismissController?.abort();
   layoutDismissController=new AbortController();
   // 圖層選單：點圖層鈕開關，點選後或點其他地方收起
@@ -731,12 +721,17 @@ async function renderApp(){
   };
   document.addEventListener("click",e=>{ if(!e.target.closest(".fabwrap")) setLayerMenu(false); },{signal:layoutDismissController.signal});
   document.getElementById("legendBtn").onclick=e=>{ e.stopPropagation(); setLayerMenu(false); state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
-  applyLayoutState();
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
   wireSearch();
   subscribeNoSpace();
-  document.querySelectorAll("#mapctl button").forEach(b => b.onclick = () => {
+  layerMenu.querySelector("[data-pins]").onclick = e => {
+    showPins = !showPins;
+    e.currentTarget.classList.toggle("on", showPins);
+    e.currentTarget.setAttribute("aria-pressed", String(showPins));
+    renderMarkers();
+  };
+  document.querySelectorAll("#mapctl button[data-l]").forEach(b => b.onclick = () => {
     layerMenu.classList.remove("open");
     toggleMapSurface(b.dataset.l);
     renderMarkers();
@@ -815,6 +810,7 @@ async function renderApp(){
     }
     applyFilter();
   };
+  document.getElementById("fl_trip_edit").onclick = () => { if (specificTripId()) editTrip(specificTripId()); };
   document.getElementById("fl_who").onchange  = e => { state.filter.who = e.target.value; applyFilter(); };
   document.getElementById("fl_from").onchange = e => { state.filter.from = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
   document.getElementById("fl_to").onchange   = e => { state.filter.to = e.target.value; state.dateScope="custom"; refreshFilterUI(); applyFilter(); };
@@ -837,25 +833,30 @@ function openSettings(){
 /* ---------- Filters ---------- */
 let filterFitTimer=null;
 function fitMapToCurrentFilter(){
-  if(!map || layoutState.map || state.tab==="trips") return;
+  if(!map || state.tab==="trips") return;
   if(!shouldAutoFitViewport({tripId:state.filter.tripId,regionCount:state.filter.regions.length})) return;
   const pts=Object.values(places).filter(p=>passFilter(p) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if(!pts.length) return;
   const uniq=[]; const seen=new Set();
   pts.forEach(p=>{ const k=`${p.lat.toFixed(6)},${p.lng.toFixed(6)}`; if(!seen.has(k)){seen.add(k);uniq.push(p);} });
   if(uniq.length===1){
-    map.setCenter({lat:uniq[0].lat,lng:uniq[0].lng});
-    map.setZoom(14); return;
+    centerOnMap(uniq[0],14); return;
   }
   const bounds=new google.maps.LatLngBounds();
   uniq.forEach(p=>bounds.extend({lat:p.lat,lng:p.lng}));
-  map.fitBounds(bounds,48);
+  map.fitBounds(bounds,mapPadding(listCover(listHidden)));
   google.maps.event.addListenerOnce(map,"idle",()=>{ if(map.getZoom()>15) map.setZoom(15); });
+}
+// Centre on a point inside the part of the map the list does not cover.
+function centerOnMap(p,zoom){
+  map.setCenter({lat:p.lat,lng:p.lng});
+  map.setZoom(zoom);
+  const c=listCover(listHidden);
+  if(c.right || c.bottom) map.panBy?.(c.right/2, c.bottom/2);
 }
 function focusMapOnPlace(p){
   if(!map || !Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
-  map.setCenter({lat:p.lat,lng:p.lng});
-  map.setZoom(15);
+  centerOnMap(p,15);
   setFocusedPlace(p.id);
 }
 // Briefly highlight one Place's marker (a pulsing ring) so a marker tapped from
@@ -974,6 +975,7 @@ function renderFilterChips(){
   updateProximityMaskControl();
   const active = state.filter.who!=="all"||state.filter.tripId!=="all"||state.filter.cats.size||state.filter.from||state.filter.to||state.filter.regions.length||state.filter.placeId||state.filter.q.trim();
   const clr = document.getElementById("fl_clear"); if (clr) clr.style.display = active ? "inline-block" : "none";
+  const tripEdit = document.getElementById("fl_trip_edit"); if (tripEdit) tripEdit.hidden = !specificTripId();
   const n = state.tab==="visited" ? getFilteredVisitOccurrences().length : Object.values(places).filter(p => hasVisitHistory(p) && passFilter(p)).length;
   let html = active ? `<span class="fchip count">${n} 筆</span>` : "";
   const seq=sequenceContext();
@@ -1895,7 +1897,7 @@ function renderLegend(metric,ctx){
 }
 
 function updateSurfaceControls(){
-  document.querySelectorAll("#mapctl button").forEach(b => {
+  document.querySelectorAll("#mapctl button[data-l]").forEach(b => {
     const active=b.dataset.l==="proximity" ? proximityEnabled : b.dataset.l===adminLevel;
     b.classList.toggle("on",active);
   });
@@ -2572,9 +2574,6 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
 
   const initialDate=rawVisit?.date||defaultDateForNewVisit();
 
-  const selectablePlaces={...noSpaceState.places};
-  if(selectedPlaceId&&!selectablePlaces[selectedPlaceId]) selectablePlaces[selectedPlaceId]={id:selectedPlaceId,name:runtimePlace?.name||"Unknown place"};
-  const placeOptions=Object.values(selectablePlaces).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(p=>({id:p.id,name:p.name}));
   const tripOptions=Object.values(trips).sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(t=>({id:t.id,name:t.name,emoji:t.emoji}));
 
   const currentCategory=rawVisit?.category||carryOver?.category||"";
@@ -2586,9 +2585,8 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     initialEndDate:rawVisit?.endDate||addDays(initialDate,1),
     initialTripId,
     initialCategory:currentCategory,
-    allowNewPlace:creating&&!selectedPlaceId,
-    newPlaceName:initialPlace?.name||seed?.name||"",
-    placeOptions, selectedPlaceId,
+    placeName:initialPlace?.name||runtimePlace?.name||seed?.name||"",
+    selectedPlaceId,
     tripOptions,
     missingTripId:rawVisit?.tripId&&!trips[rawVisit.tripId]?rawVisit.tripId:"",
     tripsById:trips,
@@ -2597,8 +2595,15 @@ function openNoSpaceVisitEditor(id, seed, opts={}){
     participantName,
     initialSelected,
     isCurrent,
-    onSave: async ({ shared, personal, newPlace, creating:isCreate, date }) => {
+    onSave: async ({ shared, personal, newPlace, rename, creating:isCreate, date }) => {
       let savedVisitId=rawVisit?.id||"";
+      // Renaming: Places are immutable, so make a same-spot Place with the new
+      // name and move this Visit plus your other Visits at the old Place to it.
+      if(rename && shared.placeId){
+        const oldId=shared.placeId;
+        shared.placeId=await repo.renamePlace(noSpaceState.places[oldId]||places[oldId]||{},rename,
+          Object.values(noSpaceState.visits).filter(v=>v.placeId===oldId&&v.id!==rawVisit?.id&&canEditVisitSharedFacts(uid,v)));
+      }
       if(rawVisit){ await repo.updateVisit(rawVisit.id,shared); }
       else if(shared.placeId){ const ref=await repo.createVisit(shared); savedVisitId=ref.id; }
       else { const created=await repo.createPlaceAndVisit(newPlace,shared); savedVisitId=created.visitId; shared.placeId=created.placeId; }

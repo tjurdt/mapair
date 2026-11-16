@@ -128,3 +128,30 @@ test("settings modal opens and a display toggle does not break the shell", async
   await expect(page.locator(".modal-bg")).toHaveCount(0);
   await expect(page.locator("#list")).toBeVisible();
 });
+
+for (const [label, size] of [["desktop", { width: 1280, height: 800 }], ["phone", { width: 390, height: 844 }]]) {
+  test(`${label}: the list toggle only shows/hides the list; map and button never move`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await signIn(page);
+    const box = (sel) => page.locator(sel).boundingBox();
+    const mapBefore = await box("#map");
+    const btnBefore = await box("#listBtn");
+    await expect(page.locator(".side")).toBeVisible();
+
+    await page.click("#listBtn");
+    await expect(page.locator(".side")).toBeHidden();
+    await page.waitForTimeout(300); // let the slide transition finish
+    expect(await box("#map")).toEqual(mapBefore);
+    expect(await box("#listBtn")).toEqual(btnBefore);
+    // Where the list was, taps now reach the map.
+    const hit = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest("#map"),
+      [size.width - 40, size.height - 40]);
+    expect(hit).toBe(true);
+
+    await page.click("#listBtn");
+    await expect(page.locator(".side")).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await box("#map")).toEqual(mapBefore);
+    expect(await box("#listBtn")).toEqual(btnBefore);
+  });
+}
