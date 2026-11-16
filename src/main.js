@@ -86,6 +86,7 @@ import { openVisitEditor } from "./ui/visit-editor.js";
 import { icon } from "./ui/icons.js";
 import { openNearbyPicker, dayLabel } from "./ui/nearby-picker.js";
 import { listCover, mapPadding } from "./ui/list-panel.js";
+import { renderPurposeDropdown, wirePurposeDropdown } from "./ui/purpose-filter.js";
 import { PURPOSES, PURPOSE_NAMES, PURPOSE_COLORS, PURPOSE_ICONS, purposeOf } from "./domain/purposes.js";
 import { DEPTH_ORDER, DEPTH_COLORS, classifyAreaDepth, depthByPlace } from "./domain/area-depth.js";
 import { TRIP_TYPES, TRIP_TYPE_BY_KEY, resolveTripType } from "./domain/trip-type.js";
@@ -678,17 +679,19 @@ async function renderApp(){
             <input id="search" type="search" placeholder="搜尋地點" autocomplete="off" enterkeyhint="search"/>
             <div class="results" id="results" style="display:none"></div>
           </div>
+          <div class="catdd" id="catDD"><button id="fl_cats_btn" class="ddbtn" aria-haspopup="true" aria-expanded="false" title="造訪目的">目的</button><div class="ddmenu" id="fl_cats" role="group" aria-label="造訪目的"></div></div>
         </div>
         <div id="filterbar">
           <div class="frow">
-            <select id="fl_scope" class="fmini" aria-label="日期"></select>
-            <select id="fl_trip" class="fmini" aria-label="旅程"></select>
-            <button id="fl_trip_edit" class="iconbtn" title="編輯這段旅程" aria-label="編輯這段旅程" hidden>✎</button>
-            <select id="fl_who" class="fmini" aria-label="同行者"></select>
+            <select id="fl_trip" class="fmini ftrip" aria-label="旅程"></select>
+            <div class="frest">
+              <button id="fl_trip_edit" class="iconbtn" title="編輯這段旅程" aria-label="編輯這段旅程" hidden>✎</button>
+              <select id="fl_scope" class="fmini" aria-label="日期"></select>
+              <select id="fl_who" class="fmini" aria-label="同行者"></select>
+            </div>
           </div>
           <div class="monthquick" id="monthQuick"><input type="month" id="fl_month" aria-label="選擇月份"></div>
           <div id="filterPanel" style="display:none"><input type="date" id="fl_from" aria-label="開始"><span>→</span><input type="date" id="fl_to" aria-label="結束"></div>
-          <div class="catrow pick" id="fl_cats" aria-label="造訪目的"></div>
           <div class="filtermeta"><span id="filterChips"></span><button id="fl_clear" class="iconbtn" title="清除篩選" aria-label="清除篩選" style="display:none">${icon("x",16)}</button></div>
         </div>
         <div class="list" id="list"></div>
@@ -720,6 +723,7 @@ async function renderApp(){
     setLayerMenu(open);
   };
   document.addEventListener("click",e=>{ if(!e.target.closest(".fabwrap")) setLayerMenu(false); },{signal:layoutDismissController.signal});
+  wirePurposeDropdown(layoutDismissController.signal);
   document.getElementById("legendBtn").onclick=e=>{ e.stopPropagation(); setLayerMenu(false); state.legendCollapsed=!state.legendCollapsed; renderUnifiedLegend(); };
 
   try { await initMap(); } catch(e){ alert("Google Maps 載入失敗,請檢查 API key / 已啟用的 API:\n"+e.message); }
@@ -852,7 +856,7 @@ function centerOnMap(p,zoom){
   map.setCenter({lat:p.lat,lng:p.lng});
   map.setZoom(zoom);
   const c=listCover(listHidden);
-  if(c.right || c.bottom) map.panBy?.(c.right/2, c.bottom/2);
+  if(c.left || c.bottom) map.panBy?.(-c.left/2, c.bottom/2);
 }
 function focusMapOnPlace(p){
   if(!map || !Number.isFinite(p?.lat) || !Number.isFinite(p?.lng)) return;
@@ -959,15 +963,10 @@ function refreshFilterUI(){
   renderFilterChips();
 }
 function renderPurposeChips(){
-  const fc = document.getElementById("fl_cats"); if (!fc) return;
-  const counts = state.tab==="visited" ? purposeCounts() : {};
-  fc.innerHTML = PURPOSES.map(p=>{
-    const n=counts[p.name]||0, on=state.filter.cats.has(p.name);
-    return `<span class="chip pchip ${on?'on':''} ${n||on?'':'zero'}" data-c="${esc(p.name)}" role="button" tabindex="0" aria-pressed="${on}" title="${esc(p.name)}" style="--pc:${catColor(p.name)}"><i>${p.icon}</i>${esc(p.name)}${n?`<b>${n}</b>`:""}</span>`;
-  }).join("");
-  fc.querySelectorAll(".chip").forEach(ch => ch.onclick = () => {
-    const k = ch.dataset.c; state.filter.cats.has(k)?state.filter.cats.delete(k):state.filter.cats.add(k);
-    applyFilter();
+  renderPurposeDropdown({
+    purposes:PURPOSES, counts:state.tab==="visited" ? purposeCounts() : {}, selected:state.filter.cats, color:catColor,
+    onToggle:k => { state.filter.cats.has(k) ? state.filter.cats.delete(k) : state.filter.cats.add(k); applyFilter(); },
+    onClear:() => { state.filter.cats.clear(); applyFilter(); }
   });
 }
 function renderFilterChips(){
@@ -2254,6 +2253,7 @@ function renderList(){
   if (state.tab !== "visited" && state.tab !== "trips") state.tab = "visited";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === state.tab));
   document.getElementById("searchWrap").style.visibility = state.tab === "trips" ? "hidden" : "";
+  document.getElementById("catDD").style.visibility = state.tab === "trips" ? "hidden" : "";
   document.querySelector(".side")?.classList.toggle("trips-mode", state.tab === "trips");
   const el = document.getElementById("list");
   if (state.tab === "trips"){ renderTrips(el); return; }
