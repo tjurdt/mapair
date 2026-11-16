@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Mapair">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25445e"/>
+      <stop offset="1" stop-color="#121f2d"/>
+    </linearGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e58395"/>
+      <stop offset="1" stop-color="#a94f61"/>
+    </linearGradient>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g clip-path="url(#tile)" fill="none" stroke="#4f9a92" stroke-width="7" stroke-linecap="round" opacity="0.38">
+    <path d="M-10 356 C90 318 160 380 250 352 S410 292 522 318"/>
+    <path d="M-10 420 C110 380 210 452 320 414 S450 368 522 380"/>
+    <path d="M-10 470 C120 446 240 500 360 470 S470 440 522 446"/>
+  </g>
+  <path d="M118 398 C152 348 196 326 226 348 S282 404 304 372" fill="none" stroke="#f6ead8" stroke-width="13" stroke-linecap="round" stroke-dasharray="0.5 31"/>
+  <circle cx="118" cy="398" r="22" fill="#e7a24d" stroke="#121f2d" stroke-width="6"/>
+  <circle cx="226" cy="348" r="18" fill="#7fb3a9" stroke="#121f2d" stroke-width="6"/>
+  <g transform="translate(312 140)">
+    <ellipse cx="0" cy="226" rx="44" ry="11" fill="#0b141e" opacity="0.45"/>
+    <path d="M0 222 C-66 140 -100 96 -100 50 A100 100 0 1 1 100 50 C100 96 66 140 0 222 Z" fill="url(#pin)"/>
+    <circle cx="0" cy="46" r="40" fill="#fff6ec"/>
+    <path d="M0 26 l7 15 16 2 -12 11 3 16 -14 -8 -14 8 3 -16 -12 -11 16 -2 z" fill="#d98b3f"/>
+  </g>
+</svg>

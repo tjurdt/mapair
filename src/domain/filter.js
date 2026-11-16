@@ -1,3 +1,5 @@
+import { tripTypePass } from "./trip-type.js";
+
 // Pure Visit / Place filter predicates. `criteria` is the subset of the app's
 // `filter` state that narrows Visits: { who, tripId, cats, from, to, regions }.
 //
@@ -31,9 +33,14 @@ export function participantPass(who, participantIds) {
   return who === "all" || (participantIds || []).includes(who);
 }
 
-export function tripPass(tripId, visitTripId) {
+// `tripId` is "all", "daily" (no Trip), "type:<tripTypeKey>" (see
+// domain/trip-type.js; needs `typeOfTrip`), or one Trip's id.
+export function tripPass(tripId, visitTripId, typeOfTrip) {
   if (tripId === "all") return true;
   if (tripId === "daily") return !visitTripId;
+  if (typeof tripId === "string" && tripId.startsWith("type:")) {
+    return typeof typeOfTrip === "function" && tripTypePass(tripId.slice(5), visitTripId, typeOfTrip);
+  }
   return visitTripId === tripId;
 }
 
@@ -57,7 +64,7 @@ export function visitPasses(place, visit, criteria, resolve) {
   return (
     placeStaticPass(criteria, place) &&
     participantPass(criteria.who, resolve.participantIds(place, visit)) &&
-    tripPass(criteria.tripId, visit.tripId) &&
+    tripPass(criteria.tripId, visit.tripId, resolve.tripType) &&
     categoryPass(criteria.cats, resolve.category(place, visit)) &&
     dateRangePass(visit.date, resolve.checkout(visit), criteria.from, criteria.to)
   );

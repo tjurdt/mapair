@@ -171,6 +171,13 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       const photoURL = typeof input?.photoURL === "string" ? input.photoURL.trim() : "";
       return setDoc(ref(noSpacePaths.user(uid)), { displayName, photoURL, updatedAt:stamp() }, { merge:true });
     },
+    // Personal trip type (日常/國內/國外/出國) for one Trip, kept on the User
+    // document as tripTypes.{tripId}; the shared Trip schema is unchanged.
+    updateOwnTripType(tripId, type){
+      const id = assertDocumentId(tripId, "tripId");
+      if (!["daily","domestic","abroad","overseas"].includes(type)) throw new Error("Unknown trip type.");
+      return setDoc(ref(noSpacePaths.user(uid)), { tripTypes:{ [id]:type }, updatedAt:stamp() }, { merge:true });
+    },
     // Personal display preferences on the User document (not shared Visit data).
     // setDoc(merge) creates the doc if absent, then updateDoc replaces each map
     // field wholesale so a cleared colour override is actually removed.

@@ -11,12 +11,12 @@ test("deleting a visit removes it from the visited list", async ({ page }) => {
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
 
-  // 山線車站's Visit was created by test-user-a, so the delete affordance shows.
-  await page
-    .locator("#list .card[data-pid]", { hasText: "山線車站" })
-    .first()
-    .locator("[data-vdel]")
-    .click();
+  // 山線車站's Visit was created by test-user-a, so the editor offers delete
+  // (behind a confirm, which this test accepts).
+  page.removeAllListeners("dialog");
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.locator("#list .card[data-pid]", { hasText: "山線車站" }).first().click();
+  await page.click("#ns_delete");
 
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(6);
   await expect(page.locator("#list .card[data-pid]", { hasText: "山線車站" })).toHaveCount(0);

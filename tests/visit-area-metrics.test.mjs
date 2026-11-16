@@ -117,12 +117,12 @@ assert.equal(deepestLevel(["unknown"],LEVELS),null);
 const mainSource=await readFile(new URL("../src/main.js",import.meta.url),"utf8");
 const mapColorSource=await readFile(new URL("../src/map-color-scales.js",import.meta.url),"utf8");
 const settingsSource=await readFile(new URL("../src/ui/settings.js",import.meta.url),"utf8");
-for(const text of ["地圖上色","上色依據","透明度"]){
+for(const text of ["區域上色","透明度"]){
   assert.match(settingsSource,new RegExp(text),`the settings panel contains ${text}`);
 }
 assert.match(settingsSource,/id="ns_metric"[\s\S]*catalog\.areaMetrics/,"the settings panel renders the injected area metric options");
 assert.match(mainSource,/areaMetrics:\s*MAP_AREA_METRIC_OPTIONS/,"main.js passes the shared area metric options into the settings panel");
-for(const text of ["造訪深度","地標數","造訪次數","最早造訪日期","最後造訪日期","造訪目的（眾數）"]){
+for(const text of ["\"深度\"","地點數","\"次數\"","最早造訪","最近造訪","主要目的"]){
   assert.match(mainSource,new RegExp(text),`shared area metric options contain ${text}`);
 }
 assert.match(settingsSource,/metric\.onchange\s*=\s*\(event\)\s*=>\s*onMetric\(event\.target\.value\)/,"the settings panel routes a metric change to its onMetric callback");
