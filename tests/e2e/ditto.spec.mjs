@@ -24,7 +24,8 @@ test("DITTO opens a new Visit for the same Place with carried-over data", async 
 
   await expect(page.locator('.ed-head[data-title="新增造訪"]')).toBeVisible();
   await expect(page.locator("#ns_ditto")).toHaveCount(0);
-  await expect(page.locator("#ns_place")).toHaveValue("place-test-no-space-cafe");
+  await expect(page.locator("#ns_place_name")).toHaveValue("河畔咖啡");
+  await expect(page.locator("#ns_place_name")).toHaveAttribute("data-place-id", "place-test-no-space-cafe");
   // 河畔咖啡's latest fixture Visit is category 咖啡 (read as 飲食), participants A+B.
   await expect(page.locator('#ns_purpose [data-purpose="飲食"]')).toHaveClass(/\bon\b/);
   await expect(page.locator("#ns_participants_hist")).toContainText("測試使用者 B");

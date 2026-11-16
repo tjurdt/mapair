@@ -119,10 +119,13 @@ assert.doesNotMatch(renderMarkersSource,/pin\.element/,"marker rendering does no
 assert.match(renderMarkersSource,/pin\.style\.cursor = "pointer";/,"the normal-mode PinElement is styled directly, not via a deprecated inner element");
 assert.match(renderMarkersSource,/content = pin;[\s\S]*?new AdvMarker\(\{ map, position:\{lat:p\.lat,lng:p\.lng\}, content,/,"the PinElement is passed to AdvancedMarkerElement as its content");
 assert.match(renderMarkersSource,/placeVisits\(p\)\.filter\(v=>visitPassFilter\(p,v\)\)\.length/,"a Place's repeated-Visit count is derived from the filtered Visit list");
-assert.match(appCss,/\.wrap\.map-hidden\{grid-template-columns:0 minmax\(0,1fr\)\}/,"desktop map column collapses");
-assert.match(appCss,/\.wrap\.layout-compact\{grid-template-columns:minmax\(0,1fr\) 58px\}/,"desktop compact sidebar releases map width");
-assert.match(appCss,/\.wrap\.map-hidden\{grid-template-columns:1fr;grid-template-rows:0 minmax\(0,1fr\)\}/,"mobile map-hidden state remains vertically stacked");
-assert.match(appCss,/\.wrap\.layout-compact\{grid-template-columns:1fr;grid-template-rows:minmax\(0,1fr\) auto\}/,"mobile compact state expands the map vertically");
+assert.match(appCss,/\.mapcol\{position:absolute;inset:0\}/,"the map always fills the screen");
+assert.doesNotMatch(appCss,/\.wrap\.[a-z-]+ \.mapcol/,"no list state resizes or moves the map");
+// A hidden list must not keep catching taps over the map (opacity/transform
+// alone leave hit-testing on): it is hidden and pointer-events are off.
+assert.match(appCss,/\.wrap\.list-hidden \.side\{transform:translateX\(100%\);visibility:hidden;pointer-events:none\}/,"desktop: hidden list slides out and stops catching taps");
+assert.match(appCss,/\.wrap\.list-hidden \.side\{transform:translateY\(100%\)\}/,"phone: hidden list slides down");
+assert.match(mainSource,/id="listBtn" class="fab/,"the list toggle is a fixed map button");
 
 const combinedSurface = { adminLevel:"town", proximityEnabled:true };
 assert.deepEqual(

@@ -99,3 +99,19 @@ test("county choropleth runs the area-filter path without error", async ({ page 
   await expect(page.locator("#maplegend")).toContainText("行政區");
   expectNoPageErrors(page);
 });
+
+test("the layers menu toggles the place pins on and off", async ({ page }) => {
+  await signIn(page);
+  await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
+  const liveMarkers = () => page.evaluate(() => window.__mapairTestMarkers.filter((m) => m.map).length);
+  expect(await liveMarkers()).toBeGreaterThan(0);
+
+  await page.click("#layersBtn");
+  await page.click("#mapctl [data-pins]");
+  await expect(page.locator("#mapctl [data-pins]")).toHaveAttribute("aria-pressed", "false");
+  expect(await liveMarkers()).toBe(0);
+  await expect(page.locator("#mapctl")).toBeVisible(); // the menu stays open for another pick
+
+  await page.click("#mapctl [data-pins]");
+  expect(await liveMarkers()).toBeGreaterThan(0);
+});

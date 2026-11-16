@@ -126,3 +126,19 @@ test("✕ on an edited Visit saves the change", async ({ page }) => {
   await page.locator("#list .card[data-pid]", { hasText: "測試大學" }).first().click();
   await expect(page.locator('#ns_purpose [data-purpose="考察"]')).toHaveClass(/\bon\b/);
 });
+
+test("the place name of an existing Visit is a text field; renaming moves all your Visits there", async ({ page }) => {
+  await signIn(page);
+  await page.selectOption("#fl_scope", "all");
+  await expect(page.locator("#list .card[data-pid]", { hasText: "河畔咖啡" })).toHaveCount(4);
+
+  await page.locator("#list .card[data-pid]", { hasText: "河畔咖啡" }).first().click();
+  const title = page.locator("#ns_place_name");
+  await expect(title).toHaveJSProperty("tagName", "INPUT");
+  await expect(page.locator("#ns_place")).toHaveCount(0);
+  await title.fill("河畔咖啡館");
+  await page.click("#ns_save");
+  await expect(page.locator(".modal-bg")).toHaveCount(0);
+
+  await expect(page.locator("#list .card[data-pid]", { hasText: "河畔咖啡館" })).toHaveCount(4);
+});

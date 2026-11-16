@@ -31,23 +31,30 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 .gate .localtest-badge{margin-bottom:12px}
 
 /* ---- layout ---- */
-.wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;height:100vh;height:100dvh;position:relative}
-.mapcol{position:relative;height:100%;min-width:0;min-height:0}
+/* The map always fills the screen and never resizes; the list is a panel on
+   top of it (right side on desktop, bottom sheet on phones) that only slides
+   in or out. The map buttons sit on the map's left edge, so nothing moves. */
+.wrap{position:relative;height:100vh;height:100dvh;overflow:hidden}
+.mapcol{position:absolute;inset:0}
 #map{width:100%;height:100%}
-.side{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.side{position:absolute;top:0;right:0;bottom:0;width:360px;z-index:10;border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;box-shadow:-6px 0 20px rgba(21,34,48,.08);transition:transform .22s ease,visibility .22s}
+.wrap.list-hidden .side{transform:translateX(100%);visibility:hidden;pointer-events:none}
 
 /* ---- map overlay controls ---- */
-#maptop{position:absolute;top:calc(10px + var(--safe-top));left:10px;right:62px;min-height:0;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none}
+#maptop{position:absolute;top:calc(10px + var(--safe-top));left:60px;right:10px;min-height:0;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none}
 #maptop>*{pointer-events:auto}
 .fabwrap{position:relative}
-.fabmenu{display:none;position:absolute;right:48px;top:0;flex-direction:column;gap:2px;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px;z-index:6}
+.fabmenu{display:none;position:absolute;left:48px;top:0;flex-direction:column;gap:2px;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px;z-index:6}
 .fabmenu.open{display:flex}
 .fabmenu button{border:none;background:none;border-radius:8px;padding:7px 14px;font-size:13px;color:var(--ink);text-align:left}
 .fabmenu button:hover{background:var(--chip)}
 .fabmenu button.on{background:var(--ink);color:#fff}
+.fabmenu button{display:flex;align-items:center;gap:6px}
+.fabmenu hr{border:none;border-top:1px solid var(--line);margin:3px 4px}
+#fl_trip_edit{width:32px;height:32px;flex:0 0 32px;border:1px solid var(--line);background:#fff}
 .legendicon{display:inline-block;width:20px;height:20px;border-radius:50%;background:conic-gradient(#c46a43 0 25%,#7d8c4a 0 50%,#4a7a8c 0 75%,#9c6a9c 0);border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.16)}
 .fab.on .legendicon{border-color:var(--accent)}
-#mapfab{position:absolute;top:calc(10px + var(--safe-top));right:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
+#mapfab{position:absolute;top:calc(10px + var(--safe-top));left:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
 .fab{position:relative;width:40px;height:40px;border:none;border-radius:50%;background:#fff;color:var(--ink);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;padding:0}
 .fab:hover{background:#f4f1ec}
 .fab.on{background:var(--ink);color:#fff}
@@ -55,9 +62,9 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 .fab.busy{animation:fabspin 1s linear infinite}
 @keyframes fabspin{to{transform:rotate(360deg)}}
 .fab.badged::after{content:attr(data-badge);position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;line-height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:#fff;font-size:10px;font-weight:700}
-#multiBtn{position:absolute;top:calc(50px + var(--safe-top));left:10px;z-index:5;height:30px;padding:0 10px;border:none;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px}
+#multiBtn{position:absolute;top:calc(10px + var(--safe-top));left:60px;z-index:5;height:30px;padding:0 10px;border:none;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px}
 #multiBtn.on{background:var(--wish);color:#fff}
-#proximityCtl{position:absolute;top:calc(50px + var(--safe-top));left:10px;z-index:5;align-items:center;gap:5px;min-height:30px;padding:3px 8px;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px;white-space:nowrap}
+#proximityCtl{position:absolute;top:calc(10px + var(--safe-top));left:60px;z-index:5;align-items:center;gap:5px;min-height:30px;padding:3px 8px;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px;white-space:nowrap}
 #proximityCtl input[type=number]{width:52px;height:24px;padding:2px 5px;border:1px solid var(--line);border-radius:6px;font-size:12px}
 #proximityCtl .proximity-mask{display:flex;align-items:center;gap:3px;margin-left:4px}
 #proximityCtl input[type=checkbox]{width:16px;height:16px;margin:0}
@@ -67,7 +74,7 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 @keyframes selfpulse{0%{box-shadow:0 0 0 0 rgba(26,115,232,.5),0 1px 5px rgba(0,0,0,.35)}70%{box-shadow:0 0 0 16px rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}100%{box-shadow:0 0 0 0 rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}}
 .focuspin{width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;cursor:pointer;animation:focuspulse 1.4s ease-out infinite}
 @keyframes focuspulse{0%{box-shadow:0 0 0 0 rgba(178,91,107,.6),0 1px 5px rgba(0,0,0,.4)}70%{box-shadow:0 0 0 15px rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}100%{box-shadow:0 0 0 0 rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}}
-#maplegend{position:absolute;top:calc(10px + var(--safe-top));right:58px;z-index:5;background:rgba(255,255,255,.96);border-radius:9px;padding:6px 9px;box-shadow:var(--shadow);font-size:11px;line-height:1.4;color:var(--ink-soft);width:max-content;max-width:min(220px,calc(100% - 70px));max-height:calc(100% - 20px);overflow:auto}
+#maplegend{position:absolute;top:calc(10px + var(--safe-top));left:58px;z-index:5;background:rgba(255,255,255,.96);border-radius:9px;padding:6px 9px;box-shadow:var(--shadow);font-size:11px;line-height:1.4;color:var(--ink-soft);width:max-content;max-width:min(220px,calc(100% - 70px));max-height:calc(100% - 20px);overflow:auto}
 .legendhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--ink);font-size:11px;cursor:pointer}
 .legendsection{margin-top:5px;padding-top:4px;border-top:1px solid var(--line)}
 .legendtitle{font-size:11px;font-weight:700;color:var(--ink);margin-bottom:2px}
@@ -90,7 +97,6 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 .results div{padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
 .results div:last-child{border-bottom:none}
 .results div:hover{background:var(--paper)}
-#layoutBtn[data-layout="map"],#layoutBtn[data-layout="list"]{background:var(--ink);color:#fff}
 
 /* ---- filters ---- */
 #filterbar{padding:0 10px 2px}
@@ -247,24 +253,9 @@ select.ed-title{appearance:auto}
 .gate-logo{width:84px;height:84px;border-radius:20px;box-shadow:var(--shadow)}
 .setup{max-width:660px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
 
-/* layout toggles */
-.wrap.map-hidden{grid-template-columns:0 minmax(0,1fr)}
-.wrap.map-hidden .mapcol{width:0;overflow:hidden}
-.wrap.content-hidden .tabs,.wrap.content-hidden .search{display:none}
-.wrap.content-hidden .toprow{justify-content:center}
-.wrap.layout-compact{grid-template-columns:minmax(0,1fr) 58px}
-.wrap.filter-hidden #filterbar{display:none}
-.wrap.list-hidden .list{display:none!important}
-
 @media(max-width:760px){
-  .wrap{grid-template-columns:1fr;grid-template-rows:44% minmax(0,1fr)}
-  .side{border-left:none;border-top:1px solid var(--line)}
-  .wrap.map-hidden{grid-template-columns:1fr;grid-template-rows:0 minmax(0,1fr)}
-  .wrap.map-hidden .mapcol{width:auto;height:0;overflow:hidden}
-  .wrap.filter-hidden:not(.list-hidden):not(.map-hidden){grid-template-rows:50% minmax(0,1fr)}
-  .wrap.list-hidden:not(.map-hidden){grid-template-rows:minmax(0,1fr) auto}
-  .wrap.layout-compact{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
-  .wrap.map-hidden .toprow{padding-top:calc(8px + var(--safe-top))}
+  .side{top:auto;left:0;width:auto;height:56%;border-left:none;border-top:1px solid var(--line);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px rgba(21,34,48,.1)}
+  .wrap.list-hidden .side{transform:translateY(100%)}
   .fab{width:38px;height:38px}
   #mapfab{gap:6px}
   .tab span{display:none}

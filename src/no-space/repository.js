@@ -27,7 +27,7 @@ export function createNoSpaceRepository({ db, firestore, uid }){
   const ref = path => doc(db, ...path.split("/"));
   const col = path => collection(db, ...path.split("/"));
 
-  return {
+  const repository = {
     uid,
     listenVisibleVisits(next, error){
       return onSnapshot(query(col("visits"), where("participantUserIds", "array-contains", uid)), next, error);
@@ -67,6 +67,20 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       batch.set(visitRef, { ...sharedVisit, createdAt:stamp(), updatedAt:stamp() });
       await batch.commit();
       return { placeId:placeRef.id, visitId:visitRef.id, reusedPlace:false };
+    },
+    // A Place's objective fields cannot be edited after creation (rules), so a
+    // rename creates a new Place at the same spot; callers then move Visits.
+    async createPlace(input){
+      const placeRef = doc(col("places"));
+      await setDoc(placeRef, { ...placeObjectiveFields(input), createdBy:uid, createdAt:stamp() });
+      return placeRef.id;
+    },
+    // Rename = a new same-spot Place with the new name; `visits` (the caller's
+    // editable Visits at the old Place) move to it. The old Place is untouched.
+    async renamePlace(oldPlace, name, visits = []){
+      const placeId = await repository.createPlace({ ...oldPlace, name, source:"map", extId:null });
+      for (const visit of visits) await repository.updateVisit(visit.id, { ...visit, placeId });
+      return placeId;
     },
     updatePlaceCache(placeId, fields){ return updateDoc(ref(noSpacePaths.place(placeId)), fields); },
     updateVisit(visitId, input){
@@ -282,4 +296,5 @@ export function createNoSpaceRepository({ db, firestore, uid }){
       return (typeof value === "string" && value.trim()) ? value.trim() : null;
     }
   };
+  return repository;
 }
