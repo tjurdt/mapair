@@ -32,19 +32,19 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 
 /* ---- layout ---- */
 /* The map always fills the screen and never resizes; the list is a panel on
-   top of it (right side on desktop, bottom sheet on phones) that only slides
-   in or out. The map buttons sit on the map's left edge, so nothing moves. */
+   top of it (left side on desktop, bottom sheet on phones) that only slides
+   in or out. The map buttons sit on the map's right edge, so nothing moves. */
 .wrap{position:relative;height:100vh;height:100dvh;overflow:hidden}
 .mapcol{position:absolute;inset:0}
 #map{width:100%;height:100%}
-.side{position:absolute;top:0;right:0;bottom:0;width:360px;z-index:10;border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;box-shadow:-6px 0 20px rgba(21,34,48,.08);transition:transform .22s ease,visibility .22s}
-.wrap.list-hidden .side{transform:translateX(100%);visibility:hidden;pointer-events:none}
+.side{position:absolute;top:0;left:0;bottom:0;width:360px;z-index:10;border-right:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;overflow:hidden;box-shadow:6px 0 20px rgba(21,34,48,.08);transition:transform .22s ease,visibility .22s}
+.wrap.list-hidden .side{transform:translateX(-100%);visibility:hidden;pointer-events:none}
 
 /* ---- map overlay controls ---- */
-#maptop{position:absolute;top:calc(10px + var(--safe-top));left:60px;right:10px;min-height:0;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none}
+#maptop{position:absolute;top:calc(10px + var(--safe-top));left:50%;transform:translateX(-50%);min-height:0;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none}
 #maptop>*{pointer-events:auto}
 .fabwrap{position:relative}
-.fabmenu{display:none;position:absolute;left:48px;top:0;flex-direction:column;gap:2px;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px;z-index:6}
+.fabmenu{display:none;position:absolute;right:48px;top:0;flex-direction:column;gap:2px;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px;z-index:6}
 .fabmenu.open{display:flex}
 .fabmenu button{border:none;background:none;border-radius:8px;padding:7px 14px;font-size:13px;color:var(--ink);text-align:left}
 .fabmenu button:hover{background:var(--chip)}
@@ -54,7 +54,7 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 #fl_trip_edit{width:32px;height:32px;flex:0 0 32px;border:1px solid var(--line);background:#fff}
 .legendicon{display:inline-block;width:20px;height:20px;border-radius:50%;background:conic-gradient(#c46a43 0 25%,#7d8c4a 0 50%,#4a7a8c 0 75%,#9c6a9c 0);border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.16)}
 .fab.on .legendicon{border-color:var(--accent)}
-#mapfab{position:absolute;top:calc(10px + var(--safe-top));left:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
+#mapfab{position:absolute;top:calc(10px + var(--safe-top));right:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
 .fab{position:relative;width:40px;height:40px;border:none;border-radius:50%;background:#fff;color:var(--ink);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;padding:0}
 .fab:hover{background:#f4f1ec}
 .fab.on{background:var(--ink);color:#fff}
@@ -62,9 +62,9 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 .fab.busy{animation:fabspin 1s linear infinite}
 @keyframes fabspin{to{transform:rotate(360deg)}}
 .fab.badged::after{content:attr(data-badge);position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;line-height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:#fff;font-size:10px;font-weight:700}
-#multiBtn{position:absolute;top:calc(10px + var(--safe-top));left:60px;z-index:5;height:30px;padding:0 10px;border:none;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px}
+#multiBtn{position:absolute;top:calc(10px + var(--safe-top));right:60px;z-index:5;height:30px;padding:0 10px;border:none;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px}
 #multiBtn.on{background:var(--wish);color:#fff}
-#proximityCtl{position:absolute;top:calc(10px + var(--safe-top));left:60px;z-index:5;align-items:center;gap:5px;min-height:30px;padding:3px 8px;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px;white-space:nowrap}
+#proximityCtl{position:absolute;top:calc(10px + var(--safe-top));right:60px;z-index:5;align-items:center;gap:5px;min-height:30px;padding:3px 8px;border-radius:8px;background:#fff;box-shadow:var(--shadow);font-size:12px;white-space:nowrap}
 #proximityCtl input[type=number]{width:52px;height:24px;padding:2px 5px;border:1px solid var(--line);border-radius:6px;font-size:12px}
 #proximityCtl .proximity-mask{display:flex;align-items:center;gap:3px;margin-left:4px}
 #proximityCtl input[type=checkbox]{width:16px;height:16px;margin:0}
@@ -74,7 +74,7 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 @keyframes selfpulse{0%{box-shadow:0 0 0 0 rgba(26,115,232,.5),0 1px 5px rgba(0,0,0,.35)}70%{box-shadow:0 0 0 16px rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}100%{box-shadow:0 0 0 0 rgba(26,115,232,0),0 1px 5px rgba(0,0,0,.35)}}
 .focuspin{width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;cursor:pointer;animation:focuspulse 1.4s ease-out infinite}
 @keyframes focuspulse{0%{box-shadow:0 0 0 0 rgba(178,91,107,.6),0 1px 5px rgba(0,0,0,.4)}70%{box-shadow:0 0 0 15px rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}100%{box-shadow:0 0 0 0 rgba(178,91,107,0),0 1px 5px rgba(0,0,0,.4)}}
-#maplegend{position:absolute;top:calc(10px + var(--safe-top));left:58px;z-index:5;background:rgba(255,255,255,.96);border-radius:9px;padding:6px 9px;box-shadow:var(--shadow);font-size:11px;line-height:1.4;color:var(--ink-soft);width:max-content;max-width:min(220px,calc(100% - 70px));max-height:calc(100% - 20px);overflow:auto}
+#maplegend{position:absolute;top:calc(10px + var(--safe-top));right:58px;z-index:5;background:rgba(255,255,255,.96);border-radius:9px;padding:6px 9px;box-shadow:var(--shadow);font-size:11px;line-height:1.4;color:var(--ink-soft);width:max-content;max-width:min(220px,calc(100% - 70px));max-height:calc(100% - 20px);overflow:auto}
 .legendhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--ink);font-size:11px;cursor:pointer}
 .legendsection{margin-top:5px;padding-top:4px;border-top:1px solid var(--line)}
 .legendtitle{font-size:11px;font-weight:700;color:var(--ink);margin-bottom:2px}
@@ -102,6 +102,8 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 #filterbar{padding:0 10px 2px}
 .side.trips-mode #filterbar{display:none}
 #filterbar .frow{display:flex;gap:6px}
+#filterbar .ftrip{flex:0 0 calc(50% - 3px);width:calc(50% - 3px)}
+#filterbar .frest{flex:1 1 0;min-width:0;display:flex;gap:6px}
 .fmini{flex:1 1 0;min-width:0;height:32px;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
 #filterPanel{display:flex;align-items:center;gap:6px;margin-top:6px}
 #filterPanel input{flex:1;min-width:0;height:32px;padding:0 6px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:13px}
@@ -109,17 +111,26 @@ input,textarea,select{font-family:inherit;font-size:14px;color:var(--ink)}
 .monthquick{display:none;margin-top:6px}
 .monthquick.show{display:flex}
 .monthquick input{height:32px;padding:0 6px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:13px}
-.catrow,.catrow.pick{display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding:7px 0 3px;scrollbar-width:none}
-.catrow::-webkit-scrollbar{display:none}
 .chip{display:inline-flex;align-items:center;gap:3px;font-size:12px;padding:3px 9px;border-radius:999px;background:var(--chip);color:var(--ink-soft);white-space:nowrap}
 .chip i{font-style:normal;font-size:13px}
 .chip b{font-weight:600;font-size:11px;opacity:.7;margin-left:1px}
 .pick{display:flex;flex-wrap:wrap;gap:6px}
 .pick .chip{cursor:pointer;background:#fff;border:1px solid var(--line);user-select:none}
 .pick .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.catrow .pchip{flex:0 0 auto}
-.catrow .pchip.on{background:var(--pc);border-color:var(--pc);color:#fff}
-.catrow .pchip.zero{opacity:.45}
+.catdd{position:relative;flex:0 0 auto}
+.ddbtn{height:36px;min-width:52px;max-width:96px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:13px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis}
+.ddbtn::after{content:" ▾";font-size:10px}
+.ddbtn.on{border-color:var(--ink);color:var(--ink)}
+.ddmenu{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:60;min-width:150px;flex-direction:column;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px}
+.ddmenu.open{display:flex}
+.ddrow{display:flex;align-items:center;gap:6px;border:none;background:none;border-radius:8px;padding:7px 10px;font-size:13px;color:var(--ink);text-align:left}
+.ddrow:hover{background:var(--chip)}
+.ddrow i{font-style:normal;font-size:15px}
+.ddrow b{margin-left:auto;padding-left:12px;font-size:12px;font-weight:600;color:var(--ink-soft)}
+.ddrow.on{background:color-mix(in srgb,var(--pc) 14%,#fff)}
+.ddrow.zero{opacity:.45}
+.ddcheck{width:12px;color:var(--pc);font-weight:700}
+.ddclear{justify-content:center;color:var(--ink-soft);border-top:1px solid var(--line);border-radius:0 0 8px 8px;margin-top:2px}
 .filtermeta{display:flex;align-items:center;gap:4px;min-height:24px}
 #filterChips{display:flex;flex-wrap:wrap;align-items:center;gap:4px;flex:1;min-width:0}
 #fl_clear{width:26px;height:26px;flex-basis:26px}
@@ -254,7 +265,7 @@ select.ed-title{appearance:auto}
 .setup{max-width:660px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
 
 @media(max-width:760px){
-  .side{top:auto;left:0;width:auto;height:56%;border-left:none;border-top:1px solid var(--line);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px rgba(21,34,48,.1)}
+  .side{top:auto;left:0;right:0;width:auto;height:56%;border-right:none;border-top:1px solid var(--line);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px rgba(21,34,48,.1)}
   .wrap.list-hidden .side{transform:translateY(100%)}
   .fab{width:38px;height:38px}
   #mapfab{gap:6px}

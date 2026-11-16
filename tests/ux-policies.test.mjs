@@ -123,7 +123,7 @@ assert.match(appCss,/\.mapcol\{position:absolute;inset:0\}/,"the map always fill
 assert.doesNotMatch(appCss,/\.wrap\.[a-z-]+ \.mapcol/,"no list state resizes or moves the map");
 // A hidden list must not keep catching taps over the map (opacity/transform
 // alone leave hit-testing on): it is hidden and pointer-events are off.
-assert.match(appCss,/\.wrap\.list-hidden \.side\{transform:translateX\(100%\);visibility:hidden;pointer-events:none\}/,"desktop: hidden list slides out and stops catching taps");
+assert.match(appCss,/\.wrap\.list-hidden \.side\{transform:translateX\(-100%\);visibility:hidden;pointer-events:none\}/,"desktop: hidden list slides out and stops catching taps");
 assert.match(appCss,/\.wrap\.list-hidden \.side\{transform:translateY\(100%\)\}/,"phone: hidden list slides down");
 assert.match(mainSource,/id="listBtn" class="fab/,"the list toggle is a fixed map button");
 

@@ -67,12 +67,30 @@ test("purpose filter narrows the visited list (legacy categories mapped on read)
   await signIn(page);
   await setDateRange(page, FIXTURE_MONTH.from, FIXTURE_MONTH.to);
 
-  // 咖啡 ×2, 晚餐, 早餐 all read as 飲食; the chip shows the count.
+  // 咖啡 ×2, 晚餐, 早餐 all read as 飲食; the dropdown beside the search box
+  // shows the count and stays open while toggling.
+  await page.click("#fl_cats_btn");
   await expect(page.locator('#fl_cats [data-c="飲食"]')).toContainText("4");
   await page.click('#fl_cats [data-c="飲食"]');
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(4);
   await page.click('#fl_cats [data-c="飲食"]');
   await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+
+  // Multi-select: 飲食 + 交通, then 清除.
+  await page.click('#fl_cats [data-c="飲食"]');
+  await page.click('#fl_cats [data-c="交通"]');
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(5);
+  await page.click("#fl_cats [data-cclear]");
+  await expect(page.locator("#list .card[data-pid]")).toHaveCount(7);
+});
+
+test("filter row: trip select first at half the width", async ({ page }) => {
+  await signIn(page);
+  const trip = await page.locator("#fl_trip").boundingBox();
+  const scope = await page.locator("#fl_scope").boundingBox();
+  const row = await page.locator("#filterbar .frow").boundingBox();
+  expect(trip.x).toBeLessThan(scope.x);
+  expect(Math.abs(trip.width - (row.width - 6) / 2)).toBeLessThan(3);
 });
 
 test("trip type filter: 國內 covers the fixture trip, 日常 the trip-less visits", async ({ page }) => {
@@ -137,6 +155,10 @@ for (const [label, size] of [["desktop", { width: 1280, height: 800 }], ["phone"
     const mapBefore = await box("#map");
     const btnBefore = await box("#listBtn");
     await expect(page.locator(".side")).toBeVisible();
+    // The map buttons sit on the right edge, clear of the list panel.
+    expect(btnBefore.x).toBeGreaterThan(size.width - 70);
+    const side = await box(".side");
+    expect(btnBefore.x).toBeGreaterThan(side.x + (label === "phone" ? -1 : side.width));
 
     await page.click("#listBtn");
     await expect(page.locator(".side")).toBeHidden();
@@ -145,7 +167,7 @@ for (const [label, size] of [["desktop", { width: 1280, height: 800 }], ["phone"
     expect(await box("#listBtn")).toEqual(btnBefore);
     // Where the list was, taps now reach the map.
     const hit = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest("#map"),
-      [size.width - 40, size.height - 40]);
+      [200, size.height - 40]);
     expect(hit).toBe(true);
 
     await page.click("#listBtn");
